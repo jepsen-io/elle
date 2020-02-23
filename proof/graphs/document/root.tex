@@ -1,0 +1,52 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[english]{babel}
+\usepackage{amssymb}
+\usepackage{wasysym}
+\usepackage{isabelle,isabellesym}
+
+% this should be the last package used
+\usepackage{pdfsetup}
+
+% urls in roman style, theory text in math-similar italics
+\urlstyle{rm}
+\isabellestyle{it}
+
+
+\begin{document}
+
+\title{Graph Theory}
+\author{By Lars Noschinski}
+\maketitle
+
+\begin{abstract}
+This development provides a formalization of directed graphs, supporting
+(labelled) multi-edges and infinite graphs. A polymorphic edge type allows
+edges to be treated as pairs of vertices, if multi-edges are not required.
+Formalized properties are i.a. walks (and related concepts), connectedness and
+subgraphs and basic properties of isomorphisms.
+
+This formalization is used to prove characterizations of Euler Trails, Shortest
+Paths and Kuratowski subgraphs.
+
+Definitions and nomenclature are based on \cite{bangjensen2009digraphs}.
+\end{abstract}
+
+
+\tableofcontents
+
+% sane default for proof documents
+\parindent 0pt\parskip 0.5ex
+
+% generated text of all theories
+\input{session}
+
+% optional bibliography
+\bibliographystyle{abbrv}
+\bibliography{root}
+
+\end{document}
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: t
+%%% End:
