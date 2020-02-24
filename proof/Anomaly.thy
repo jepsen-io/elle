@@ -1,5 +1,5 @@
 theory Anomaly
-  imports Main Transaction History
+  imports Main DSG
 begin
 
 section \<open>Non-Cyclic Anomalies\<close>
@@ -29,38 +29,22 @@ lemma "has_g1a (History {(register 1)}
                         kvo)"
   using has_g1a_def by fastforce
 
+(* TODO: intermediate read, dirty update *)
+
 section \<open>Cyclic Anomalies\<close>
 
-text \<open>We say a transation ww-depends on another if t1 installed some version v1 of k, and t2 wrote
-v2, such that v1 came immediately before v2 in the version order of k.\<close>
+text \<open>In an G0 anomaly, a cycle exists in the DSG composed purely of write dependencies.\<close>
 
-definition ww_depends :: "history \<Rightarrow> atxn \<Rightarrow> atxn \<Rightarrow> bool" where
-"ww_depends h t1 t2 \<equiv> \<exists>w1 w2.
-  (a_is_committed t1) \<and>
-  (a_is_committed t2) \<and>
-  (w1 \<in> ext_awrites t1) \<and>
-  (w2 \<in> ext_awrites t2) \<and>
-  ((key w1) = (key w1)) \<and>
-  (is_next_in_history h (key w1) (apost_version w1) (apost_version w2))"
+definition has_g0 :: "history \<Rightarrow> bool" where
+"has_g0 h \<equiv> (\<exists>path. (cycle (dsg h) path) \<and> ((path_dep_types path) = {WW}))"
 
-text \<open>In an immediate G0 anomaly, a pair of transactions ww-depend on each other.\<close>
+text \<open>A G1c anomaly is a cycle comprised of write-write and write-read dependencies. We diverge from
+Adya here in classifying G0 and G1c as distinct classes; feels more useful to distinguish them.\<close>
 
-definition has_immediate_g0 :: "history \<Rightarrow> bool" where
-"has_immediate_g0 h \<equiv> (\<exists>t1 t2.
-  (t1 \<in> (all_atxns h)) \<and>
-  (t2 \<in> (all_atxns h)) \<and>
-  (ww_depends h t1 t2) \<and>
-  (ww_depends h t2 t1))"
+definition has_g1c :: "history \<Rightarrow> bool" where
+"has_g1c h \<equiv> (\<exists>path. (cycle (dsg h) path) \<and> ((path_dep_types path) = {WW,WR}))"
 
-text \<open>But I can't prove this example yet. :(\<close>
+text \<open>And a G2 anomaly is a cycle involving read-write dependencies.\<close>
 
-lemma "has_immediate_g0
-  (let x = 1; y = 2 in
-    (History {(register x), (register y)}
-     {(ATxn [(AWrite x [0] 1 [1] []), (AWrite y [1] 2 [2] [])] True),
-      (ATxn [(AWrite y [0] 1 [1] []), (AWrite x [1] 2 [2] [])] True)}
-     {(KeyVersionOrder x [[0], [1]]),
-      (KeyVersionOrder y [[0], [1]])}))"
-  oops
-
-end
+definition has_g2 :: "history \<Rightarrow> bool" where
+"has_g2 h \<equiv> (\<exists>path. (cycle (dsg h) path) \<and> (RW \<in> (path_dep_types path)))"
