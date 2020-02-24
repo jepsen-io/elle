@@ -9,6 +9,16 @@ and a version order.\<close>
 
 datatype history = History "object set" "atxn set" "versionOrder"
 
+class all_objects =
+  fixes all_objects :: "'a \<Rightarrow> object set"
+
+instantiation history :: all_objects
+begin
+primrec all_objects_history :: "history \<Rightarrow> object set" where
+"all_objects_history (History objs txns vo) = objs"
+instance ..
+end
+
 primrec all_atxns :: "history \<Rightarrow> atxn set" where
 "all_atxns (History obs txns vo) = txns"
 

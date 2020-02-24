@@ -93,6 +93,7 @@ definition is_fully_reachable :: "object \<Rightarrow> bool" where
 
 
 
+
 text \<open>We can now define a well-formed object: they are fully reachable, and their initial version
 is in the version graph. That second part might be redundant.\<close>
 
@@ -104,12 +105,19 @@ definition wf_object :: "object \<Rightarrow> bool" where
                  (is_fully_reachable obj)"
 
 
+text \<open>We might want to know the set of all operations which could result in some version.\<close>
+
+definition awrites_of :: "object \<Rightarrow> version \<Rightarrow> aop set" where
+"awrites_of obj v \<equiv> {w. w \<in> all_awrites obj \<and> v = apost_version w}"
+
+
+
 text \<open>Now, we aim to include a new property: traceability\<close>
 
 text \<open>Does this object have exactly one write resulting in a version?\<close>
 
 definition version_has_only_one_write :: "object \<Rightarrow> version \<Rightarrow> bool" where
-"version_has_only_one_write obj v \<equiv> (\<exists>!w. ((apost_version w) = v) \<and> (w \<in> (all_awrites obj)))"
+"version_has_only_one_write obj v \<equiv> (\<exists>!w. w \<in> awrites_of obj v)"
 
 definition every_version_has_only_one_write :: "object \<Rightarrow> bool" where
 "every_version_has_only_one_write obj \<equiv> (\<forall>v. (v \<in> (all_versions obj)) \<longrightarrow>
@@ -126,9 +134,15 @@ the initial version.\<close>
 definition is_traceable :: "object \<Rightarrow> bool" where
 "is_traceable obj \<equiv> (\<forall>v. (v \<in> (all_versions obj) \<longrightarrow> (\<exists>!p. (is_trace_of obj p v))))"
 
-text \<open>Traceability implies that every version has at most one write.\<close>
+(* I don't exactly understand the THE quantifier, but hopefully this works in conjunction with
+traceable objects? *)
+definition trace_of :: "object \<Rightarrow> version \<Rightarrow> path" where
+"trace_of obj version \<equiv> (THE path. is_trace_of obj path version)"
 
-(* TODO *)
+text \<open>For traceable objects, we can define a trace_length for any version.\<close>
+
+definition trace_length :: "object \<Rightarrow> version \<Rightarrow> nat" where
+"trace_length obj v \<equiv> (length (trace_of obj v))"
 
 
 subsection \<open>Implementations of objects\<close>

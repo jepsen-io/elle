@@ -214,6 +214,34 @@ definition all_awrites :: "'a::all_aops \<Rightarrow> aop set" where
 definition all_areads :: "'a::all_aops \<Rightarrow> aop set" where
 "all_areads a = {op. (op \<in> (all_aops a)) \<and> ((op_type op = Read))}"
 
+text \<open>An observed operation is definite if its optional fields are known. Might want to break this
+up later; it might be helpful to talk about postversion-definite, retval-definite, write-definite,
+etc.\<close>
+
+class definite =
+  fixes is_definite :: "'a \<Rightarrow> bool"
+
+(* Huh, can't instantiate a typeclass over a polymorphic type?
+instantiation "'a option" :: definite
+begin
+*)
+
+primrec is_definite_option :: "'a option \<Rightarrow> bool" where
+"is_definite_option None     = False" |
+"is_definite_option (Some x) = True"
+
+instantiation oop :: definite
+begin
+primrec is_definite :: "oop \<Rightarrow> bool" where
+"is_definite (ORead k v)          = is_definite_option v" |
+"is_definite (OWrite k v1 a v2 r) = (is_definite_option v1 \<and>
+                                     is_definite_option v2 \<and>
+                                     is_definite_option r)"
+instance ..
+end
+
+
+
 text \<open>We now define a notion of compatibility, which says whether an observed operation could
 correspond to some abstract operation. The idea here is that the database executed the abstract
 operation, but that we don't know, due to the client protocol, or perhaps due to missing responses,
@@ -238,5 +266,55 @@ definition is_compatible_op :: "oop \<Rightarrow> aop \<Rightarrow> bool" where
    ((arg oop) = (arg aop)) \<and>
    (is_compatible_option (ret oop)          (aret aop)) \<and>
    (is_compatible_option (post_version oop) (apost_version aop)))"
+
+text \<open>Some basic lemmata around compatibility. These are... surprisingly expensive proofs for
+sledgehammer to find...\<close>
+
+lemma compatible_same_type: "is_compatible_op oop aop \<Longrightarrow> ((op_type oop) = (op_type aop))"
+  using is_compatible_op_def by blast
+
+lemma compatible_same_key: "is_compatible_op oop aop \<Longrightarrow> ((key oop) = (key aop))"
+  using is_compatible_op_def by blast
+
+lemma compatible_same_arg: "is_compatible_op oop aop \<Longrightarrow> ((arg oop) = (arg aop))"
+  using is_compatible_op_def by blast
+
+lemma compatible_pre_version:
+  "is_compatible_op oop aop \<Longrightarrow> (((pre_version oop) = None) \<or>
+                                 ((pre_version oop) = Some (apre_version aop)))"
+  by (metis is_compatible_op_def is_compatible_option.simps(2) not_Some_eq)
+
+lemma compatible_post_version:
+  "is_compatible_op oop aop \<Longrightarrow> (((post_version oop) = None) \<or>
+                                 ((post_version oop) = Some (apost_version aop)))"
+  by (metis is_compatible_op_def is_compatible_option.simps(2) not_Some_eq)
+
+lemma compatible_ret:
+  "is_compatible_op oop aop \<Longrightarrow> (((ret oop) = None) \<or>
+                                 ((ret oop) = Some (aret aop)))"
+  by (metis is_compatible_op_def is_compatible_option.simps(2) not_Some_eq)
+
+lemma compatible_definite_same_pre_version:
+  "(is_compatible_op oop aop \<and> is_definite oop) \<Longrightarrow> ((pre_version oop) = (pre_version aop))"
+  by (smt aop.exhaust apre_version.simps(1) apre_version.simps(2) is_compatible_op_def is_compatible_option.simps(2) is_definite.simps(1) is_definite.simps(2) is_definite_option.simps(1) oop.exhaust option.exhaust pre_version_aop.simps(1) pre_version_aop.simps(2) pre_version_oop.simps(1) pre_version_oop.simps(2))
+
+lemma compatible_definite_same_post_version:
+  "(is_compatible_op oop aop \<and> is_definite oop) \<Longrightarrow> ((post_version oop) = (post_version aop))"
+  by (smt aop.exhaust apost_version.simps(2) compatible_definite_same_pre_version is_compatible_op_def is_compatible_option.simps(2) is_definite.simps(2) is_definite_option.simps(1) oop.exhaust opType.distinct(1) op_type_aop.simps(1) op_type_aop.simps(2) op_type_oop.simps(1) op_type_oop.simps(2) option.exhaust post_version_aop.simps(1) post_version_aop.simps(2) post_version_oop.simps(1) post_version_oop.simps(2) pre_version_aop.simps(1) pre_version_oop.simps(1))
+
+lemma compatible_definite_same_ret:
+  "(is_compatible_op oop aop \<and> is_definite oop) \<Longrightarrow> ((ret oop) = (ret aop))"
+  by (smt aop.exhaust aret.simps(1) aret.simps(2) is_compatible_op_def is_compatible_option.simps(2) is_definite.simps(1) is_definite.simps(2) is_definite_option.simps(1) not_None_eq oop.exhaust option.case(2) ret_aop.simps(1) ret_aop.simps(2) ret_oop.simps(1) ret_oop.simps(2))
+  
+text \<open>If two operations are compatible and the observed one is definite, they share exactly
+the same values.\<close>
+
+lemma definite_compatible_same:
+"is_compatible_op oop aop \<and> is_definite oop \<Longrightarrow>
+  (((pre_version oop)  = (pre_version aop)) \<and>
+   ((post_version oop) = (post_version aop)) \<and>
+   ((ret oop)          = (ret aop)))"
+  by (simp add: compatible_definite_same_post_version compatible_definite_same_pre_version compatible_definite_same_ret)
+
 
 end

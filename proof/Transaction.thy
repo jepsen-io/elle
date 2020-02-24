@@ -14,6 +14,8 @@ types, we model the committed state as a separate field.\<close>
 (* I literally can't figure out how to write a class that returns classes, so we're gonna
 do this with explicit abstract and observed functions for everything. *)
 
+(* TODO: add an ID for transactions so you can execute the same ops more than once *)
+
 datatype atxn = ATxn "aop list" "bool"
 datatype otxn = OTxn "oop list" "bool option"
 
@@ -31,12 +33,23 @@ primrec a_is_committed :: "atxn \<Rightarrow> bool" where
 primrec o_is_committed :: "otxn \<Rightarrow> bool option" where
 "o_is_committed (OTxn _ committed) = committed"
 
+primrec o_definitely_committed :: "otxn \<Rightarrow> bool" where
+"o_definitely_committed (OTxn _ c) = ((Some True) = c)"
 
+primrec o_definitely_aborted :: "otxn \<Rightarrow> bool" where
+"o_definitely_aborted (OTxn _ c) = ((Some False = c))"
 
 instantiation atxn :: all_versions
 begin
 primrec all_versions_atxn :: "atxn \<Rightarrow> version set" where
 "all_versions_atxn (ATxn ops _) = \<Union>{(all_versions op) | op. op \<in> (set ops)}"
+instance ..
+end
+
+instantiation otxn :: all_versions
+begin
+primrec all_versions_otxn :: "otxn \<Rightarrow> version set" where
+"all_versions_otxn (OTxn ops _) = \<Union>{all_versions op | op. op \<in> (set ops)}"
 instance ..
 end
 
@@ -80,28 +93,42 @@ lemma "(let wx1 = (AWrite 1 [0] 1 [1] []);
 
 
 
-text \<open>A well-formed transaction... well, right now, they're all well-formed.\<close>
+text \<open>A well-formed transaction...\<close>
 
 primrec wf_atxn :: "atxn \<Rightarrow> bool" where
 "wf_atxn (ATxn ops committed) = True"
 
+text \<open>For observed transactions, we require that when committed, they definitely have a return
+value.\<close>
+
 primrec wf_otxn :: "otxn \<Rightarrow> bool" where
-"wf_otxn (OTxn ops committed) = True"
-
-
+"wf_otxn (OTxn ops committed) = (if ((Some True) = committed) then
+                                  (\<forall>op. (op \<in> set ops) \<longrightarrow> ((ret op) \<noteq> None))
+                                  else True)"
 
 text \<open>We define compatibility in terms of operation and committed state compatibility\<close>
 
 fun is_compatible_op_list :: "oop list \<Rightarrow> aop list \<Rightarrow> bool" where
 "is_compatible_op_list [] [] = True" |
 "is_compatible_op_list (a # as) [] = False" |
-"is_compatible_op_list [] (oo # os) = True" |
+"is_compatible_op_list [] (oo # os) = False" |
 "is_compatible_op_list (aop # aops') (oop # oops') =
   ((is_compatible_op aop oop) \<and> (is_compatible_op_list aops' oops'))"
+
+lemma is_compatible_op_list_size: "(is_compatible_op_list l1 l2) \<Longrightarrow> ((length l1) = (length l2))"
+  oops
 
 (* My kingdom for indicating shadowing in binding exprs: every short name in Isabelle is taken *)
 definition is_compatible_txn :: "otxn \<Rightarrow> atxn \<Rightarrow> bool" where
 "is_compatible_txn otx atx \<equiv> ((is_compatible_op_list (o_ops otx) (a_ops atx)) \<and>
                               (is_compatible_option (o_is_committed otx) (a_is_committed atx)))"
+
+
+text \<open>Some lemmata around compatibility\<close>
+
+lemma is_compatible_txn_op_count: "is_compatible_txn otxn atxn \<Longrightarrow>
+  ((size (o_ops otxn)) = (size (a_ops atxn)))"
+  oops
+
 
 end
