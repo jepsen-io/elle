@@ -1,3 +1,5 @@
+# Elle
+
 ![Elle Woods, upcoming lawyer, catches Chutney Windham telling an inconsistent story via a carefully constructed chain of inferences.](images/elle-woods.jpg)
 
 *"[The rules of transactions are simple and finite! Any Cosmo girl would have known.](https://www.youtube.com/watch?v=GSu7BGbyJqc)"*
@@ -29,7 +31,7 @@ Elle is still under active development, and we're not 100% confident in its
 inference rules yet. Jepsen recommends checking reported anomalies by hand to
 make sure they're valid.
 
-# Demo
+## Demo
 
 Imagine a database where each object (identified by keys like `:x` or `:y`) is
 a list of numbers. Transactions are made up of reads `[:r :x [1 2 3]]`, which
@@ -71,7 +73,7 @@ of their respective reads and writes. The write-write relationship between T2
 and T1 is inferrable because T3 observed x = [1,2], which constrains the
 possible orders of appends.
 
-# Soundness
+## Soundness
 
 Elle can check for every non-predicate anomaly from Adya, Liskov, and O'Neil's [Generalized Isolation Level Definitions](http://pmg.csail.mit.edu/papers/icde00.pdf). These include:
 
@@ -102,7 +104,7 @@ which did. We limit the impact of this problem by being able to distinguish
 between many classes of reads, and sampling many anomalies---hoping that
 eventually, we get lucky and see the anomaly for what it "really is".
 
-# Completeness
+## Completeness
 
 Elle is not complete: it may fail to identify anomalies which were present in
 the system under test. This is a consequence of two factors:
@@ -114,7 +116,7 @@ In practice, we believe Elle is "complete enough". Indeterminacy is generally
 limited to unobserved transactions, or a small set of transactions at the very
 end of the history.
 
-# Performance
+## Performance
 
 ![Graphs of Elle's performance vs Knossos](images/perf.svg)
 
@@ -135,7 +137,7 @@ There are some spots (especially in inferring version orders from transaction
 graphs during register tests) which might be painful; I'll sand off rough edges
 as I go.
 
-# Observed Histories
+## Observed Histories
 
 Elle expects its observed histories in the same format as [Jepsen](https://github.com/jepsen-io/jepsen). An observed history should be a list of operations in real-time order, where each operation is a map of the form:
 
@@ -151,13 +153,13 @@ indicates it definitely did not occur--e.g. it was aborted, was never submitted
 to the database, etc. `:info` indicates an indeterminate state; the transaction
 may or may not have taken place. After an `:info`, a process may not perform another operation; the invocation remains open for the rest of the history.
 
-# Types of tests
+## Types of Tests
 
 - `elle.core`: The heart of Elle's inference system. Computes transaction graphs and finds cycles over them. Includes general-purpose graphs for per-process and realtime orders.
 - `elle.wr`: Write/Read registers. Weaker inference rules, but applicable to basically all systems. Objects are registers; writes blindly replace values. TODO: rename this.
 - `elle.append`: Elle's most powerful inference rules. Objects are lists, writes append unique elements to those lists. TODO: rename this too.
 
 
-# License
+## License
 
 Elle is copyright 2019--2020 Jepsen, LLC and Peter Alvaro. The Elle library is available under the Eclipse Public License, version 2.0, or, at your option, GPL-2.0 with the classpath exception.
