@@ -1,4 +1,4 @@
-(ns elle.append
+(ns elle.list-append
   "Detects cycles in histories where operations are transactions over named
   lists lists, and operations are either appends or reads."
   (:refer-clojure :exclude [test])

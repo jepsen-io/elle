@@ -1,8 +1,8 @@
-(ns elle.wr-test
+(ns elle.rw-register-test
   (:refer-clojure :exclude [test])
   (:require [elle [core :as elle]
                   [graph :as g]
-                  [wr :refer :all]
+                  [rw-register :refer :all]
                   [util :refer [map-vals]]]
             [jepsen.txn :as txn]
             [knossos [history :as history]

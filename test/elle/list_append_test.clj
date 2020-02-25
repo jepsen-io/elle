@@ -1,8 +1,8 @@
-(ns elle.append-test
+(ns elle.list-append-test
   (:refer-clojure :exclude [test])
   (:require [clojure.test :refer :all]
             [elle [core :as elle]
-                  [append :refer :all]
+                  [list-append :refer :all]
                   [graph :as g]
                   [util :refer [map-vals]]]
             [jepsen.txn :as txn]

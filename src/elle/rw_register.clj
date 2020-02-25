@@ -1,6 +1,11 @@
-(ns elle.wr
-  "A test which looks for cycles in write/read transactions. Writes are assumed
-  to be unique, but this is the only constraint.
+(ns elle.rw-register
+  "A test which looks for cycles in write/read transactionss over registers.
+  Writes are assumed to be unique, but this is the only constraint.
+
+  Operations are of two forms:
+
+    [:r x 1] denotes a read of x observing the value 1.
+    [:w x 2] denotes a write of x, settings its value to 2.
 
   Unlike the append test, we cannot recover information about the version order
   by comparing versions directly. The only dependency we can directly infer
@@ -29,9 +34,7 @@
   < x_j. This expands our version graph.
 
   We can alternate between expanding the transaction graph and expanding the
-  version graph until we reach a fixed point.
-
-  Now I just gotta implement this."
+  version graph until we reach a fixed point. This isn't implemented yet."
   (:require [clojure.core.reducers :as r]
             [elle [core :as elle]
                   [txn :as ct]

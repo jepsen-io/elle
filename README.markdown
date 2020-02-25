@@ -39,7 +39,7 @@ return the current value of the given list, and writes `[:append :y 4]`, which
 append a number to the end of the list.
 
 ```clj
-=> (require '[elle.append :as a])
+=> (require '[elle.list-append :as a])
 nil
 ```
 
@@ -84,6 +84,13 @@ Elle can check for every non-predicate anomaly from Adya, Liskov, and O'Neil's [
 - G-Single: Read skew.
 - G2: Anti-dependency cycle.
 
+There are additional anomalies (e.g. garbage reads, dirty updates, inconsistent version orders) available for specific checkers. Not all of these are implemented fully yet---see the paper for details.
+
+- Inconsistent Version Orders: Inference rules suggested a cyclic order of updates to a single key.
+- Dirty Updates: A write promotes aborted state into committed state.
+- Duplicate Writes: A write occurs more than once.
+- Garbage Reads: A read observes a state which could not have been the product of any write.
+
 In addition, Elle can infer transaction dependencies on the basis of process
 (e.g. session) or realtime order, allowing it to distinguish between, say,
 strict serializability and serializability.
@@ -92,12 +99,10 @@ For lists, Elle can infer a complete prefix of the Adya version order for a key
 based on a single read. For registers, Elle can infer version orders on the
 basis of the initial state, writes-follow-reads, process, and real-time orders.
 
-There are additional anomalies (e.g. garbage reads, dirty updates, inconsistent version orders) available for specific checkers. See the paper for details.
-
 When Elle claims an anomaly in an observable history, it specifically means
 that in any abstract Adya-style history which is compatible with that observed
 history, either a corresponding anomaly exists, or something worse
-happened---e.g. a dirty read. This is a natural consequence of testing
+happened---e.g. an aborted read. This is a natural consequence of testing
 real-world databases; if the database lies in *just the right way*, it might
 appear to exhibit anomalies which didn't actually happen, or mask anomalies
 which did. We limit the impact of this problem by being able to distinguish
