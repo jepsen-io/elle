@@ -1,6 +1,6 @@
 ![Elle Woods, upcoming lawyer, catches Chutney Windham telling an inconsistent story via a carefully constructed chain of inferences.](images/header.png)
 
-*"[The rules of transactions are simple and finite! Any Cosmo girl would have known.](https://www.youtube.com/watch?v=GSu7BGbyJqc)"*
+<p align="right">*"[The rules of transactions are simple and finite! Any Cosmo girl would have known.](https://www.youtube.com/watch?v=GSu7BGbyJqc)"*</p>
 
 # Elle
 
