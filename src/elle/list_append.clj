@@ -114,6 +114,7 @@
                         :writer   writer
                         :element  (peek v)}))))))))
 
+
 (def unknown-prefix
   "A marker we use in a list to identify an unknown prefix."
   '...)
@@ -378,6 +379,55 @@
                     (:value op)))
           {}
           history))
+
+(defn dirty-update-cases
+  "Takes an append index and a history and searches for instances of dirty
+  update. For each key, we use the version order from the append index,
+  construct an index mapping appended elements to the transaction which wrote
+  them, and look for cases where an aborted transaction is followed by a
+  committed one."
+  [append-index history]
+  (let [write-index (write-index history)]
+    (mapcat (fn [[k idx]]
+              (->> (:values idx)
+                   (reduce (fn [[t1 vs cases] v]
+                             (assert t1)
+                             (let [vs (conj vs v) ; Keep track of the ver range
+                                   t2 (get (get write-index k) v)]
+                               (assert t2 (str "No transaction wrote "
+                                               k " = " v))
+                               (case [(:type t1) (:type t2)]
+                                 ; Moving along happily
+                                 [:ok    :ok] [t2 [v] cases]
+                                 ; We can't say; moving along...
+                                 [:info  :ok] [t2 [v] cases]
+                                 ; Aha, a dirty write!
+                                 [:fail  :ok] [t2 [v]
+                                               (conj cases
+                                                     {:key     k
+                                                      :values  vs
+                                                      :txns    [t1 '... t2]})]
+
+                                 ; We can't say for sure; keep using vs
+                                 [:ok    :info] [t1 vs cases]
+                                 [:info  :info] [t1 vs cases]
+                                 [:fail  :info] [t1 vs cases]
+
+                                 ; Okay, we've got an aborted state now.
+                                 [:ok    :fail] [t2 [v] cases]
+                                 [:info  :fail] [t2 [v] cases]
+
+                                 ; Huh, in this case we've got a couple options.
+                                 ; We could show the tightest bound temporally,
+                                 ; or try to cover the range. Tight bounds is
+                                 ; how we actually *define* the anomaly, but I
+                                 ; think covering is probably more interesting
+                                 ; from a "How bad was this" perspective.
+                                 [:fail  :fail] [t1 vs cases])))
+                           ; The initial state is committed
+                           [{:type :ok} [] []])
+                   peek))
+            append-index)))
 
 (defn read-index
   "Takes a history restricted to oks and infos, and constructs a map of keys to
@@ -666,58 +716,6 @@
   [history]
   ((elle/combine ww-graph wr-graph rw-graph) history))
 
-(defn cycles!
-  "Performs dependency graph analysis and returns a map of anomalies.
-
-  Options:
-
-    :additional-graphs      A collection of graph analyzers (e.g. realtime)
-                            which should be merged with our own dependencies.
-    :anomalies              A collection of anomalies which should be reported,
-                            if found.
-
-  Supported anomalies are :G0, :G1c, :G-single, and :G2. G2 implies G-single
-  and G1c, and G1c implies G0."
-  ([opts history]
-   (let [as       (ct/expand-anomalies (:anomalies opts))
-         ; What graph do we need to detect these anomalies?
-         analyzer (cond (:G2  as)       graph     ; Need full deps
-                        (:G-single as) graph     ; Need full deps
-                        (:G1c as)       g1c-graph ; g1c graph includes g0
-                        (:G0  as)       ww-graph  ; g0 is just write conflicts
-                        true       (throw (IllegalArgumentException.
-                                            "Expected at least one anomaly to check for!")))
-         ; Any other graphs to merge in?
-         analyzer (if-let [ags (:additional-graphs opts)]
-                    (apply elle/combine analyzer ags)
-                    analyzer)
-
-         ; Good, analyze the history
-         {:keys [graph explainer sccs]} (elle/check- analyzer history)
-
-         ; TODO: we should probably abort here if the graph is empty and tell
-         ; the user something's wrong
-         ;_ (pprint (elle/->clj graph))
-
-         ; Find specific anomaly cases
-         g0         (when (:G0 as)        (ct/g0-cases graph explainer sccs))
-         g1c        (when (:G1c as)       (ct/g1c-cases graph explainer sccs))
-         g-single   (when (:G-single as)  (ct/g-single-cases
-                                            graph explainer sccs))
-         g2         (when (:G2 as)        (ct/g2-cases graph explainer sccs))
-
-         ; Results
-         anomalies (cond-> {}
-                     g0                    (assoc :G0         g0)
-                     g1c                   (assoc :G1c        g1c)
-                     g-single              (assoc :G-single   g-single)
-                     g2                    (assoc :G2         g2))]
-     ; Write out cycles as a side effect
-     (doseq [[type cycles] anomalies]
-       (elle/write-cycles! (assoc opts :filename (str (name type) ".txt"))
-                           cycles))
-     anomalies)))
-
 (defn check
   "Full checker for append and read histories. Options are:
 
@@ -737,6 +735,8 @@
     :G1   G1a, G1b, and G1c.
     :G2   A dependency cycle with at least one anti-dependency edge.
 
+    :dirty-update   A committed write incorporates aborted state.
+
   :G1 implies :G1a, :G1b, and :G1c. :G2 implies :G1c, and :G1c implies :G0,
   because if we construct the graph for G2, it'll include all the edges for
   G1c, and so on. See http://pmg.csail.mit.edu/papers/icde00.pdf for context.
@@ -745,33 +745,39 @@
   categorize them automatically. These anomalies are grouped under :G0+G1c+G2
   in checker results."
   ([history]
-   (check {:anomalies [:G1 :G2]} history))
+   (check {:anomalies [:G1 :G2 :dirty-update]} history))
   ([opts history]
    (let [opts       (update opts :anomalies ct/expand-anomalies)
-         anomalies  (:anomalies opts)]
-     (let [history       (remove (comp #{:nemesis} :process) history)
-           g1a           (when (:G1a anomalies) (g1a-cases history))
-           g1b           (when (:G1b anomalies) (g1b-cases history))
-           internal      (internal-cases history)
-           ; We don't want to detect duplicates or incompatible orders for
-           ; aborted txns.
-           history+      (filter (comp #{:ok :info} :type) history)
-           dups          (duplicates history+)
-           sorted-values (sorted-values history+)
-           incmp-order   (incompatible-orders sorted-values)
-           cycles        (cycles! opts history)
-           ; Categorize anomalies and build up a map of types to examples
-           anomalies (cond-> cycles
-                       dups         (assoc :duplicate-elements dups)
-                       incmp-order  (assoc :incompatible-order incmp-order)
-                       internal     (assoc :internal internal)
-                       (seq g1a)    (assoc :G1a g1a)
-                       (seq g1b)    (assoc :G1b g1b))]
-       (if (empty? anomalies)
-         {:valid?         true}
-         {:valid?         false
-          :anomaly-types  (sort (keys anomalies))
-          :anomalies      anomalies})))))
+         anomalies  (:anomalies opts)
+         history       (remove (comp #{:nemesis} :process) history)
+         pp            (preprocess history)
+         g1a           (when (:G1a anomalies) (g1a-cases history))
+         g1b           (when (:G1b anomalies) (g1b-cases history))
+         internal      (internal-cases history)
+         dirty-update (when (:dirty-update anomalies)
+                        (dirty-update-cases (:append-index pp) history))
+
+         ; We don't want to detect duplicates or incompatible orders for
+         ; aborted txns.
+         history+      (filter (comp #{:ok :info} :type) history)
+         dups          (duplicates history+)
+         sorted-values (sorted-values history+)
+         incmp-order   (incompatible-orders sorted-values)
+
+         ; Great, now construct a graph analyzer...
+         analyzers     (into [graph] (:additional-graphs opts))
+         analyzer      (apply elle/combine analyzers)
+         cycles        (ct/cycles! opts analyzer history)
+
+         ; Categorize anomalies and build up a map of types to examples
+         anomalies (cond-> cycles
+                     dups           (assoc :duplicate-elements dups)
+                     incmp-order    (assoc :incompatible-order incmp-order)
+                     internal       (assoc :internal internal)
+                     dirty-update   (assoc :dirty-update dirty-update)
+                     (seq g1a)      (assoc :G1a g1a)
+                     (seq g1b)      (assoc :G1b g1b))]
+     (ct/result-map anomalies))))
 
 (defn wr-txns
   "A lazy sequence of write and read transactions over a pool of n numeric

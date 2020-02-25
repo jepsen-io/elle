@@ -251,3 +251,20 @@
         (elle/write-cycles! (assoc opts :filename (str (name type) ".txt"))
                              cycles)))
     anomalies))
+
+(defn result-map
+  "Takes options, and a map of anomaly names to anomalies, and returns a map of
+  the form...
+
+  {:valid?        true | :unknown | false
+   :anomaly-types [:g1c ...]
+   :anomalies     {:g1c [...] ...}"
+  [anomalies]
+  (if (empty? anomalies)
+    {:valid? true}
+    {:valid?         (if (every? unknown-anomaly-types
+                                 (keys anomalies))
+                       :unknown
+                       false)
+     :anomaly-types  (sort (keys anomalies))
+     :anomalies      anomalies}))

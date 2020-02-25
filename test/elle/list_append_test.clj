@@ -31,7 +31,7 @@
   ax1       append 1 to x
   ry12      read y = [1 2]
   ax1ax2    append 1 to x, append 2 to x"
-  [string]
+  ([string]
   (let [[txn mop] (reduce (fn [[txn [f k v :as mop]] c]
                             (case c
                               \a [(conj txn mop) [:append]]
@@ -49,6 +49,19 @@
                 (subvec 1)
                 (conj mop))]
     {:type :ok, :value txn}))
+  ([process type string]
+   (assoc (op string) :process process :type type)))
+
+(defn pair
+  "Takes a completed op and returns an [invocation, completion] pair."
+  [completion]
+  [(-> completion
+       (assoc :type :invoke)
+       (update :value (partial map (fn [[f k v :as mop]]
+                                        (if (= :r f)
+                                          [f k nil]
+                                          mop)))))
+   completion])
 
 (deftest op-test
   (is (= {:type :ok, :value [[:append :x 1] [:append :x 2]]}
@@ -298,9 +311,9 @@
                     :value [[:append 0 6] [:r 0 nil]]}}]
               (internal-cases h))))))
 
-(deftest checker-test
-  (let [c (fn [checker-opts history]
-            (check checker-opts history))]
+(let [c (fn [checker-opts history]
+          (check checker-opts history))]
+  (deftest checker-test
     (testing "G0"
       (let [; A pure write cycle: x => t1, t2; but y => t2, t1
             t1 (op "ax1ay1")
@@ -329,18 +342,24 @@
             t2 (op "rx1")
             h  [t1 t2]]
         ; G0 checker won't catch this
-        (is (= {:valid? true} (c {:anomalies [:G0]} h)))
+        (is (= {:valid? :unknown
+                :anomaly-types [:empty-transaction-graph]
+                :anomalies {:empty-transaction-graph true}}
+               (c {:anomalies [:G0]} h)))
         ; G1 will
         (is (= {:valid? false
-                :anomaly-types [:G1a]
-                :anomalies {:G1a [{:op      t2
+                :anomaly-types [:G1a :empty-transaction-graph]
+                :anomalies {:empty-transaction-graph true
+                            :G1a [{:op      t2
                                    :writer  t1
                                    :mop     [:r :x [1]]
                                    :element 1}]}}
                (c {:anomalies [:G1]} h)))
         ; G2 won't: even though the graph covers G1c, we don't do the specific
         ; G1a/b checks unless asked.
-        (is (= {:valid? true}
+        (is (= {:valid? :unknown,
+                :anomaly-types [:empty-transaction-graph]
+                :anomalies {:empty-transaction-graph true}}
                (c {:anomalies [:G2]} h)))))
 
     (testing "G1b"
@@ -450,6 +469,18 @@
                  :G1c ["Let:\n  T1 = {:type :ok, :value [[:append :x 3] [:append :y 1]]}\n  T2 = {:type :ok, :value [[:append :x 1] [:r :y [1]]]}\n\nThen:\n  - T1 < T2, because T2 observed T1's append of 1 to key :y.\n  - However, T2 < T1, because T1 appended 3 after T2 appended 1 to :x: a contradiction!"]}}
                 (c {:anomalies [:G1]} h)))))
 
+  (testing "dirty update"
+    (let [t1 (op 0 :fail "ax1")
+          t2 (op 1 :ok   "ax2")
+          t3 (op 2 :ok   "rx12")
+          h [t1 t2 t3]]
+      (is (= {:valid? false
+              :anomaly-types [:dirty-update]
+              :anomalies {:dirty-update [{:key        :x
+                                          :values     [1 2]
+                                          :txns       [t1 '... t2]}]}}
+             (c {:anomalies [:dirty-update]} h)))))
+
     (testing "duplicated elements"
       ; This is an instance of G1c
       (let [t1 (op "ax1ry1") ; read t2's write of y
@@ -468,8 +499,9 @@
       (let [t1 (op "ax3rx1234")
             h  [t1]]
         (is (= {:valid? false
-                :anomaly-types [:internal]
-                :anomalies {:internal [{:op t1
+                :anomaly-types [:empty-transaction-graph :internal]
+                :anomalies {:empty-transaction-graph true
+                            :internal [{:op t1
                                         :mop [:r :x [1 2 3 4]]
                                         :expected '[... 3]}]}}
                (c {:anomalies [:G1]} h)))))))

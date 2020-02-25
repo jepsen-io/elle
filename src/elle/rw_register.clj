@@ -637,26 +637,18 @@
   ([history]
    (check {}))
   ([opts history]
-   (let [anomalies  (ct/expand-anomalies
-                      (get opts :anomalies [:G2 :G1a :G1b :internal]))
-         opts       (assoc opts :anomalies anomalies)]
-         (let [history  (remove (comp #{:nemesis} :process) history)
-               _        (ct/assert-type-sanity history)
-               g1a      (when (:G1a anomalies) (g1a-cases history))
-               g1b      (when (:G1b anomalies) (g1b-cases history))
-               internal (when (:internal anomalies) (internal-cases history))
-               cycles   (ct/cycles! opts (partial graph opts) history)
-               ; Build up anomaly map
-               anomalies (cond-> cycles
-                           internal (assoc :internal internal)
-                           g1a      (assoc :G1a g1a)
-                           g1b      (assoc :G1b g1b))]
-           ; And results!
-           (if (empty? anomalies)
-             {:valid? true}
-             {:valid?         (if (every? ct/unknown-anomaly-types
-                                          (keys anomalies))
-                                :unknown
-                                false)
-              :anomaly-types  (sort (keys anomalies))
-              :anomalies      anomalies})))))
+   (let [anomalies (ct/expand-anomalies
+                     (get opts :anomalies [:G2 :G1a :G1b :internal]))
+         opts     (assoc opts :anomalies anomalies)
+         history  (remove (comp #{:nemesis} :process) history)
+         _        (ct/assert-type-sanity history)
+         g1a      (when (:G1a anomalies) (g1a-cases history))
+         g1b      (when (:G1b anomalies) (g1b-cases history))
+         internal (when (:internal anomalies) (internal-cases history))
+         cycles   (ct/cycles! opts (partial graph opts) history)
+         ; Build up anomaly map
+         anomalies (cond-> cycles
+                     internal (assoc :internal internal)
+                     g1a      (assoc :G1a g1a)
+                     g1b      (assoc :G1b g1b))]
+     (ct/result-map anomalies))))
