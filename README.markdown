@@ -1,8 +1,8 @@
-# Elle
-
 ![Elle Woods, upcoming lawyer, catches Chutney Windham telling an inconsistent story via a carefully constructed chain of inferences.](images/header.png)
 
 *"[The rules of transactions are simple and finite! Any Cosmo girl would have known.](https://www.youtube.com/watch?v=GSu7BGbyJqc)"*
+
+# Elle
 
 Elle is a transactional consistency checker for black-box databases. Based
 purely on client observations of transactions, and given some minimal
