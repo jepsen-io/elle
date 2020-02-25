@@ -1,7 +1,3 @@
-![Elle Woods, upcoming lawyer, catches Chutney Windham telling an inconsistent story via a carefully constructed chain of inferences.](images/header.png)
-
-<p align="right"><i><a href="https://www.youtube.com/watch?v=GSu7BGbyJqc">"The rules of transactions are simple and finite! Any Cosmo girl would have known."</a></i></p>
-
 # Elle
 
 Elle is a transactional consistency checker for black-box databases. Based
@@ -86,6 +82,7 @@ Elle can check for every non-predicate anomaly from Adya, Liskov, and O'Neil's [
 
 There are additional anomalies (e.g. garbage reads, dirty updates, inconsistent version orders) available for specific checkers. Not all of these are implemented fully yet---see the paper for details.
 
+- Internal Inconsistency: A transaction fails to observe its own prior reads/writes.
 - Inconsistent Version Orders: Inference rules suggested a cyclic order of updates to a single key.
 - Dirty Updates: A write promotes aborted state into committed state.
 - Duplicate Writes: A write occurs more than once.
