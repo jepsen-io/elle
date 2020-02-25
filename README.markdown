@@ -9,23 +9,23 @@ purely on client observations of transactions, and given some minimal
 constraints on datatypes and operations, it can tell you whether that
 observation exhibits a variety of transactional anomalies. Like a clever lawyer
 who knows her hair-care rules, Elle looks for a sequence of events in a story
-which couldn't possibly have happened in that order, and uses that to prove the
-database isn't telling a consistent story.
+which couldn't possibly have happened in that order, and uses that inference to
+prove the database isn't telling a consistent story.
 
 In a nutshell, Elle is:
 
-- General: Elle works over a variety of datatypes and places only minimal, practical constraints on transaction structure.
-- Efficient: Elle is ~linear in history length, and ~constant, rather than exponential, with respect to concurrency.
-- Effective: Elle has found unexpected anomalies in [every](http://jepsen.io/analyses/yugabyte-db-1.1.9) [database](http://jepsen.io/analyses/tidb-2.1.7) [we've](http://jepsen.io/analyses/yugabyte-db-1.3.1) [checked](https://twitter.com/aphyr/status/1165761686348992513), ranging from internal consistency violations to anti-dependency cycles to dirty read to lost updates to realtime violations.
-- Sound: it can find every (non-predicate) anomaly from Adya, Liskov, & O'Neil's [Generalized Isolation Level Definitions](http://pmg.csail.mit.edu/papers/icde00.pdf).
-- Elucidative: Elle can point to a minimal set of transactions which witness a consistency violation; its conclusions are easy to understand and verify.
+- _General_: Elle works over a variety of datatypes and places only minimal, practical constraints on transaction structure.
+- _Efficient_: Elle is ~linear in history length, and ~constant, rather than exponential, with respect to concurrency.
+- _Effective_: Elle has found unexpected anomalies in [every](http://jepsen.io/analyses/yugabyte-db-1.1.9) [database](http://jepsen.io/analyses/tidb-2.1.7) [we've](http://jepsen.io/analyses/yugabyte-db-1.3.1) [checked](https://twitter.com/aphyr/status/1165761686348992513), ranging from internal consistency violations to anti-dependency cycles to dirty read to lost updates to realtime violations.
+- _Sound_: Elle can find every (non-predicate) anomaly from Adya, Liskov, & O'Neil's [Generalized Isolation Level Definitions](http://pmg.csail.mit.edu/papers/icde00.pdf).
+- _Elucidative_: Elle can point to a minimal set of transactions which witness a consistency violation; its conclusions are easy to understand and verify.
 
 This repository encompasses a [Clojure implementation](src/elle/) of the Elle
 consistency checker and its [accompanying test suite](test/elle/), which you
-can use to check your own histories. Our [paper](paper/elle.pdf) provides a
-deeper insight into the goals and intuition behind Elle. An incomplete formal
-[proof](proof/) sketch is written in the
-[Isabelle/HOL](https://isabelle.in.tum.de/) proof language.
+can use to check your own histories. Our [paper](paper/elle.pdf) provides deep
+insight into the goals and intuition behind Elle, and a rough formalization of
+its soundness proof. A nowhere-near-complete formal [proof](proof/) is written
+in the [Isabelle/HOL](https://isabelle.in.tum.de/) proof language.
 
 Elle is still under active development, and we're not 100% confident in its
 inference rules yet. Jepsen recommends checking reported anomalies by hand to
