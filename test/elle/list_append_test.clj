@@ -470,16 +470,30 @@
                 (c {:anomalies [:G1]} h)))))
 
   (testing "dirty update"
-    (let [t1 (op 0 :fail "ax1")
-          t2 (op 1 :ok   "ax2")
-          t3 (op 2 :ok   "rx12")
-          h [t1 t2 t3]]
-      (is (= {:valid? false
-              :anomaly-types [:dirty-update]
-              :anomalies {:dirty-update [{:key        :x
-                                          :values     [1 2]
-                                          :txns       [t1 '... t2]}]}}
-             (c {:anomalies [:dirty-update]} h)))))
+    (testing "direct"
+      (let [t1 (op 0 :fail "ax1")
+            t2 (op 1 :ok   "ax2")
+            t3 (op 2 :ok   "rx12")
+            h [t1 t2 t3]]
+        (is (= {:valid? false
+                :anomaly-types [:dirty-update]
+                :anomalies {:dirty-update [{:key        :x
+                                            :values     [1 2]
+                                            :txns       [t1 '... t2]}]}}
+               (c {:anomalies [:dirty-update]} h)))))
+
+    (testing "indirect"
+      (let [t1 (op 0 :fail "ax1")
+            t2 (op 1 :info "ax2")
+            t3 (op 2 :ok   "ax3")
+            t4 (op 3 :ok   "rx123")
+            h [t1 t2 t3 t4]]
+        (is (= {:valid? false
+                :anomaly-types [:dirty-update]
+                :anomalies {:dirty-update [{:key        :x
+                                            :values     [1 2 3]
+                                            :txns       [t1 '... t3]}]}}
+               (c {:anomalies [:dirty-update]} h))))))
 
     (testing "duplicated elements"
       ; This is an instance of G1c
