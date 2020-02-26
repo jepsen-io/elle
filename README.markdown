@@ -71,7 +71,7 @@ possible orders of appends.
 
 Oh, it makes plots, too.
 
-![images/plot-example.png](A dependency graph showing read-write, write-read, write-write, and realtime dependencies)
+![A dependency graph showing read-write, write-read, write-write, and realtime dependencies](images/plot-example.png)
 
 ## Usage
 
