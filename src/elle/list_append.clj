@@ -548,18 +548,20 @@
   elle/DataExplainer
   (explain-pair-data [_ a b]
     (->> (:value b)
-         (keep (fn [[f k v :as mop]]
+         (keep (fn [[f k v :as b-mop]]
                  (when (= f :append)
                    ; We only care about write-write cycles
                    (when-let [prev-v (previously-appended-element
-                                       append-index write-index b mop)]
+                                       append-index write-index b b-mop)]
                      ; What op wrote that value?
-                     (when-let [dep (ww-mop-dep append-index write-index b mop)]
+                     (when-let [dep (ww-mop-dep append-index write-index b b-mop)]
                        (when (= a dep)
                          {:type     :ww
                           :key      k
                           :value    prev-v
-                          :value'   v}))))))
+                          :value'   v
+                          :a-mop-index (.indexOf (:value a) [:append k prev-v])
+                          :b-mop-index (.indexOf (:value b) b-mop)}))))))
          first))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
@@ -596,7 +598,9 @@
                      (when (= writer a)
                        {:type  :wr
                         :key   k
-                        :value (peek v)})))))
+                        :value (peek v)
+                        :a-mop-index (.indexOf (:value a) [:append k (peek v)])
+                        :b-mop-index (.indexOf (:value b) mop)})))))
          first))
 
   (render-explanation [_ {:keys [key value]} a-name b-name]
@@ -626,7 +630,7 @@
   elle/DataExplainer
   (explain-pair-data [_ a b]
     (->> (:value b)
-         (keep (fn [[f k v :as mop]]
+         (keep-indexed (fn [i [f k v :as mop]]
                  (when (= f :append)
                    (when-let [readers (rw-mop-deps append-index write-index
                                                    read-index b mop)]
@@ -636,7 +640,19 @@
                          {:type   :rw
                           :key    k
                           :value  prev-v
-                          :value' v}))))))
+                          :value' v
+                          :a-mop-index
+                          (->> (:value a)
+                               (keep-indexed
+                                 (fn [i [f mk vs]]
+                                   (when (and (= f :r)
+                                              (= mk k)
+                                              (if (= ::init prev-v)
+                                                (= 0 (count vs))
+                                                (= (peek vs) prev-v)))
+                                     i)))
+                                            first)
+                          :b-mop-index i}))))))
          first))
 
   (render-explanation [_ {:keys [key value value']} a-name b-name]
@@ -723,6 +739,7 @@
                             which should be merged with our own dependencies.
     :anomalies              A collection of anomalies which should be reported,
                             if found.
+    :directory              Where to output files, if desired. (default nil)
 
   Supported anomalies are:
 
@@ -767,7 +784,7 @@
          ; Great, now construct a graph analyzer...
          analyzers     (into [graph] (:additional-graphs opts))
          analyzer      (apply elle/combine analyzers)
-         cycles        (ct/cycles! opts analyzer history)
+         cycles        (:anomalies (ct/cycles! opts analyzer history))
 
          ; Categorize anomalies and build up a map of types to examples
          anomalies (cond-> cycles

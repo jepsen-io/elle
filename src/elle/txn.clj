@@ -3,7 +3,8 @@
   (:require [clojure.tools.logging :refer [info warn]]
             [clojure.pprint :refer [pprint]]
             [elle [core :as elle]
-                  [graph :as g]]
+                  [graph :as g]
+                  [viz :as viz]]
             [jepsen.txn :as txn :refer [reduce-mops]]
 						[knossos.op :as op]))
 
@@ -222,12 +223,13 @@
     as))
 
 (defn cycles
-  "Takes an options map, including a set of :anomalies, an analyzer function
-  (returning Anomalies), and a history. Analyzes the history and yields
-  Anomalies, like :G1c [...]}."
+  "Takes an options map, including a set of :anomalies, an analyzer function,
+  and a history. Analyzes the history and yields the analysis, plus an anomaly
+  map like {:G1c [...]}."
   [opts analyzer history]
   (let [; Analyze the history
-        {:keys [graph explainer sccs anomalies]} (elle/check- analyzer history)
+        {:keys [graph explainer sccs anomalies] :as analysis}
+        (elle/check- analyzer history)
 
         ; Find anomalies
         as  (:anomalies opts)
@@ -236,21 +238,28 @@
         g-s (when (:G-single as)  (g-single-cases graph explainer sccs))
         g2  (when (:G2 as)        (g2-cases       graph explainer sccs))]
     ; Merge our cases into the existing anomalies map.
-    (cond-> anomalies
-      g0  (assoc :G0 g0)
-      g1c (assoc :G1c g1c)
-      g-s (assoc :G-single g-s)
-      g2  (assoc :G2 g2))))
+    (assoc analysis :anomalies (cond-> anomalies
+                                 g0  (assoc :G0 g0)
+                                 g1c (assoc :G1c g1c)
+                                 g-s (assoc :G-single g-s)
+                                 g2  (assoc :G2 g2)))))
 
 (defn cycles!
   "Like cycles, but writes out files as a side effect."
   [opts analyzer history]
-  (let [anomalies (cycles opts analyzer history)]
-    (doseq [[type cycles] anomalies]
+  (let [analysis (cycles opts analyzer history)]
+    ; First, text files.
+    (doseq [[type cycles] (:anomalies analysis)]
       (when (cycle-types type)
         (elle/write-cycles! (assoc opts :filename (str (name type) ".txt"))
-                             cycles)))
-    anomalies))
+                            cycles)))
+
+    ; Then (in case they break), GraphViz plots
+    (when-let [d (:directory opts)]
+      (viz/plot-analysis! analysis d))
+
+    ; And text files
+    analysis))
 
 (defn result-map
   "Takes options, and a map of anomaly names to anomalies, and returns a map of

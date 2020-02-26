@@ -464,9 +464,13 @@
 (defrecord WWExplainer [version-graphs]
   elle/DataExplainer
   (explain-pair-data [_ a b]
-    (when-let [e (explain-op-deps version-graphs
-                                  txn/ext-writes a txn/ext-writes b)]
-      (assoc e :type :ww)))
+    (when-let [{:keys [key value value'] :as e}
+               (explain-op-deps
+                 version-graphs txn/ext-writes a txn/ext-writes b)]
+      (assoc e
+             :type :ww
+             :a-mop-index (.indexOf (:value a) [:w key value])
+             :b-mop-index (.indexOf (:value b) [:w key value']))))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
     (str a-name " set key " (pr-str key) " to " (pr-str value) ", and "
@@ -476,9 +480,13 @@
 (defrecord RWExplainer [version-graphs]
   elle/DataExplainer
   (explain-pair-data [_ a b]
-    (when-let [e (explain-op-deps version-graphs
-                                  txn/ext-reads a txn/ext-writes b)]
-      (assoc e :type :rw)))
+    (when-let [{:keys [key value value'] :as e}
+               (explain-op-deps version-graphs
+                                txn/ext-reads a txn/ext-writes b)]
+      (assoc e
+             :type :rw
+             :a-mop-index (.indexOf (:value a) [:r key value])
+             :b-mop-index (.indexOf (:value b) [:w key value']))))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
     (str a-name " read key " (pr-str key) " = " (pr-str value) ", and "
@@ -517,7 +525,9 @@
                   (reduced
                     {:type  :wr
                      :key   k
-                     :value v})))
+                     :value v
+                     :a-mop-index (.indexOf (:value a) [:w k v])
+                     :b-mop-index (.indexOf (:value b) [:r k v])})))
               nil
               writes)))
 
@@ -645,7 +655,7 @@
          g1a      (when (:G1a anomalies) (g1a-cases history))
          g1b      (when (:G1b anomalies) (g1b-cases history))
          internal (when (:internal anomalies) (internal-cases history))
-         cycles   (ct/cycles! opts (partial graph opts) history)
+         cycles   (:anomalies (ct/cycles! opts (partial graph opts) history))
          ; Build up anomaly map
          anomalies (cond-> cycles
                      internal (assoc :internal internal)

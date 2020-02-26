@@ -69,6 +69,20 @@ of their respective reads and writes. The write-write relationship between T2
 and T1 is inferrable because T3 observed x = [1,2], which constrains the
 possible orders of appends.
 
+Oh, it makes plots, too.
+
+![images/plot-example.png](A dependency graph showing read-write, write-read, write-write, and realtime dependencies)
+
+## Usage
+
+As a user, your main entry points into Elle will be `elle.list-append/check`
+and `elle.rw-register/check`. Both namespaces also have code for generating
+sequences of transactions which you can apply to your database; see, for
+example, `elle.list-append/gen`.
+
+If you'd like to define your own relationships between transactions, see
+`elle.core`.
+
 ## Soundness
 
 Elle can check for every non-predicate anomaly from Adya, Liskov, and O'Neil's [Generalized Isolation Level Definitions](http://pmg.csail.mit.edu/papers/icde00.pdf). These include:
