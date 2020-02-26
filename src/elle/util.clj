@@ -1,5 +1,6 @@
 (ns elle.util
-  "Kitchen sink")
+  "Kitchen sink"
+  (:require [clojure.core.reducers :as r]))
 
 (defn nanos->secs [nanos] (/ nanos 1e9))
 

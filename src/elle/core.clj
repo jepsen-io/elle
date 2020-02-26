@@ -32,6 +32,7 @@
             [clojure [pprint :refer [pprint]]
                      [set :as set]
                      [string :as str]]
+            [clojure.java.io :as io]
             [jepsen.txn :as txn]
             [jepsen.txn.micro-op :as mop]
             [knossos [op :as op]
@@ -501,12 +502,13 @@
                files are written.
   :filename    What to call the file. Defaults to \"cycles.txt\"."
   [opts cycles]
-  (when (and (seq cycles)
-             ; Only write if a directory is given.
-             (:directory opts))
-    (->> cycles
-         (str/join "\n\n\n")
-         (spit (str (:directory opts) "/" (:filename opts "cycles.txt"))))))
+  (when (seq cycles)
+    ; Only write if a directory is given.
+    (when-let [d (:directory opts)]
+      (io/make-parents (io/file d "."))
+      (->> cycles
+           (str/join "\n\n\n")
+           (spit (io/file d (:filename opts "cycles.txt")))))))
 
 (defn check
   "Checks a history for cycles. Takes a function which takes a history and
@@ -514,8 +516,8 @@
   graphs to identify cyclic dependencies. Options are:
 
   {:analyzer    A function which takes a history and returns a {:graph,
-                :explainer, :anomalies} map; e.g. realtime-graph.
-   :directory   Where to write results}"
+  :explainer, :anomalies} map; e.g. realtime-graph.
+  :directory   Where to write results}"
   [opts history]
   (try+
     (let [analyze-fn (:analyzer opts)

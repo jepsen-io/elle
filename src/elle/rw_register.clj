@@ -662,3 +662,8 @@
                      g1a      (assoc :G1a g1a)
                      g1b      (assoc :G1b g1b))]
      (ct/result-map anomalies))))
+
+(defn gen
+  "See elle.txn/wr-txns for options"
+  [opts]
+  (ct/gen (ct/wr-txns opts)))
