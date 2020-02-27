@@ -175,14 +175,15 @@
   directory. Returns analysis."
   [analysis directory]
   (io/make-parents (io/file directory "."))
-  (dorun
-    (map-indexed (fn [i scc]
-                   (-> analysis
-                       (scc->ast scc)
-                       dot
-                       rv/dot->image
-                       (rv/save-image (io/file directory (str i ".png")))))
-                 (:sccs analysis)))
+  (->> (:sccs analysis)
+       (map-indexed vector)
+       (pmap (fn [[i scc]]
+               (-> analysis
+                   (scc->ast scc)
+                   dot
+                   rv/dot->image
+                   (rv/save-image (io/file directory (str i ".png"))))))
+       dorun)
   analysis)
 
 (defn view-scc
