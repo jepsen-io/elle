@@ -209,8 +209,8 @@
   (testing "empty"
     (is (= {}
            (g/->clj (version-graphs->transaction-graph
-                          []
-                          (g/digraph))))))
+                      []
+                      (g/digraph))))))
   (testing "rr"
     ; We don't generate rr edges, under the assumption they'll be covered by
     ; rw/wr/ww edges.
@@ -269,7 +269,33 @@
               [t4 t4'] (pair (op 1 :ok "ry2"))]
           (is (= {:valid?         false
                   :anomaly-types  [:G0]
-                  :anomalies      {:G0 ["Let:\n  T1 = {:type :ok, :value [[:w :x 1] [:w :y 2]], :process 0, :index 1}\n  T2 = {:type :ok, :value [[:w :x 2] [:w :y 1]], :process 1, :index 3}\n\nThen:\n  - T1 < T2, because T1 set key :x to 1, and T2 set it to 2, which came later in the version order.\n  - However, T2 < T1, because T2 set key :y to 1, and T1 set it to 2, which came later in the version order: a contradiction!"]}}
+                  :anomalies      {:G0 [{:cycle
+                                        [{:type :ok,
+                                          :value [[:w :x 1] [:w :y 2]],
+                                          :process 0,
+                                          :index 1}
+                                         {:type :ok,
+                                          :value [[:w :x 2] [:w :y 1]],
+                                          :process 1,
+                                          :index 3}
+                                         {:type :ok,
+                                          :value [[:w :x 1] [:w :y 2]],
+                                          :process 0,
+                                          :index 1}],
+                                        :steps
+                                        [{:key :x,
+                                          :value 1,
+                                          :value' 2,
+                                          :type :ww,
+                                          :a-mop-index 0,
+                                          :b-mop-index 0}
+                                         {:key :y,
+                                          :value 1,
+                                          :value' 2,
+                                          :type :ww,
+                                          :a-mop-index 1,
+                                          :b-mop-index 1}],
+                                        :type :G0}]}}
                  (c {:anomalies         [:G0]
                      :sequential-keys?  true}
                     [t1 t1' t2 t2' t3 t3' t4 t4']))))))
@@ -311,7 +337,22 @@
             t1 (op "wx1ry1")
             t2 (op "wy1rx1")
             h  [t1 t2]
-            msg "Let:\n  T1 = {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}\n  T2 = {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}\n\nThen:\n  - T1 < T2, because T1 wrote :y = 1, which was read by T2.\n  - However, T2 < T1, because T2 wrote :x = 1, which was read by T1: a contradiction!"]
+            msg {:cycle
+                  [{:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}
+                   {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}
+                   {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}],
+                  :steps
+                  [{:type :wr,
+                    :key :y,
+                    :value 1,
+                    :a-mop-index 0,
+                    :b-mop-index 1}
+                   {:type :wr,
+                    :key :x,
+                    :value 1,
+                    :a-mop-index 0,
+                    :b-mop-index 1}],
+                  :type :G1c}]
         ; G0 won't see this
         (is (= {:valid? true} (c {:anomalies [:G0]} h)))
         ; But G1 will!
@@ -330,13 +371,10 @@
             t1 (op "wx1ry1")
             t2 (op "wy1rx1")
             h  [t1 t2]
-            msg "Let:\n  T1 = {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}\n  T2 = {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}\n\nThen:\n  - T1 < T2, because T1 wrote :y = 1, which was read by T2.\n  - However, T2 < T1, because T2 wrote :x = 1, which was read by T1: a contradiction!"]
-        ; But G1 will!
-        (is (= {:valid? false
-                :anomaly-types [:G1c]
-                :anomalies {:G1c [msg]}}
-               (c {:anomalies [:G1], :directory "."} h)))
-        (is (= (slurp "G1c.txt") msg))))
+            msg "G1c #0\nLet:\n  T1 = {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}\n  T2 = {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}\n\nThen:\n  - T1 < T2, because T1 wrote :y = 1, which was read by T2.\n  - However, T2 < T1, because T2 wrote :x = 1, which was read by T1: a contradiction!"]
+        ; Write out file and check for a cycle txt file
+        (c {:anomalies [:G1], :directory "test-output"} h)
+        (is (= msg (slurp "test-output/G1c.txt")))))
 
     (testing "G2"
       (let [[t1 t1'] (pair (op 0 :ok "rx1ry1"))  ; Establish the initial state
@@ -347,7 +385,33 @@
         ; the initial states of 1.
         (is (= {:valid? false
                 :anomaly-types [:G2]
-                :anomalies {:G2 ["Let:\n  T1 = {:type :ok, :value [[:r :x 1] [:w :y 2]], :process 1, :index 5}\n  T2 = {:type :ok, :value [[:r :y 1] [:w :x 2]], :process 2, :index 4}\n\nThen:\n  - T1 < T2, because T1 read key :x = 1, and T2 set it to 2, which came later in the version order.\n  - However, T2 < T1, because T2 read key :y = 1, and T1 set it to 2, which came later in the version order: a contradiction!"]}}
+                :anomalies {:G2 [{:cycle
+                                  [{:type :ok,
+                                    :value [[:r :x 1] [:w :y 2]],
+                                    :process 1,
+                                    :index 5}
+                                   {:type :ok,
+                                    :value [[:r :y 1] [:w :x 2]],
+                                    :process 2,
+                                    :index 4}
+                                   {:type :ok,
+                                    :value [[:r :x 1] [:w :y 2]],
+                                    :process 1,
+                                    :index 5}],
+                                  :steps
+                                  [{:key :x,
+                                    :value 1,
+                                    :value' 2,
+                                    :type :rw,
+                                    :a-mop-index 0,
+                                    :b-mop-index 1}
+                                   {:key :y,
+                                    :value 1,
+                                    :value' 2,
+                                    :type :rw,
+                                    :a-mop-index 0,
+                                    :b-mop-index 1}],
+                                  :type :G2}]}}
                (c {:anomalies         [:G2]
                    :linearizable-keys? true}
                   [t1 t1' t2 t3 t3' t2'])))))
@@ -371,7 +435,32 @@
         ; anomaly!
         (is (= {:valid? false
                 :anomaly-types [:G-single]
-                :anomalies {:G-single ["Let:\n  T1 = {:type :ok, :value [[:r :x nil] [:r :y 1]], :process 0, :index 3}\n  T2 = {:type :ok, :value [[:w :y 1] [:w :x 2]], :process 0, :index 2}\n\nThen:\n  - T1 < T2, because T1 read key :x = nil, and T2 set it to 2, which came later in the version order.\n  - However, T2 < T1, because T2 wrote :y = 1, which was read by T1: a contradiction!"]}}
+                :anomalies {:G-single [{:cycle
+                                        [{:type :ok,
+                                          :value [[:r :x nil] [:r :y 1]],
+                                          :process 0,
+                                          :index 3}
+                                         {:type :ok,
+                                          :value [[:w :y 1] [:w :x 2]],
+                                          :process 0,
+                                          :index 2}
+                                         {:type :ok,
+                                          :value [[:r :x nil] [:r :y 1]],
+                                          :process 0,
+                                          :index 3}],
+                                        :steps
+                                        [{:key :x,
+                                          :value nil,
+                                          :value' 2,
+                                          :type :rw,
+                                          :a-mop-index 0,
+                                          :b-mop-index 1}
+                                         {:type :wr,
+                                          :key :y,
+                                          :value 1,
+                                          :a-mop-index 0,
+                                          :b-mop-index 1}],
+                                        :type :G-single}]}}
                (c {} [t1 t2 t2' t1'])))))
 
     (testing "wfr"
@@ -383,7 +472,33 @@
         ; But if we use WFR, we know 1 < 2, and can see the G-single
         (is (= {:valid? false
                 :anomaly-types [:G-single]
-                :anomalies {:G-single ["Let:\n  T1 = {:type :ok, :value [[:r :x 1] [:r :y 1]], :process 0, :index 1}\n  T2 = {:type :ok, :value [[:r :y 1] [:w :x 1] [:w :y 2]], :process 0, :index 0}\n\nThen:\n  - T1 < T2, because T1 read key :y = 1, and T2 set it to 2, which came later in the version order.\n  - However, T2 < T1, because T2 wrote :x = 1, which was read by T1: a contradiction!"]}}
+                :anomalies {:G-single
+                            [{:cycle
+                              [{:type :ok,
+                                :value [[:r :x 1] [:r :y 1]],
+                                :process 0,
+                                :index 1}
+                               {:type :ok,
+                                :value [[:r :y 1] [:w :x 1] [:w :y 2]],
+                                :process 0,
+                                :index 0}
+                               {:type :ok,
+                                :value [[:r :x 1] [:r :y 1]],
+                                :process 0,
+                                :index 1}],
+                              :steps
+                              [{:key :y,
+                                :value 1,
+                                :value' 2,
+                                :type :rw,
+                                :a-mop-index 1,
+                                :b-mop-index 2}
+                               {:type :wr,
+                                :key :x,
+                                :value 1,
+                                :a-mop-index 1,
+                                :b-mop-index 0}],
+                              :type :G-single}]}}
                (c {:wfr-keys? true} [t1 t2])))))
 
     (testing "cyclic version order"

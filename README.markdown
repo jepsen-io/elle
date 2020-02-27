@@ -29,6 +29,8 @@ make sure they're valid.
 
 ## Demo
 
+First, you'll need a copy of Graphviz installed.
+
 Imagine a database where each object (identified by keys like `:x` or `:y`) is
 a list of numbers. Transactions are made up of reads `[:r :x [1 2 3]]`, which
 return the current value of the given list, and writes `[:append :y 4]`, which
@@ -51,25 +53,59 @@ observes `x`, and sees its value as `[1 2]`.
 h
 ```
 
-Now, we ask Elle to check this history, looking for anomalies up to G2, and print the resulting anomalies.
+Now, we ask Elle to check this history, looking for anomalies up to G2, and
+have it dump anomalies to a directory called "out/".
 
 ```clj
-=> (->> h (a/check {:anomalies [:G2]}) :anomalies println)
-{:G1c (Let:
-  T1 = {:type :ok, :value [[:append :x 2] [:append :y 1]]}
-  T2 = {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-
-Then:
-  - T1 < T2, because T2 observed T1's append of 1 to key :y.
-  - However, T2 < T1, because T1 appended 2 after T2 appended 1 to :x: a contradiction!)}
+=> (pprint (a/check {:anomalies [:G2], :directory "out"} h))
+{:valid? false,
+ :anomaly-types (:G1c),
+ :anomalies
+ {:G1c
+  ({:cycle
+    [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
+     {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+     {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+    :steps
+    ({:type :wr, :key :y, :value 1, :a-mop-index 1, :b-mop-index 1}
+     {:type :ww,
+      :key :x,
+      :value 1,
+      :value' 2,
+      :a-mop-index 0,
+      :b-mop-index 0}),
+    :type :G1c})}}
 ```
 
 Here, Elle can infer the write-read relationship between T1 and T2 on the basis
 of their respective reads and writes. The write-write relationship between T2
 and T1 is inferrable because T3 observed x = [1,2], which constrains the
-possible orders of appends.
+possible orders of appends. This is a G1c anomaly: read skew. The `:cycle`
+field shows the operations in that cycle, and `:steps` shows the dependencies
+between each pair of operations in the cycle. Let's see that in text:
 
-Oh, it makes plots, too.
+```sh
+$ cat out/G1c.txt
+G1c #0
+Let:
+  T1 = {:type :ok, :value [[:append :x 2] [:append :y 1]]}
+  T2 = {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+
+Then:
+  - T1 < T2, because T2 observed T1's append of 1 to key :y.
+  - However, T2 < T1, because T1 appended 2 after T2 appended 1 to :x: a contradiction!
+```
+
+In the `out/G1c` directory, you'll find a corresponding plot.
+
+![A plot showing the G1c dependency](images/g1c-example.png)
+
+In addition to rendering a graph for each individual cycle, Elle generates a
+plot for each strongly-connected component of the dependency graph. This can be
+helpful for getting a handle on the *scope* of an anomalous behavior, whereas
+cycles show as small a set of transactions as possible. Here's a plot from a
+more complex history, involving realtime edges, write-write, write-read, and
+read-write dependencies:
 
 ![A dependency graph showing read-write, write-read, write-write, and realtime dependencies](images/plot-example.png)
 

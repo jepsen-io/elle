@@ -320,7 +320,24 @@
             t2 (op "ax2ay2")
             t3 (op "rx12ry21")
             h [t1 t2 t3]
-            msg "Let:\n  T1 = {:type :ok, :value [[:append :x 2] [:append :y 2]]}\n  T2 = {:type :ok, :value [[:append :x 1] [:append :y 1]]}\n\nThen:\n  - T1 < T2, because T2 appended 1 after T1 appended 2 to :y.\n  - However, T2 < T1, because T1 appended 2 after T2 appended 1 to :x: a contradiction!"]
+            msg {:cycle
+                 [{:type :ok, :value [[:append :x 2] [:append :y 2]]}
+                  {:type :ok, :value [[:append :x 1] [:append :y 1]]}
+                  {:type :ok, :value [[:append :x 2] [:append :y 2]]}],
+                 :steps
+                 [{:type :ww,
+                   :key :y,
+                   :value 2,
+                   :value' 1,
+                   :a-mop-index 1,
+                   :b-mop-index 1}
+                  {:type :ww,
+                   :key :x,
+                   :value 1,
+                   :value' 2,
+                   :a-mop-index 0,
+                   :b-mop-index 0}],
+                 :type :G0}]
         ; All checkers catch this.
         (is (= {:valid? false
                 :anomaly-types [:G0]
@@ -388,7 +405,23 @@
             t2 (op "ax2ay1")
             t3 (op "rx12ry1")
             h  [t1 t2 t3]
-            msg "Let:\n  T1 = {:type :ok, :value [[:append :x 2] [:append :y 1]]}\n  T2 = {:type :ok, :value [[:append :x 1] [:r :y [1]]]}\n\nThen:\n  - T1 < T2, because T2 observed T1's append of 1 to key :y.\n  - However, T2 < T1, because T1 appended 2 after T2 appended 1 to :x: a contradiction!"]
+            msg {:cycle
+                [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
+                 {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+                 {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+                :steps
+                [{:type :wr,
+                  :key :y,
+                  :value 1,
+                  :a-mop-index 1,
+                  :b-mop-index 1}
+                 {:type :ww,
+                  :key :x,
+                  :value 1,
+                  :value' 2,
+                  :a-mop-index 0,
+                  :b-mop-index 0}],
+                :type :G1c}]
         ; G0 won't see this
         (is (= {:valid? true} (c {:anomalies [:G0]} h)))
         ; But G1 will!
@@ -407,7 +440,23 @@
             t2  (op "ax2ry")   ; T2 writes x after T1
             t3  (op "rx12")
             h   [t1 t2 t3]
-            msg "Let:\n  T1 = {:type :ok, :value [[:append :x 2] [:r :y]]}\n  T2 = {:type :ok, :value [[:append :x 1] [:append :y 1]]}\n\nThen:\n  - T1 < T2, because T1 observed the initial (nil) state of :y, which T2 created by appending 1.\n  - However, T2 < T1, because T1 appended 2 after T2 appended 1 to :x: a contradiction!"]
+            msg {:cycle [{:type :ok, :value [[:append :x 2] [:r :y]]}
+                         {:type :ok, :value [[:append :x 1] [:append :y 1]]}
+                         {:type :ok, :value [[:append :x 2] [:r :y]]}],
+                 :steps
+                 [{:type :rw,
+                   :key :y,
+                   :value :elle.list-append/init,
+                   :value' 1,
+                   :a-mop-index 1,
+                   :b-mop-index 1}
+                  {:type :ww,
+                   :key :x,
+                   :value 1,
+                   :value' 2,
+                   :a-mop-index 0,
+                   :b-mop-index 0}],
+                 :type :G-single}]
         ; G0 and G1 won't catch this
         (is (= {:valid? true} (c {:anomalies [:G0]} h)))
         (is (= {:valid? true} (c {:anomalies [:G1]} h)))
@@ -432,7 +481,25 @@
         ; But G2 will
         (is (= {:valid? false
                 :anomaly-types [:G2]
-                :anomalies {:G2 ["Let:\n  T1 = {:type :ok, :value [[:append :x 1] [:r :y]]}\n  T2 = {:type :ok, :value [[:append :y 1] [:r :x]]}\n\nThen:\n  - T1 < T2, because T1 observed the initial (nil) state of :y, which T2 created by appending 1.\n  - However, T2 < T1, because T2 observed the initial (nil) state of :x, which T1 created by appending 1: a contradiction!"]}}
+                :anomalies
+                {:G2 [{:cycle
+                      [{:type :ok, :value [[:append :x 1] [:r :y]]}
+                       {:type :ok, :value [[:append :y 1] [:r :x]]}
+                       {:type :ok, :value [[:append :x 1] [:r :y]]}],
+                      :steps
+                      [{:type :rw,
+                        :key :y,
+                        :value :elle.list-append/init,
+                        :value' 1,
+                        :a-mop-index 1,
+                        :b-mop-index 0}
+                       {:type :rw,
+                        :key :x,
+                        :value :elle.list-append/init,
+                        :value' 1,
+                        :a-mop-index 1,
+                        :b-mop-index 0}],
+              :type :G2}]}}
                (c {:anomalies [:G2]} h)))))
 
     (testing "Strict-1SR violation"
@@ -450,7 +517,22 @@
         ; But it will if we introduce a realtime graph component
         (is (= {:valid? false
                 :anomaly-types [:G-single]
-                :anomalies {:G-single ["Let:\n  T1 = {:index 3, :type :ok, :value [[:r :x [1]]]}\n  T2 = {:index 1, :type :ok, :value [[:append :x 2]]}\n\nThen:\n  - T1 < T2, because T1 did not observe T2's append of 2 to :x.\n  - However, T2 < T1, because T2 completed at index 1, before the invocation of T1, at index 2: a contradiction!"]}}
+                :anomalies
+                {:G-single [{:cycle
+                             [{:index 3, :type :ok, :value [[:r :x [1]]]}
+                              {:index 1, :type :ok, :value [[:append :x 2]]}
+                              {:index 3, :type :ok, :value [[:r :x [1]]]}],
+                             :steps
+                             [{:type :rw,
+                               :key :x,
+                               :value 1,
+                               :value' 2,
+                               :a-mop-index 0,
+                               :b-mop-index 0}
+                              {:type :realtime,
+                               :a' {:index 1, :type :ok, :value [[:append :x 2]]},
+                               :b {:index 2, :type :invoke, :value [[:r :x nil]]}}],
+                             :type :G-single}]}}
                (c {:anomalies [:G2]
                    :additional-graphs [elle/realtime-graph]}
                   h)))))
@@ -466,8 +548,24 @@
                 :anomaly-types [:G1c :incompatible-order]
                 :anomalies
                 {:incompatible-order [{:key :x, :values [[1 3] [1 2 3]]}]
-                 :G1c ["Let:\n  T1 = {:type :ok, :value [[:append :x 3] [:append :y 1]]}\n  T2 = {:type :ok, :value [[:append :x 1] [:r :y [1]]]}\n\nThen:\n  - T1 < T2, because T2 observed T1's append of 1 to key :y.\n  - However, T2 < T1, because T1 appended 3 after T2 appended 1 to :x: a contradiction!"]}}
-                (c {:anomalies [:G1]} h)))))
+                 :G1c [{:cycle
+                        [{:type :ok, :value [[:append :x 3] [:append :y 1]]}
+                         {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+                         {:type :ok, :value [[:append :x 3] [:append :y 1]]}],
+                        :steps
+                        [{:type :wr,
+                          :key :y,
+                          :value 1,
+                          :a-mop-index 1,
+                          :b-mop-index 1}
+                         {:type :ww,
+                          :key :x,
+                          :value 1,
+                          :value' 3,
+                          :a-mop-index 0,
+                          :b-mop-index 0}]
+                        :type :G1c}]}}
+               (c {:anomalies [:G1]} h)))))
 
   (testing "dirty update"
     (testing "direct"
@@ -503,10 +601,27 @@
             h  [t1 t2 t3]]
         (is (= {:valid? false
                 :anomaly-types [:G1c :duplicate-elements]
-                :anomalies {:duplicate-elements [{:op t3
-                                                  :mop [:r :x [1 2 1]]
-                                                  :duplicates {1 2}}]
-                            :G1c ["Let:\n  T1 = {:type :ok, :value [[:append :x 2] [:append :y 1]]}\n  T2 = {:type :ok, :value [[:append :x 1] [:r :y [1]]]}\n\nThen:\n  - T1 < T2, because T2 observed T1's append of 1 to key :y.\n  - However, T2 < T1, because T1 appended 2 after T2 appended 1 to :x: a contradiction!"]}}
+                :anomalies
+                {:duplicate-elements [{:op t3
+                                       :mop [:r :x [1 2 1]]
+                                       :duplicates {1 2}}]
+                 :G1c [{:cycle
+                        [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
+                         {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+                         {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+                        :steps
+                        [{:type :wr,
+                          :key :y,
+                          :value 1,
+                          :a-mop-index 1,
+                          :b-mop-index 1}
+                         {:type :ww,
+                          :key :x,
+                          :value 1,
+                          :value' 2,
+                          :a-mop-index 0,
+                          :b-mop-index 0}],
+                        :type :G1c}]}}
                (c {:anomalies [:G1]} h)))))
 
     (testing "internal consistency violation"

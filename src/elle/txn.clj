@@ -2,6 +2,7 @@
   "Functions for cycle analysis over transactional workloads."
   (:require [clojure.tools.logging :refer [info warn]]
             [clojure.pprint :refer [pprint]]
+            [clojure.java.io :as io]
             [elle [core :as elle]
                   [graph :as g]
                   [viz :as viz]]
@@ -120,10 +121,7 @@
   [pair-explainer cycle-fn sccs]
   (seq (keep (fn [scc]
                (when-let [cycle (cycle-fn scc)]
-                 (->> cycle
-                      (elle/explain-cycle cycle-explainer pair-explainer)
-                      (elle/render-cycle-explanation cycle-explainer
-                                                      pair-explainer))))
+                 (elle/explain-cycle cycle-explainer pair-explainer cycle)))
              sccs)))
 
 (defn g0-cases
@@ -198,8 +196,7 @@
                                                  pair-explainer
                                                  cycle)]
                      (when (= :G2 (:type cx))
-                       (elle/render-cycle-explanation cycle-explainer
-                                                      pair-explainer cx)))))
+                       cx))))
                sccs))))
 
 (def cycle-types
@@ -237,6 +234,7 @@
         g1c (when (:G1c as)       (g1c-cases      graph explainer sccs))
         g-s (when (:G-single as)  (g-single-cases graph explainer sccs))
         g2  (when (:G2 as)        (g2-cases       graph explainer sccs))]
+
     ; Merge our cases into the existing anomalies map.
     (assoc analysis :anomalies (cond-> anomalies
                                  g0  (assoc :G0 g0)
@@ -251,14 +249,27 @@
     ; First, text files.
     (doseq [[type cycles] (:anomalies analysis)]
       (when (cycle-types type)
-        (elle/write-cycles! (assoc opts :filename (str (name type) ".txt"))
+        (elle/write-cycles! (assoc opts
+                                   :pair-explainer  (:explainer analysis)
+                                   :cycle-explainer cycle-explainer
+                                   :filename        (str (name type) ".txt"))
                             cycles)))
 
-    ; Then (in case they break), GraphViz plots
+    ; Then (in case they break), GraphViz plots.
     (when-let [d (:directory opts)]
-      (viz/plot-analysis! analysis d))
+      ; We do a directory for SCCs...
+      (viz/plot-analysis! analysis (io/file d "sccs"))
 
-    ; And text files
+      ; Then for each class of anomaly...
+      (doseq [[type cycles] (:anomalies analysis)]
+        ; plot-analysis! expects a list of sccs, which it's gonna go through
+        ; and plot. We're going to give it just the component it needs to
+        ; show each particular cycle explanation.
+        (let [sccs (map (comp set :cycle) cycles)]
+          (viz/plot-analysis! (assoc analysis :sccs sccs)
+                              (io/file d (name type))))))
+
+    ; And return analysis
     analysis))
 
 (defn result-map

@@ -498,6 +498,8 @@
 (defn write-cycles!
   "Writes cycles to a file. Opts:
 
+  :cycle-explainer  How to explain a cycle
+  :pair-explainer   How to explain a pair
   :directory   What directory to write to. Defaults to nil, which means no
                files are written.
   :filename    What to call the file. Defaults to \"cycles.txt\"."
@@ -507,6 +509,14 @@
     (when-let [d (:directory opts)]
       (io/make-parents (io/file d "."))
       (->> cycles
+           ; Turn each cycle into a string
+           (map-indexed (fn [i cx]
+                          (str (name (:type cx "Cycle")) " #" i "\n"
+                               (render-cycle-explanation
+                                 (:cycle-explainer opts cycle-explainer)
+                                 (:pair-explainer opts)
+                                 cx))))
+           ; And put em in a file
            (str/join "\n\n\n")
            (spit (io/file d (:filename opts "cycles.txt")))))))
 
