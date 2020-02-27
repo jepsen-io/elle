@@ -261,14 +261,16 @@
       (viz/plot-analysis! analysis (io/file d "sccs"))
 
       ; Then for each class of anomaly...
-      (doseq [[type cycles] (:anomalies analysis)]
-        (when (cycle-types type)
-          ; plot-analysis! expects a list of sccs, which it's gonna go through
-          ; and plot. We're going to give it just the component it needs to
-          ; show each particular cycle explanation.
-          (let [sccs (map (comp set :cycle) cycles)]
-            (viz/plot-analysis! (assoc analysis :sccs sccs)
-                                (io/file d (name type)))))))
+      (dorun
+        (pmap (fn [[type cycles]]
+                (when (cycle-types type)
+                  ; plot-analysis! expects a list of sccs, which it's gonna go
+                  ; through and plot. We're going to give it just the component
+                  ; it needs to show each particular cycle explanation.
+                  (let [sccs (map (comp set :cycle) cycles)]
+                    (viz/plot-analysis! (assoc analysis :sccs sccs)
+                                        (io/file d (name type))))))
+        (:anomalies analysis))))
 
     ; And return analysis
     analysis))
