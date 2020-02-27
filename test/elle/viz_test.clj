@@ -11,34 +11,40 @@
             [knossos.history :as h]
             [clojure.test :refer :all]))
 
-(let [[t1 t1'] (pair (lat/op 1 :ok "ax1ry1rz12"))
-      [t2 t2'] (pair (lat/op 2 :ok "az1"))
-      [t3 t3'] (pair (lat/op 3 :ok "rx12rz1"))
-      [t4 t4'] (pair (lat/op 4 :ok "az2ay1"))
-      [t5 t5'] (pair (lat/op 5 :ok "rzax2"))
-      h (h/index  [t3 t3' t1 t1' t2 t2' t4 t4' t5 t5'])
+(defn list-analysis
+  []
+  (let [[t1 t1'] (pair (lat/op 1 :ok "ax1ry1rz12"))
+        [t2 t2'] (pair (lat/op 2 :ok "az1"))
+        [t3 t3'] (pair (lat/op 3 :ok "rx12rz1"))
+        [t4 t4'] (pair (lat/op 4 :ok "az2ay1"))
+        [t5 t5'] (pair (lat/op 5 :ok "rzax2"))
+        h (h/index  [t3 t3' t1 t1' t2 t2' t4 t4' t5 t5'])
 
-      analyzer (elle/combine la/graph elle/realtime-graph)
-      analysis (elle/check- analyzer h)]
+        analyzer (elle/combine la/graph elle/realtime-graph)]
+      (elle/check- analyzer h)))
 
-  (deftest ^:interactive view-scc-test
-    (view-scc analysis (first (:sccs analysis))))
+(deftest ^:interactive view-scc-test
+  (let [a (list-analysis)]
+    (view-scc a (first (:sccs a)))))
 
-  (deftest plot-analysis!-test
-    (plot-analysis! analysis "plots/list-append")))
+(deftest plot-analysis!-test
+  (plot-analysis! (list-analysis) "plots/list-append"))
 
-(let [[t1 t1'] (pair (rt/op 1 :ok "wx1ry1"))
-      [t2 t2'] (pair (rt/op 1 :ok "wx2"))
-      [t3 t3'] (pair (rt/op 2 :ok "rx2wy1"))
-      [t4 t4'] (pair (rt/op 3 :ok "rx1"))
-      h (h/index  [t1 t1' t2 t2' t3 t3' t4 t4'])
+(defn register-analysis
+  []
+  (let [[t1 t1'] (pair (rt/op 1 :ok "wx1ry1"))
+        [t2 t2'] (pair (rt/op 1 :ok "wx2"))
+        [t3 t3'] (pair (rt/op 2 :ok "rx2wy1"))
+        [t4 t4'] (pair (rt/op 3 :ok "rx1"))
+        h (h/index  [t1 t1' t2 t2' t3 t3' t4 t4'])
 
-      analyzer (partial r/graph {:additional-graphs [elle/process-graph]
-                                 :sequential-keys? true})
-      analysis (elle/check- analyzer h)]
+        analyzer (partial r/graph {:additional-graphs [elle/process-graph]
+                                   :sequential-keys? true})]
+      elle/check- analyzer h))
 
-  (deftest ^:interactive view-r-scc-test
-    (view-scc analysis (first (:sccs analysis))))
+(deftest ^:interactive view-r-scc-test
+  (let [a (register-analysis)]
+    (view-scc a (first (:sccs a)))))
 
-  (deftest plot-r-analysis!-test
-    (plot-analysis! analysis "plots/rw-register")))
+(deftest plot-r-analysis!-test
+  (plot-analysis! (register-analysis) "plots/rw-register"))

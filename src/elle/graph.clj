@@ -76,6 +76,16 @@
   [^ICollection x]
   (.forked x))
 
+(defn ^ISet vertices
+  "The set of all vertices in the node."
+  [^IGraph g]
+  (.vertices g))
+
+(defn contains-node?
+  "Is this node in the graph?"
+  [^IGraph g v]
+  (.contains (vertices g) v))
+
 (defn in
   "Inbound edges to v in graph g."
   [^IGraph g v]
@@ -94,7 +104,7 @@
     (apply [_ a b]
       (set/union a b))))
 
-(defn edge
+(defn ^IEdge edge
   "Returns the edge between two vertices."
   [^IGraph g a b]
   (.edge g a b))
@@ -106,6 +116,24 @@
   (map (fn [^IEdge e]
          (Graphs$Edge. (.value e) (.to e) (.from e)))
        (.edges g)))
+
+(defn node->edge-map
+  "Takes a graph and a node. Assumes edges are sets of relationships. Returns a
+  map of relationships to sets of downstream nodes with that relationship."
+  [^DirectedGraph g a]
+  (reduce (fn [m b]
+            (reduce (fn [m rel]
+                      (let [s (get m rel #{})]
+                        (assoc m rel (conj s b))))
+                    m
+                    (edge g a b)))
+          {}
+          (out g a)))
+
+(defn add
+  "Add a node to a graph."
+  [^DirectedGraph graph node]
+  (.add graph node))
 
 (defn link
   "Helper for linking Bifurcan graphs. Optionally takes a relationship, which
@@ -218,6 +246,7 @@
       (let [node (first nodes)]
         (recur (unlink g node node) (next nodes)))
       (forked g))))
+
 
 (defn downstream-matches
   "Returns the set of all nodes matching pred including or downstream of

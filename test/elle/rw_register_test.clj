@@ -202,8 +202,13 @@
       (is (= {:x {1 #{3}, 3 #{}}
               :y {1 #{3}, 3 #{}}}
              (vg {(op "wx1") [(op 0 :info "rx_") (op "rx3")]
-                  (op "wy1") [(op 0 :fail "wy2") (op "ry3")]}))))))
+                  (op "wy1") [(op 0 :fail "wy2") (op "ry3")]}))))
 
+    (testing "see through seq. failed/crashed ops"
+      (is (= {:x {1 #{3}, 3 #{}}}
+             (vg {(op "wx1")          [(op 0 :info "rx_")]
+                  (op 0 :info "rx_")  [(op 0 :fail "wx2")]
+                  (op 0 :fail "wx2")  [(op 0 :ok "wx3")]}))))))
 
 (deftest version-graphs->transaction-graphs-test
   (testing "empty"

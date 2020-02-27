@@ -185,3 +185,19 @@
                                 4 [5 6 7]
                                 6 [1]})
                 (collapse-graph odd?))))))
+
+(deftest node->edge-map-test
+  (testing "empty"
+    (is (= {} (node->edge-map (-> (digraph)
+                                  (add 1))
+                            1))))
+
+  (testing "simple"
+    (is (= {:x #{2 3}
+            :y #{3 4}}
+           (node->edge-map (-> (digraph)
+                               (link 1 2 :x)
+                               (link 1 3 :x)
+                               (link 1 3 :y)
+                               (link 1 4 :y))
+                           1)))))
