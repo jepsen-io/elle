@@ -54,7 +54,7 @@ h
 ```
 
 Now, we ask Elle to check this history, looking for anomalies up to G2, and
-have it dump anomalies to a directory called "out/".
+have it dump anomalies to a directory called `out/`.
 
 ```clj
 => (pprint (a/check {:anomalies [:G2], :directory "out"} h))
