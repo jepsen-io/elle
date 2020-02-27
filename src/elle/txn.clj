@@ -7,7 +7,10 @@
                   [graph :as g]
                   [viz :as viz]]
             [jepsen.txn :as txn :refer [reduce-mops]]
-						[knossos.op :as op]))
+						[knossos.op :as op])
+  (:import (io.lacuna.bifurcan LinearMap
+                               Map)))
+
 
 (defn op-mops
   "A lazy sequence of all [op mop] pairs from a history."
@@ -313,7 +316,8 @@
            [txn state] (loop [length  length
                               txn     []
                               state   state]
-                         (let [active-keys (:active-keys state)]
+                         (let [^java.util.List active-keys
+                               (:active-keys state)]
                            (if (zero? length)
                              ; All done!
                              [txn state]

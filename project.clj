@@ -8,7 +8,7 @@
                  [knossos "0.3.6"]
                  [org.clojure/tools.logging "0.6.0"]
                  [rhizome "0.2.9"]
-                 [jepsen.txn "0.1.1"]
+                 [jepsen.txn "0.1.2-SNAPSHOT"]
                  [io.lacuna/bifurcan "0.1.0"]]
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.10.1"]]}}
   :repl-options {:init-ns elle.core}

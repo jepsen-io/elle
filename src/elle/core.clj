@@ -193,7 +193,7 @@
                  (conj explainers (:explainer analysis))))
         ; Done!
       {:anomalies anomalies
-       :graph     (.forked graph)
+       :graph     (g/forked graph)
        :explainer (CombinedExplainer. explainers)}))))
 
 ;; Monotonic keys!
@@ -486,7 +486,7 @@
                                               explainer)))
         ; It's almost certainly the case that something went wrong if we didn't
         ; infer *any* dependencies.
-        anomalies (if (= 0 (.size graph))
+        anomalies (if (= 0 (g/size graph))
                     (assoc anomalies :empty-transaction-graph true)
                     anomalies)]
     {:graph     graph

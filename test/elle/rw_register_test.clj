@@ -1,6 +1,8 @@
 (ns elle.rw-register-test
   (:refer-clojure :exclude [test])
-  (:require [elle [core :as elle]
+  (:require [clojure.pprint :refer [pprint]]
+            [dom-top.core :refer [real-pmap]]
+						[elle [core :as elle]
                   [graph :as g]
                   [rw-register :refer :all]
                   [util :refer [map-vals]]]
@@ -132,6 +134,39 @@
       ; as far as this order is concerned.
       (is (true? (:valid? (check [[:r :x 0] [:r :y 0] [:w :x 1]]
                                  [[:r :x 0] [:r :y 0] [:w :y 1]])))))))
+
+(deftest ext-key-graph-test
+  (let [ekg (fn [tg] (-> tg g/map->bdigraph ext-key-graph g/->clj))]
+    (testing "empty"
+      (is (= {}
+             (ekg {}))))
+
+    (testing "simple"
+      (is (= {(op "rx1") {:x #{(op "rx2")}}
+              (op "rx2") {}}
+             (ekg {(op "rx1") [(op "rx2")]}))))
+
+    (testing "transitive"
+      (is (= {(op "wx1") {:x #{(op "wx2")}}
+              (op "wx2") {:x #{(op "wx3")}}
+              (op "wx3") {:x #{(op "wx4")}}
+              (op "wx4") {}}
+             (ekg {(op "wx1") [(op "wx2")]
+                   (op "wx2") [(op "wx3")]
+                   (op "wx3") [(op "wx4")]}))))
+
+    (testing "transitive w diff keys"
+      (is (= {(op "wx1") {:x #{(op "wx2wy2")}
+                          :y #{(op "wx2wy2")}
+                          :z #{(op "wy3wz3")}}
+              (op "wx2wy2") {:y #{(op "wy3wz3")}
+                             :z #{(op "wy3wz3")}}
+              (op "wy3wz3") {:z #{(op "wz4")}}
+              (op "wz4") {}}
+             (ekg {(op "wx1")     [(op "wx2wy2")]
+                   (op "wx2wy2")  [(op "wy3wz3")]
+                   (op "wy3wz3")  [(op "wz4")]}))))))
+
 
 (deftest transaction-graph->version-graphs-test
   ; Turn transaction graphs (in clojure maps) into digraphs, then into version
@@ -607,3 +642,25 @@
                             nil
                             (history/index h)
                             nil))))))
+
+(deftest ^:perf e-graph-test-perf
+  ; Generate a random history
+  (let [history (atom [])
+        x       (atom 0)
+        state   (atom {})
+        threads (real-pmap
+                  (fn [p]
+                    (dotimes [i 1000]
+                      ; Simulate a generation and random key
+                      (let [k [(mod i 32) (rand-int 5)]
+                            x (swap! x inc)]
+                        (swap! history conj {:type :invoke, :process p, :value [[:w k x]]})
+                        (swap! state assoc k x)
+                        (swap! history conj {:type :ok, :process p, :value [[:w k x]]}))))
+                    (range 5))
+        history (history/index @history)
+        graph   (:graph (elle/realtime-graph history))]
+		; (prn graph)
+    ; (println (ext-key-graph graph))
+    (time
+			(ext-key-graph graph))))

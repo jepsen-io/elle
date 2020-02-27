@@ -198,7 +198,7 @@
   (let [history (atom [])
         threads (real-pmap
                   (fn [p]
-                    (dotimes [i 500]
+                    (dotimes [i 5000]
                       ; Simulate a generation and random key
                       (let [k [(mod i 32) (rand-int 5)]]
                         (swap! history conj {:type :invoke, :process p, :key k })

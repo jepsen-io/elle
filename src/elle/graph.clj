@@ -7,13 +7,16 @@
   pretty-printing, etc."
   (:require [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
-            [clojure.set :as set])
+            [clojure.set :as set]
+            [elle.util :refer [map-vals]])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
                                Graphs$Edge
                                ICollection
                                IEdge
+                               IEntry
                                IList
+                               IMap
                                ISet
                                IGraph
                                Set
@@ -35,6 +38,16 @@
     {:from  (.from e)
      :to    (.to e)
      :value (.value e)})
+
+  IMap
+  (->clj [s]
+    (let [iter (.iterator s)]
+      (loop [m (transient {})]
+        (if (.hasNext iter)
+          (let [kv ^IEntry (.next iter)]
+            (recur (assoc! m (.key kv) (->clj (.value kv)))))
+          (persistent! m)))))
+
 
   ISet
   (->clj [s]
@@ -76,6 +89,11 @@
   [^ICollection x]
   (.forked x))
 
+(defn size
+  "How big is a thing?"
+  [^ICollection c]
+  (.size c))
+
 (defn ^ISet vertices
   "The set of all vertices in the node."
   [^IGraph g]
@@ -98,7 +116,7 @@
   (try (.out g v)
        (catch IllegalArgumentException e)))
 
-(def union-edge
+(def ^BinaryOperator union-edge
   "A binary operator performing set union on the values of edges."
   (reify BinaryOperator
     (apply [_ a b]
@@ -117,23 +135,15 @@
          (Graphs$Edge. (.value e) (.to e) (.from e)))
        (.edges g)))
 
-(defn node->edge-map
-  "Takes a graph and a node. Assumes edges are sets of relationships. Returns a
-  map of relationships to sets of downstream nodes with that relationship."
-  [^DirectedGraph g a]
-  (reduce (fn [m b]
-            (reduce (fn [m rel]
-                      (let [s (get m rel #{})]
-                        (assoc m rel (conj s b))))
-                    m
-                    (edge g a b)))
-          {}
-          (out g a)))
-
 (defn add
   "Add a node to a graph."
   [^DirectedGraph graph node]
   (.add graph node))
+
+(defn set-add
+  "Add an element to a set."
+  [^ISet s x]
+  (.add s x))
 
 (defn link
   "Helper for linking Bifurcan graphs. Optionally takes a relationship, which
@@ -290,7 +300,7 @@
   (->> (.vertices g)
        (sort-by :index)
        reverse
-       (reduce (fn reducer [[g' memo] v]
+       (reduce (fn reducer [[g' ^IGraph memo] v]
                  ;(prn :v v :memo-size (.size (.vertices memo)))
                  (let [downstream (downstream-matches pred g memo (out g v))]
                    (if (pred v)
@@ -411,7 +421,7 @@
                   (reduce (fn [mapping v]
                             (assoc! mapping v (count mapping)))
                           (transient {})
-                          (.vertices g)))
+                          (vertices g)))
         g' (reduce (fn [g' v]
                      ; Find the index of this vertex
                      (let [vi (get mapping v)]
@@ -420,10 +430,10 @@
                                  (let [ni (get mapping n)]
                                    (link g' vi ni)))
                                g'
-                               (.out g v))))
-                (.linear (DirectedGraph.))
-                (.vertices g))]
-    [(.forked g')
+                               (out g v))))
+                (linear (digraph))
+                (vertices g))]
+    [(forked g')
      (persistent!
        (reduce (fn [vertices [vertex index]]
                  (assoc! vertices index vertex))
@@ -486,7 +496,7 @@
         ; graph with integers standing for our ops, find a cycle in THAT, then
         ; map back to our own space.
         [gn mapping]  (renumber-graph g)]
-    (->> (.vertices gn)
+    (->> (vertices gn)
          (keep (fn [start]
                  (when-let [cycle (->> (path-shells gn [[start]])
                                        (mapcat identity)

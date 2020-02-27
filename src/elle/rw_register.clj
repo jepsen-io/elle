@@ -41,11 +41,18 @@
             [elle [core :as elle]
                   [txn :as ct]
                   [graph :as g]
-                  [util :as util]]
+                  [util :as util :refer [map-vals]]]
             [jepsen [txn :as txn :refer [reduce-mops]]]
 						[jepsen.txn.micro-op :as mop]
 						[knossos.op :as op])
-  (:import (io.lacuna.bifurcan IEdge)))
+  (:import (io.lacuna.bifurcan IEdge
+                               IEntry
+                               IMap
+                               ISet
+                               LinearMap
+                               LinearSet
+                               Map
+                               Set)))
 
 (defn op-internal-case
   "Given an op, returns a map describing internal consistency violations, or
@@ -218,68 +225,88 @@
   "Takes a transaction graph, a (perhaps partial) ext-key graph, a set of keys
   to ignore, and a stack of ops to explore. Returns a more complete key graph
   by exploring [ops]."
-  [g kg ops]
+  [g ^IMap kg ops]
   (if (empty? ops)
     ; Nowhere else to explore!
     kg
 
     (let [op (peek ops)]
-      (if (g/contains-node? kg op)
+      ; (prn :op op)
+      (if (.contains kg op)
         ; Well, we've already explored this op; no need to go further!
-        (recur g kg (pop ops))
+        (do ; (prn :hit!)
+            (recur g kg (pop ops)))
 
         (let [out (g/out g op)]
           (if (empty? out)
             ; Nobody downstream of us; all we need is a node.
-            (recur g (g/add kg op) (pop ops))
+            (recur g (.put kg op (Map.)) (pop ops))
 
             ; OK, so we've got downstream nodes. We need all of them to be
             ; explored.
             (let [[downstream unexplored]
-                  (loop [downstream  {} ; map of k => #{op1, op2}
-                         unexplored  [] ; set of ops
+                  (loop [downstream  (LinearMap.) ; map of k => #{op1, op2}
+                         unexplored  []           ; list of ops to explore
                          out         out]
                     (if-not (seq out)
                       ; Done
                       [downstream unexplored]
-                      (let [n (first out)]
-                        (if (g/contains-node? kg n)
+                      (let [n         (first out)
+                            ext-keys  (ext-keys n)]
+                        ;(prn :checking-descendent n)
+                        (if-let [downstream' (.get kg n nil)] ; Transitive k->vs
                           ; Check this next node. We use the downstream
                           ; information from kg, and override it with whatever's
                           ; in the node itself.
-                          (recur (merge-with set/union
-                                             downstream
-                                             (into (g/node->edge-map kg n)
-                                                   (map (fn [k] [k #{n}])
-                                                        (ext-keys n))))
-                                 unexplored
-                                 (next out))
+                          (let [ds (reduce
+                                     (fn [^IMap downstream ^IEntry k->bs']
+                                       (let [k   (.key k->bs')
+                                             bs' (.value k->bs')
+                                             bs (.get downstream k
+                                                      (LinearSet.))]
+                                         (if (some #{k} ext-keys)
+                                           ; Use local (see next step)
+                                           downstream
+                                           ; Use transitive bs
+                                           (.put downstream k
+                                                 (reduce g/set-add bs bs')))))
+                                     downstream
+                                     downstream')
+                                 ; OK, and now local deps!
+                                 ds (reduce (fn [^IMap downstream k]
+                                              (let [bs (.get downstream k
+                                                             (LinearSet.))]
+                                                (.put downstream k
+                                                      (g/set-add bs n))))
+                                            ds
+                                            ext-keys)]
+                          (recur ds unexplored (next out)))
+
                           ; Huh, this node hasn't been explored yet.
-                          (recur downstream (conj unexplored n) (next out))))))]
+                          (do ; (prn :unexplored!)
+                              (recur downstream
+                                     (conj unexplored n)
+                                     (next out)))))))]
+              ; (prn :downstream (count downstream))
 
-                  (if (seq unexplored)
-                    ; If we have any unexplored, move on to them; we'll come
-                    ; back to this later.
-                    (recur g kg (into ops unexplored))
+              (if (seq unexplored)
+                ; If we have any unexplored, move on to them; we'll come
+                ; back to this later.
+                (do ;(prn :unexplored (count unexplored))
+                    (recur g kg (into ops unexplored)))
 
-                    ; Good, we explored everything; this means our results are
-                    ; total. Update kg with our findings for this node and
-                    ; move on to the next op in the stack.
-                    (recur g
-                           (reduce (fn [kg [k next-ops-for-k]]
-                                     ; We link using this key in specific.
-                                     (g/link-to-all kg op next-ops-for-k k))
-                                   ; And again, we need a node here if only to
-                                   ; memoize negative results
-                                   (g/add kg op)
-                                   downstream)
-                           (pop ops))))))))))
+                ; Good, we explored everything; this means our results are
+                ; total. Update kg with our findings for this node and
+                ; move on to the next op in the stack.
+                (recur g
+                       (.put kg op (g/forked downstream))
+                       (pop ops))))))))))
 
 (defn ext-key-graph
-  "Takes a transaction graph g, and yields a graph where each node is an ok or
-  intermediate op in g, and each edge is labeled with a set of keys, such that
-  the downstream ops of transaction t1 by k are the downstream transactions
-  which (via g) interacted with k.
+  "Takes a transaction graph g, and yields a map of ops a to keys k to
+  downstream ops b, such that if a externally interacted with k, b did too, and
+  b follows a in g. Ops must be augmented with :elle.txn/ext-writes and
+  ext-reads keys.
 
   This graph lets us ask \"what were the next transactions to interact with a
   given key?\". We use this to extract *version* orders from a transaction
@@ -298,8 +325,9 @@
        reverse
        ; Build up the key graph
        (reduce (fn red [kg op]
+                 ; (prn :--)
                  (downstream-ops-by-ext-key g kg [op]))
-               (g/linear (g/digraph)))
+               (LinearMap.))
        g/forked))
 
 (defn transaction-graph->version-graphs
@@ -361,62 +389,68 @@
   directly to a version graph: the final value x1 in T1 directly precedes the
   initial values x2, x3, ... in T2, T3, ... following T1."
   [txn-graph]
-  (->> (ext-key-graph txn-graph)
-       g/edges
-       ; Turn each a-[key]->#{b1, b2, ...} edge in the ext key graph into
-       ; an entry in the specific key graph.
-       (reduce
-         ; We're trying to relate *external* values forward. There are two
-         ; possible external values per key per txn: the first read, and the
-         ; final write. WFR (which we check separately) lets us infer the
-         ; relationship between the first read and final write *in* the
-         ; transaction, so what we want to infer here is the relationship
-         ; between the *final* external value. If internal consistency holds
-         ; (which we check separately), then the final external value must be
-         ; the final write, or if that's not present, the first read.
-         (fn [key-graphs ^IEdge edge]
-           (let [ks  (.value edge)
-                 a   (.from edge)
-                 b   (.to edge)
-                 ta  (:value a)
-                 tb  (:value b)]
-             (reduce
-               (fn [key-graphs k]
-                 (let [kg (get key-graphs k (g/linear (g/digraph)))
-                       ; Figure out what version of k we last interacted with
-                       v1 (condp = (:type a)
-                            :ok (or (get (txn/ext-writes ta) k)
-                                    (get (txn/ext-reads ta) k))
-                            :info (get (txn/ext-writes ta) k ::none)
-                            :fail ::none)
+  ; These seem expensive according to Yourkit, but I'm not actually seeing
+  ; a change in runtime memoizing em. Not sure what's up.
+  (let [ext-reads  (memoize txn/ext-reads)
+        ext-writes (memoize txn/ext-writes)]
+    (->> (ext-key-graph txn-graph)
+         ; Turn each [a {:k #{b1, b2, ...}}] in the ext key graph into
+         ; an entry in the specific key graph.
+         (reduce
+           ; We're trying to relate *external* values forward. There are two
+           ; possible external values per key per txn: the first read, and the
+           ; final write. WFR (which we check separately) lets us infer the
+           ; relationship between the first read and final write *in* the
+           ; transaction, so what we want to infer here is the relationship
+           ; between the *final* external value. If internal consistency holds
+           ; (which we check separately), then the final external value must be
+           ; the final write, or if that's not present, the first read.
+           (fn [key-graphs ^IEntry pair]
+             (let [a          (.key pair)
+                   downstream (.value pair)
+                   ta (:value a)
+                   ext-writes-a (ext-writes ta)
+                   ext-reads-a  (ext-reads  ta)]
+               (reduce
+                 (fn [key-graphs ^IEntry pair]
+                   (let [k (.key pair)
+                         bs (.value pair)
+                         kg (get key-graphs k (g/linear (g/digraph)))
+                         ; Figure out what version of k we last interacted with
+                         v1 (condp = (:type a)
+                              :ok   (or (get ext-writes-a k)
+                                        (get ext-reads-a  k))
+                              :info (get ext-writes-a k ::none)
+                              :fail ::none)]
+                     (if (= ::none v1)
+                       ; Nothing doing
+                       (assoc! key-graphs k kg)
+
                        ; Now, we want to relate this version v1 to the first
                        ; external value of k for b, which will be either the
                        ; external read, or if that's missing, the external
                        ; write.
-                       ;
-                       ; TODO: as an optimization, we could precompute and
-                       ; cache external reads and writes.
-                       v2 (condp = (:type b)
-                            :ok (or (get (txn/ext-reads tb) k)
-                                    (get (txn/ext-writes tb) k))
-                            :info (get (txn/ext-writes tb) k ::none)
-                            :fail ::none)]
-                     (assoc! key-graphs k
-                             ; TODO: I think we miss explicit nil reads here?
-                             ; Might be caught by other inferences...
-                             (if (or (= ::none v1)
-                                     (= ::none v2)
-                                     (= v1 v2))
-                               ; Don't generate self-edges, or deps for txns
-                               ; that, say, crashed and didn't read anything.
-                               kg
-                               ; Great, link these all together.
-                               (g/link kg v1 v2)))))
-               key-graphs
-               ks)))
-         (transient {}))
-       persistent!
-       (util/map-vals g/forked)))
+                       (let [v2s (->> bs
+                                      (map (fn [b]
+                                             (let [tb (:value b)]
+                                               (condp = (:type b)
+                                                 :ok (or (get (ext-reads tb)
+                                                              k)
+                                                         (get (ext-writes tb)
+                                                              k))
+                                                 :info (get (ext-writes tb)
+                                                            k ::none)
+                                                 :fail ::none))))
+                                      set)
+                             ; Don't generate self-edges
+                             v2s (disj v2s v1 ::none)]
+                         ; Great, link these all together.
+                         (assoc! key-graphs k (g/link-to-all kg v1 v2s))))))
+                 key-graphs
+                 downstream)))
+           (transient {}))
+         persistent!
+         (util/map-vals g/forked))))
 
 (defn cyclic-version-cases
   "Given a map of version graphs, returns a sequence (or nil) of cycles in that
@@ -538,7 +572,7 @@
       (keep (fn [[k a-value]]
               (when-let [version-graph (get version-graphs k)]
                 (when-let [b-value (get b-kvs k)]
-                  (when (.contains (g/out version-graph a-value)
+                  (when (.contains ^ISet (g/out version-graph a-value)
                                    b-value)
                     {:key     k
                      :value   a-value
@@ -628,7 +662,7 @@
         ext-reads  (ext-index txn/ext-reads   history)]
     ; Take all reads and relate them to prior writes.
     {:graph
-     (.forked
+     (g/forked
        (reduce (fn [graph [k values->reads]]
                  ; OK, we've got a map of values to ops that read those values
                  (reduce (fn [graph [v reads]]
