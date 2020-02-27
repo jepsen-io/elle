@@ -80,9 +80,10 @@ have it dump anomalies to a directory called `out/`.
 Here, Elle can infer the write-read relationship between T1 and T2 on the basis
 of their respective reads and writes. The write-write relationship between T2
 and T1 is inferrable because T3 observed x = [1,2], which constrains the
-possible orders of appends. This is a G1c anomaly: read skew. The `:cycle`
-field shows the operations in that cycle, and `:steps` shows the dependencies
-between each pair of operations in the cycle. Let's see that in text:
+possible orders of appends. This is a G1c anomaly: cyclic information flow. The
+`:cycle` field shows the operations in that cycle, and `:steps` shows the
+dependencies between each pair of operations in the cycle. Let's see that in
+text:
 
 ```sh
 $ cat out/G1c.txt
