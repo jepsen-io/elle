@@ -568,6 +568,14 @@
                (c {:anomalies [:G1]} h)))))
 
   (testing "dirty update"
+    (testing "none"
+      (let [t1 (op 0 :fail "ax1")
+            h [t1]]
+        (is (= {:valid? :unknown
+                :anomaly-types [:empty-transaction-graph]
+                :anomalies {:empty-transaction-graph true}}
+               (c {:anomalies [:dirty-update]} h)))))
+
     (testing "direct"
       (let [t1 (op 0 :fail "ax1")
             t2 (op 1 :ok   "ax2")

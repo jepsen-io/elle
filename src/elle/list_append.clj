@@ -388,46 +388,49 @@
   committed one."
   [append-index history]
   (let [write-index (write-index history)]
-    (mapcat (fn [[k idx]]
-              (->> (:values idx)
-                   (reduce (fn [[t1 vs cases] v]
-                             (assert t1)
-                             (let [vs (conj vs v) ; Keep track of the ver range
-                                   t2 (get (get write-index k) v)]
-                               (assert t2 (str "No transaction wrote "
-                                               k " = " v))
-                               (case [(:type t1) (:type t2)]
-                                 ; Moving along happily
-                                 [:ok    :ok] [t2 [v] cases]
-                                 ; We can't say; moving along...
-                                 [:info  :ok] [t2 [v] cases]
-                                 ; Aha, a dirty write!
-                                 [:fail  :ok] [t2 [v]
-                                               (conj cases
-                                                     {:key     k
-                                                      :values  vs
-                                                      :txns    [t1 '... t2]})]
+    (seq
+      (mapcat (fn [[k idx]]
+                (->> (:values idx)
+                     (reduce (fn [[t1 vs cases] v]
+                               (assert t1)
+                               ; Keep track of the version range
+                               (let [vs (conj vs v)
+                                     t2 (get (get write-index k) v)]
+                                 (assert t2 (str "No transaction wrote "
+                                                 k " = " v))
+                                 (case [(:type t1) (:type t2)]
+                                   ; Moving along happily
+                                   [:ok    :ok] [t2 [v] cases]
+                                   ; We can't say; moving along...
+                                   [:info  :ok] [t2 [v] cases]
+                                   ; Aha, a dirty write!
+                                   [:fail  :ok] [t2 [v]
+                                                 (conj cases
+                                                       {:key     k
+                                                        :values  vs
+                                                        :txns    [t1 '... t2]})]
 
-                                 ; We can't say for sure; keep using vs
-                                 [:ok    :info] [t1 vs cases]
-                                 [:info  :info] [t1 vs cases]
-                                 [:fail  :info] [t1 vs cases]
+                                   ; We can't say for sure; keep using vs
+                                   [:ok    :info] [t1 vs cases]
+                                   [:info  :info] [t1 vs cases]
+                                   [:fail  :info] [t1 vs cases]
 
-                                 ; Okay, we've got an aborted state now.
-                                 [:ok    :fail] [t2 [v] cases]
-                                 [:info  :fail] [t2 [v] cases]
+                                   ; Okay, we've got an aborted state now.
+                                   [:ok    :fail] [t2 [v] cases]
+                                   [:info  :fail] [t2 [v] cases]
 
-                                 ; Huh, in this case we've got a couple options.
-                                 ; We could show the tightest bound temporally,
-                                 ; or try to cover the range. Tight bounds is
-                                 ; how we actually *define* the anomaly, but I
-                                 ; think covering is probably more interesting
-                                 ; from a "How bad was this" perspective.
-                                 [:fail  :fail] [t1 vs cases])))
-                           ; The initial state is committed
-                           [{:type :ok} [] []])
-                   peek))
-            append-index)))
+                                   ; Huh, in this case we've got a couple
+                                   ; options. We could show the tightest bound
+                                   ; temporally, or try to cover the range.
+                                   ; Tight bounds is how we actually *define*
+                                   ; the anomaly, but I think covering is
+                                   ; probably more interesting from a "How bad
+                                   ; was this" perspective.
+                                   [:fail  :fail] [t1 vs cases])))
+                             ; The initial state is committed
+                             [{:type :ok} [] []])
+                     peek))
+              append-index))))
 
 (defn read-index
   "Takes a history restricted to oks and infos, and constructs a map of keys to
