@@ -413,7 +413,9 @@
             h  [t1 t2]
             msg "G1c #0\nLet:\n  T1 = {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}\n  T2 = {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}\n\nThen:\n  - T1 < T2, because T1 wrote :y = 1, which was read by T2.\n  - However, T2 < T1, because T2 wrote :x = 1, which was read by T1: a contradiction!"]
         ; Write out file and check for a cycle txt file
-        (c {:anomalies [:G1], :directory "test-output"} h)
+        (c {:anomalies [:G1]
+            :plot-format :png
+            :directory "test-output"} h)
         (is (= msg (slurp "test-output/G1c.txt")))))
 
     (testing "G2"

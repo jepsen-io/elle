@@ -746,6 +746,8 @@
                             version order.
     :wfr-keys?              Assume that within each transaction, writes follow
                             reads, and use that to infer a version order.
+    :plot-format            Either :png or :svg (default :svg)
+
 
   Supported anomalies are:
 

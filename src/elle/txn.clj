@@ -261,7 +261,7 @@
     ; Then (in case they break), GraphViz plots.
     (when-let [d (:directory opts)]
       ; We do a directory for SCCs...
-      (viz/plot-analysis! analysis (io/file d "sccs"))
+      (viz/plot-analysis! analysis (io/file d "sccs") opts)
 
       ; Then for each class of anomaly...
       (dorun
@@ -272,7 +272,8 @@
                   ; it needs to show each particular cycle explanation.
                   (let [sccs (map (comp set :cycle) cycles)]
                     (viz/plot-analysis! (assoc analysis :sccs sccs)
-                                        (io/file d (name type))))))
+                                        (io/file d (name type))
+                                        opts))))
         (:anomalies analysis))))
 
     ; And return analysis

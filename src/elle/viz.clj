@@ -158,7 +158,10 @@
   "Builds an map of nodes to node names."
   [nodes]
   (->> nodes
-       (map-indexed (fn [i node] [node (str "n" i)]))
+       (map-indexed (fn [i node]
+                      [node (if-let [i (:index node)]
+                              (str "T" i) ; We know the transaction number
+                              (str "n" i))]))
        (into {})))
 
 (defn scc->ast
@@ -172,19 +175,32 @@
 (defn plot-analysis!
   "Takes an analysis (e.g. {:graph g, :explainer e, :sccs [...]} and a
   directory, and renders every SCC in that analysis to a file in the given
-  directory. Returns analysis."
-  [analysis directory]
-  (io/make-parents (io/file directory "."))
-  (->> (:sccs analysis)
-       (map-indexed vector)
-       (pmap (fn [[i scc]]
-               (-> analysis
-                   (scc->ast scc)
-                   dot
-                   rv/dot->image
-                   (rv/save-image (io/file directory (str i ".png"))))))
-       dorun)
-  analysis)
+  directory. Returns analysis.
+
+  Options:
+
+    :plot-format      Either :png or :svg"
+  ([analysis directory]
+   (plot-analysis! analysis directory {}))
+  ([analysis directory opts]
+   (when (seq (:sccs analysis))
+     (io/make-parents (io/file directory ".")))
+   (let [plotter (case (:plot-format opts :svg)
+                   :png (fn png [dot i]
+                          (rv/save-image (rv/dot->image dot)
+                                         (io/file directory (str i ".png"))))
+                   :svg (fn svg [dot i]
+                          (spit (io/file directory (str i ".svg"))
+                                (rv/dot->svg dot))))]
+     (->> (:sccs analysis)
+          (map-indexed vector)
+          (pmap (fn [[i scc]]
+                  (-> analysis
+                      (scc->ast scc)
+                      dot
+                      (plotter i))))
+          dorun))
+   analysis))
 
 (defn view-scc
   "Shows a strongly connected component. Analysis should be a map of

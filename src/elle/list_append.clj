@@ -743,6 +743,7 @@
     :anomalies              A collection of anomalies which should be reported,
                             if found.
     :directory              Where to output files, if desired. (default nil)
+    :plot-format            Either :png or :svg (default :svg)
 
   Supported anomalies are:
 
