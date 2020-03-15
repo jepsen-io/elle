@@ -6,12 +6,11 @@
                      [test :refer :all]]
             [elle.consistency-model :refer :all]))
 
-(deftest ^:test-refresh/focus all-implied-anomalies-test
+(deftest all-implied-anomalies-test
   (is (= [:G-SI] (seq (all-implied-anomalies [:G-SI])))))
 
 (let [as #(into (sorted-set)
                 (map friendly-model-name (anomalies->impossible-models %)))]
-  ;(pprint proscribed-anomalies-1)
 
   (deftest anomaly->impossible-models-test
     (testing "G-single"
@@ -43,4 +42,15 @@
                :monotonic-snapshot-read
                :full-serializable
                }
-             (as [:dirty-update]))))))
+             (as [:dirty-update]))))
+
+    (testing "internal"
+      (is (= #{:causal-cerone
+               :parallel-snapshot-isolation
+               :prefix
+               :read-atomic
+               :serializable
+               :snapshot-isolation
+               :strict-serializable
+               }
+             (as [:internal]))))))

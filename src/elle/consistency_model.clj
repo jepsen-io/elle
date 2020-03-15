@@ -4,7 +4,9 @@
   by, or ruled out by, a given history. For sources, see
 
   - Adya, 'Weak Consistency'
-  - Adya, Liskov, O'Neil, 'Generalized Isolation Level Definitions'"
+  - Adya, Liskov, O'Neil, 'Generalized Isolation Level Definitions'
+  - Bailis, Davidson, Fekete, et al, 'Highly Available Transactions'
+  - Cerone, Bernardi, Gotsman, 'A Framework for Transactional Consistency Models with Atomic Visibility'"
   (:require [elle [graph :as g]]
             [clojure [set :as set]])
   (:import (java.util.function Function)
@@ -81,33 +83,44 @@
   the graph, a history which satisfies model a also satisfies model b. See
   https://jepsen.io/consistency for sources."
   (->> ; Transactional models
-       {:strict-serializable   [:PL-3                        ; Adya
-                                :serializable                ; Bailis
-                                :linearizable                ; Bailis
-                                :snapshot-isolation]         ; Adya
-        :serializable          [:repeatable-read             ; SQL
-                                :snapshot-isolation]         ; Bailis
-        :repeatable-read       [:cursor-stability            ; Adya
-                                :monotonic-atomic-view]      ; Bailis
-        :snapshot-isolation    [:monotonic-atomic-view       ; Bailis
-                                :monotonic-snapshot-read]    ; Adya
-        :monotonic-atomic-view [:read-committed]             ; Bailis
-        :cursor-stability      [:read-committed              ; Bailis
-                                :PL-2]                       ; Adya
-        :read-committed        [:read-uncommitted]           ; SQL
-        :PL-3                  [:repeatable-read             ; Adya
-                                :update-serializable]        ; Adya
-        :update-serializable     [:forward-consistent-view]          ; Adya
-        :forward-consistent-view [:consistent-view]                  ; Adya
-        :consistent-view         [:cursor-stability :monotonic-view] ; Adya
-        :monotonic-view          [:PL-2]                             ; Adya
-        :PL-2                    [:PL-1]                     ; Adya
+       {
+        ; Might merge this into normal causal later? I'm not sure
+        ; how to unify them exactly.
+        :causal-cerone          [:read-atomic]                ; Cerone
+        :consistent-view        [:cursor-stability            ; Adya
+                                 :monotonic-view]             ; Adya
+        :cursor-stability       [:read-committed              ; Bailis
+                                 :PL-2]                       ; Adya
+        :forward-consistent-view [:consistent-view]           ; Adya
+        :PL-2                    [:PL-1]                      ; Adya
+        :PL-3                   [:repeatable-read             ; Adya
+                                 :update-serializable]        ; Adya
+        :update-serializable    [:forward-consistent-view]    ; Adya
+        :monotonic-atomic-view  [:read-committed]             ; Bailis
+        :monotonic-view         [:PL-2]                       ; Adya
+        :parallel-snapshot-isolation [:causal-cerone]         ; Cerone
+        :prefix                 [:causal-cerone]              ; Cerone
+        :read-atomic            [:causal]                     ; Cerone
+        :read-committed         [:read-uncommitted]           ; SQL
+        :repeatable-read        [:cursor-stability            ; Adya
+                                 :monotonic-atomic-view]      ; Bailis
+        :strict-serializable    [:PL-3                        ; Adya
+                                 :serializable                ; Bailis
+                                 :linearizable                ; Bailis
+                                 :snapshot-isolation]         ; Adya
+        :serializable           [:repeatable-read             ; SQL
+                                 :snapshot-isolation]         ; Bailis, Cerone
+        :snapshot-isolation     [:monotonic-atomic-view       ; Bailis
+                                 :monotonic-snapshot-read     ; Adya
+                                 :parallel-snapshot-isolation ; Cerone
+                                 :prefix]                     ; Cerone
 
-        ; Single-object models
+        ; Single-object (ish) models
         :linearizable          [:sequential]                 ; Bailis
         :sequential            [:causal]                     ; Bailis
         :causal                [:writes-follow-reads         ; Bailis
                                 :PRAM]                       ; Bailis
+
         :pram                  [:monotonic-reads             ; Bailis
                                 :monotonic-writes            ; Bailis
                                 :read-your-writes]}          ; Bailis
@@ -137,17 +150,23 @@
   ; of proscribed anomalies. We start with a map of models to proscribed
   ; anomalies, then canonicalize and invert that map.
   (let [proscribed
-        {:cursor-stability          [:G1 :G-cursor]     ; Adya
+        {:causal-cerone             [:internal]         ; Cerone (incomplete)
+         :cursor-stability          [:G1 :G-cursor]     ; Adya
          :monotonic-view            [:G1 :G-monotonic]  ; Adya
          :monotonic-snapshot-read   [:G1 :G-MSR]        ; Adya
          :consistent-view           [:G1 :G-single]     ; Adya
          :forward-consistent-view   [:G1 :G-SIb]        ; Adya
-         :snapshot-isolation        [:G1 :G-SI]         ; Adya
+         :read-atomic               [:internal]         ; Cerone (incomplete)
          :repeatable-read           [:G1 :G2-item]      ; Adya
          :update-serializable       [:G1 :G-update]     ; Adya
+         :parallel-snapshot-isolation [:internal]       ; Cerone (incomplete)
          :PL-3                      [:G1 :G2]           ; Adya
          :PL-2                      [:G1]               ; Adya
          :PL-1                      [:G0]               ; Adya
+         :prefix                    [:internal]         ; Cerone (incomplete)
+         :serializable              [:internal]         ; Cerone (incomplete)
+         :snapshot-isolation        [:internal          ; Cerone (incomplete)
+                                     :G1 :G-SI]         ; Adya
         ; Should we consider PL-3 and serializable equivalent? I don't know
         ; yet; it probably depends on view/conflict/full serializability.
         ; Better to be conservative now.
