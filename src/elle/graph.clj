@@ -210,6 +210,7 @@
     (recur (unlink g (first xs) y) (next xs) y)
     g))
 
+
 (defn keep-edge-values
   "Transforms a graph by applying a function (f edge-value) to each edge in the
   graph. Where the function returns `nil`, removes that edge altogether."
@@ -257,6 +258,17 @@
         (recur (unlink g node node) (next nodes)))
       (forked g))))
 
+(defn bfs
+  "Takes a function of a vertex yielding neighbors, and a collection of
+  vertices, and yields a lazy sequence of vertices reachable from that initial
+  collection."
+  [neighbors vertices]
+  (Graphs/bfsVertices ^Iterable vertices
+                      (reify Function
+                        (apply [_ node]
+                          (if-let [ns (neighbors node)]
+                            ns
+                            [])))))
 
 (defn downstream-matches
   "Returns the set of all nodes matching pred including or downstream of
@@ -412,6 +424,20 @@
   [v]
   (and (< 1 (count v))
        (= (first v) (peek v))))
+
+(defn map-vertices
+  "Takes a function of vertices, and a graph, and returns graph with all
+  vertices mapped via f. Edge values are merged with set union."
+  [f g]
+  (forked
+    (reduce (fn [^DirectedGraph g ^IEdge edge]
+              (.link g
+                     (f (.from edge))
+                     (f (.to edge))
+                     (.value edge)
+                     union-edge))
+            (linear (digraph))
+            (edges g))))
 
 (defn renumber-graph
   "Takes a Graph and rewrites each vertex to a unique integer, returning the

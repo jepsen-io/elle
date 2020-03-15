@@ -185,3 +185,19 @@
                                 4 [5 6 7]
                                 6 [1]})
                 (collapse-graph odd?))))))
+
+(deftest map-vertices-test
+  (testing "empty"
+    (is (= (map->bdigraph {}) (map-vertices identity (map->bdigraph {})))))
+
+  (testing "complex"
+    (is (= (-> (linear (digraph))
+               (link 1 1 :a)
+               (link 1 2 :b)
+               (link 1 2 :c))
+           (map-vertices {1 1, 2 1, 3 2, 4 2}
+                         (-> (linear (digraph))
+                             (link 1 2 :a) ; becomes a self-edge
+                             (link 1 3 :b) ; becomes 1->2
+                             (link 2 4 :c) ; becomes 1->2
+                             ))))))
