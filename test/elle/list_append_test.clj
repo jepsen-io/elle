@@ -1,7 +1,9 @@
 (ns elle.list-append-test
   (:refer-clojure :exclude [test])
-  (:require [clojure.test :refer :all]
+  (:require [clojure [pprint :refer [pprint]]
+                     [test :refer :all]]
             [elle [core :as elle]
+                  [core-test :refer [read-history]]
                   [list-append :refer :all]
                   [graph :as g]
                   [util :refer [map-vals]]]
@@ -311,277 +313,285 @@
                     :value [[:append 0 6] [:r 0 nil]]}}]
               (internal-cases h))))))
 
-(let [c (fn [checker-opts history]
-          (-> (check checker-opts history)
-              ; We don't bother checking this; it's redundant
-              (dissoc :also-not)))]
-  (deftest checker-test
-    (testing "G0"
-      (let [; A pure write cycle: x => t1, t2; but y => t2, t1
-            t1 (op "ax1ay1")
-            t2 (op "ax2ay2")
-            t3 (op "rx12ry21")
-            h [t1 t2 t3]
-            msg {:cycle
-                 [{:type :ok, :value [[:append :x 2] [:append :y 2]]}
-                  {:type :ok, :value [[:append :x 1] [:append :y 1]]}
-                  {:type :ok, :value [[:append :x 2] [:append :y 2]]}],
-                 :steps
-                 [{:type :ww,
-                   :key :y,
-                   :value 2,
-                   :value' 1,
-                   :a-mop-index 1,
-                   :b-mop-index 1}
-                  {:type :ww,
-                   :key :x,
-                   :value 1,
-                   :value' 2,
-                   :a-mop-index 0,
-                   :b-mop-index 0}],
-                 :type :G0}]
-        ; All checkers catch this.
-        (is (= {:valid? false
-                :anomaly-types  [:G0]
-                :not            #{:read-uncommitted}
-                :anomalies {:G0 [msg]}}
-               (c {:anomalies [:G0]} h)))
-        (is (= {:valid? false
-                :anomaly-types  [:G0]
-                :not            #{:read-uncommitted}
-                :anomalies {:G0 [msg]}}
-               (c {:anomalies [:G1]} h)))
-        ; G2 doesn't actually include G0, but catches it anyway.
-        (is (= {:valid? false
-                :anomaly-types  [:G0]
-                :not            #{:read-uncommitted}
-                :anomalies {:G0 [msg]}}
-               (c {:anomalies [:G2]} h)))))
+(defn c
+  "Check a history."
+  [opts history]
+  (-> (check opts history)
+      ; We don't care about these; it's kinda redundant.
+      (dissoc :also-not)))
 
-    (testing "G1a"
-      (let [; T2 sees T1's failed write
-            t1 {:type :fail, :value [[:append :x 1]]}
-            t2 (op "rx1")
-            h  [t1 t2]]
-        ; G0 checker won't catch this
-        (is (= {:valid? :unknown
-                :anomaly-types  [:empty-transaction-graph]
-                :not            #{}
-                :anomalies {:empty-transaction-graph true}}
-               (c {:anomalies [:G0]} h)))
-        ; G1 will
-        (is (= {:valid? false
-                :anomaly-types  [:G1a :empty-transaction-graph]
-                :not            #{:read-committed :read-atomic}
-                :anomalies {:empty-transaction-graph true
-                            :G1a [{:op      t2
-                                   :writer  t1
-                                   :mop     [:r :x [1]]
-                                   :element 1}]}}
-               (c {:anomalies [:G1]} h)))
-        ; G2 won't: even though the graph covers G1c, we don't do the specific
-        ; G1a/b checks unless asked.
-        (is (= {:valid? :unknown,
-                :anomaly-types  [:empty-transaction-graph]
-                :not            #{}
-                :anomalies {:empty-transaction-graph true}}
-               (c {:anomalies [:G2]} h)))))
+(defn cf
+  "Checks a file"
+  [opts filename]
+  (c opts (read-history filename)))
 
-    (testing "G1b"
-      (let [; T2 sees T1's intermediate write
-            t1 (op "ax1ax2")
-            t2 (op "rx1")
-            h  [t1 t2]]
-        ; G0 checker won't catch this
-        (is (= {:valid? true} (c {:anomalies [:G0]} h)))
-        ; G1 will
-        (is (= {:valid? false
-                :anomaly-types  [:G1b]
-                :not            #{:read-committed}
-                :anomalies {:G1b [{:op      t2
-                                   :writer  t1
-                                   :mop     [:r :x [1]]
-                                   :element 1}]}}
-               (c {:anomalies [:G1]} h)))
-        ; G2 won't: even though the graph covers G1c, we don't do the specific
-        ; G1a/b checks unless asked.
-        (is (= {:valid? true}
-               (c {:anomalies [:G2]} h)))))
+(deftest checker-test
+  (testing "G0"
+    (let [; A pure write cycle: x => t1, t2; but y => t2, t1
+          t1 (op "ax1ay1")
+          t2 (op "ax2ay2")
+          t3 (op "rx12ry21")
+          h [t1 t2 t3]
+          msg {:cycle
+               [{:type :ok, :value [[:append :x 2] [:append :y 2]]}
+                {:type :ok, :value [[:append :x 1] [:append :y 1]]}
+                {:type :ok, :value [[:append :x 2] [:append :y 2]]}],
+               :steps
+               [{:type :ww,
+                 :key :y,
+                 :value 2,
+                 :value' 1,
+                 :a-mop-index 1,
+                 :b-mop-index 1}
+                {:type :ww,
+                 :key :x,
+                 :value 1,
+                 :value' 2,
+                 :a-mop-index 0,
+                 :b-mop-index 0}],
+               :type :G0}]
+      ; All checkers catch this.
+      (is (= {:valid? false
+              :anomaly-types  [:G0]
+              :not            #{:read-uncommitted}
+              :anomalies {:G0 [msg]}}
+             (c {:anomalies [:G0]} h)))
+      (is (= {:valid? false
+              :anomaly-types  [:G0]
+              :not            #{:read-uncommitted}
+              :anomalies {:G0 [msg]}}
+             (c {:anomalies [:G1]} h)))
+      ; G2 doesn't actually include G0, but catches it anyway.
+      (is (= {:valid? false
+              :anomaly-types  [:G0]
+              :not            #{:read-uncommitted}
+              :anomalies {:G0 [msg]}}
+             (c {:anomalies [:G2]} h)))))
 
-    (testing "G1c"
-      (let [; T2 writes x after T1, but T1 observes T2's write on y.
-            t1 (op "ax1ry1")
-            t2 (op "ax2ay1")
-            t3 (op "rx12ry1")
-            h  [t1 t2 t3]
-            msg {:cycle
-                [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
-                 {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-                 {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
-                :steps
-                [{:type :wr,
-                  :key :y,
-                  :value 1,
-                  :a-mop-index 1,
-                  :b-mop-index 1}
-                 {:type :ww,
-                  :key :x,
-                  :value 1,
-                  :value' 2,
-                  :a-mop-index 0,
-                  :b-mop-index 0}],
-                :type :G1c}]
-        ; G0 won't see this
-        (is (= {:valid? true} (c {:anomalies [:G0]} h)))
-        ; But G1 will!
-        (is (= {:valid? false
-                :anomaly-types  [:G1c]
-                :not            #{:read-committed}
-                :anomalies {:G1c [msg]}}
-               (c {:anomalies [:G1]} h)))
-        ; As will G2
-        (is (= {:valid? false
-                :anomaly-types [:G1c]
-                :not           #{:read-committed}
-                :anomalies {:G1c [msg]}}
-               (c {:anomalies [:G2]} h)))))
+  (testing "G1a"
+    (let [; T2 sees T1's failed write
+          t1 {:type :fail, :value [[:append :x 1]]}
+          t2 (op "rx1")
+          h  [t1 t2]]
+      ; G0 checker won't catch this
+      (is (= {:valid? :unknown
+              :anomaly-types  [:empty-transaction-graph]
+              :not            #{}
+              :anomalies {:empty-transaction-graph true}}
+             (c {:anomalies [:G0]} h)))
+      ; G1 will
+      (is (= {:valid? false
+              :anomaly-types  [:G1a :empty-transaction-graph]
+              :not            #{:read-committed :read-atomic}
+              :anomalies {:empty-transaction-graph true
+                          :G1a [{:op      t2
+                                 :writer  t1
+                                 :mop     [:r :x [1]]
+                                 :element 1}]}}
+             (c {:anomalies [:G1]} h)))
+      ; G2 won't: even though the graph covers G1c, we don't do the specific
+      ; G1a/b checks unless asked.
+      (is (= {:valid? :unknown,
+              :anomaly-types  [:empty-transaction-graph]
+              :not            #{}
+              :anomalies {:empty-transaction-graph true}}
+             (c {:anomalies [:G2]} h)))))
 
-    (testing "G-single"
-      (let [t1  (op "ax1ay1")  ; T1 writes y after T1's read
-            t2  (op "ax2ry")   ; T2 writes x after T1
-            t3  (op "rx12")
-            h   [t1 t2 t3]
-            msg {:cycle [{:type :ok, :value [[:append :x 2] [:r :y]]}
-                         {:type :ok, :value [[:append :x 1] [:append :y 1]]}
-                         {:type :ok, :value [[:append :x 2] [:r :y]]}],
-                 :steps
-                 [{:type :rw,
-                   :key :y,
-                   :value :elle.list-append/init,
-                   :value' 1,
-                   :a-mop-index 1,
-                   :b-mop-index 1}
-                  {:type :ww,
-                   :key :x,
-                   :value 1,
-                   :value' 2,
-                   :a-mop-index 0,
-                   :b-mop-index 0}],
-                 :type :G-single}]
-        ; G0 and G1 won't catch this
-        (is (= {:valid? true} (c {:anomalies [:G0]} h)))
-        (is (= {:valid? true} (c {:anomalies [:G1]} h)))
-        ; But G-single and G2 will!
-        (is (= {:valid? false
-                :anomaly-types [:G-single]
-                :not           #{:consistent-view}
-                :anomalies {:G-single [msg]}}
-               (c {:anomalies [:G-single]} h)))
-        (is (= {:valid? false
-                :anomaly-types [:G-single]
-                :not           #{:consistent-view}
-                :anomalies {:G-single [msg]}}
-               (c {:anomalies [:G2]} h)))))
+  (testing "G1b"
+    (let [; T2 sees T1's intermediate write
+          t1 (op "ax1ax2")
+          t2 (op "rx1")
+          h  [t1 t2]]
+      ; G0 checker won't catch this
+      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
+      ; G1 will
+      (is (= {:valid? false
+              :anomaly-types  [:G1b]
+              :not            #{:read-committed}
+              :anomalies {:G1b [{:op      t2
+                                 :writer  t1
+                                 :mop     [:r :x [1]]
+                                 :element 1}]}}
+             (c {:anomalies [:G1]} h)))
+      ; G2 won't: even though the graph covers G1c, we don't do the specific
+      ; G1a/b checks unless asked.
+      (is (= {:valid? true}
+             (c {:anomalies [:G2]} h)))))
 
-    (testing "G2"
-      (let [; A pure anti-dependency cycle
-            t1 (op "ax1ry")
-            t2 (op "ay1rx")
-            h  [t1 t2]]
-        ; G0 and G1 won't catch this
-        (is (= {:valid? true} (c {:anomalies [:G0]} h)))
-        (is (= {:valid? true} (c {:anomalies [:G1]} h)))
-        ; But G2 will
-        (is (= {:valid? false
-                :anomaly-types  [:G2]
-                :not            #{:serializable}
-                :anomalies
-                {:G2 [{:cycle
-                      [{:type :ok, :value [[:append :x 1] [:r :y]]}
-                       {:type :ok, :value [[:append :y 1] [:r :x]]}
-                       {:type :ok, :value [[:append :x 1] [:r :y]]}],
+  (testing "G1c"
+    (let [; T2 writes x after T1, but T1 observes T2's write on y.
+          t1 (op "ax1ry1")
+          t2 (op "ax2ay1")
+          t3 (op "rx12ry1")
+          h  [t1 t2 t3]
+          msg {:cycle
+               [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
+                {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+                {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+               :steps
+               [{:type :wr,
+                 :key :y,
+                 :value 1,
+                 :a-mop-index 1,
+                 :b-mop-index 1}
+                {:type :ww,
+                 :key :x,
+                 :value 1,
+                 :value' 2,
+                 :a-mop-index 0,
+                 :b-mop-index 0}],
+               :type :G1c}]
+      ; G0 won't see this
+      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
+      ; But G1 will!
+      (is (= {:valid? false
+              :anomaly-types  [:G1c]
+              :not            #{:read-committed}
+              :anomalies {:G1c [msg]}}
+             (c {:anomalies [:G1]} h)))
+      ; As will G2
+      (is (= {:valid? false
+              :anomaly-types [:G1c]
+              :not           #{:read-committed}
+              :anomalies {:G1c [msg]}}
+             (c {:anomalies [:G2]} h)))))
+
+  (testing "G-single"
+    (let [t1  (op "ax1ay1")  ; T1 writes y after T1's read
+          t2  (op "ax2ry")   ; T2 writes x after T1
+          t3  (op "rx12")
+          h   [t1 t2 t3]
+          msg {:cycle [{:type :ok, :value [[:append :x 2] [:r :y]]}
+                       {:type :ok, :value [[:append :x 1] [:append :y 1]]}
+                       {:type :ok, :value [[:append :x 2] [:r :y]]}],
+               :steps
+               [{:type :rw,
+                 :key :y,
+                 :value :elle.list-append/init,
+                 :value' 1,
+                 :a-mop-index 1,
+                 :b-mop-index 1}
+                {:type :ww,
+                 :key :x,
+                 :value 1,
+                 :value' 2,
+                 :a-mop-index 0,
+                 :b-mop-index 0}],
+               :type :G-single}]
+      ; G0 and G1 won't catch this
+      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
+      (is (= {:valid? true} (c {:anomalies [:G1]} h)))
+      ; But G-single and G2 will!
+      (is (= {:valid? false
+              :anomaly-types [:G-single]
+              :not           #{:consistent-view}
+              :anomalies {:G-single [msg]}}
+             (c {:anomalies [:G-single]} h)))
+      (is (= {:valid? false
+              :anomaly-types [:G-single]
+              :not           #{:consistent-view}
+              :anomalies {:G-single [msg]}}
+             (c {:anomalies [:G2]} h)))))
+
+  (testing "G2"
+    (let [; A pure anti-dependency cycle
+          t1 (op "ax1ry")
+          t2 (op "ay1rx")
+          h  [t1 t2]]
+      ; G0 and G1 won't catch this
+      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
+      (is (= {:valid? true} (c {:anomalies [:G1]} h)))
+      ; But G2 will
+      (is (= {:valid? false
+              :anomaly-types  [:G2]
+              :not            #{:serializable}
+              :anomalies
+              {:G2 [{:cycle
+                     [{:type :ok, :value [[:append :x 1] [:r :y]]}
+                      {:type :ok, :value [[:append :y 1] [:r :x]]}
+                      {:type :ok, :value [[:append :x 1] [:r :y]]}],
+                     :steps
+                     [{:type :rw,
+                       :key :y,
+                       :value :elle.list-append/init,
+                       :value' 1,
+                       :a-mop-index 1,
+                       :b-mop-index 0}
+                      {:type :rw,
+                       :key :x,
+                       :value :elle.list-append/init,
+                       :value' 1,
+                       :a-mop-index 1,
+                       :b-mop-index 0}],
+                     :type :G2}]}}
+             (c {:anomalies [:G2]} h)))))
+
+  (testing "Strict-1SR violation"
+    (let [; T1 anti-depends on T2, but T1 happens first in wall-clock order.
+          t1  {:index 0, :type :invoke, :value [[:append :x 2]]}
+          t1' {:index 1, :type :ok,     :value [[:append :x 2]]}
+          t2  {:index 2, :type :invoke, :value [[:r :x nil]]}
+          t2' {:index 3, :type :ok,     :value [[:r :x [1]]]}
+          t3  {:index 4, :type :invoke, :value [[:r :x nil]]}
+          t3' {:index 5, :type :ok,     :value [[:r :x [1 2]]]}
+          h [t1 t1' t2 t2' t3 t3']]
+      ; G2 won't catch this by itself
+      (is (= {:valid? true}
+             (c {:anomalies [:G2]} h)))
+      ; But it will if we introduce a realtime graph component
+      (is (= {:valid? false
+              :anomaly-types [:G-single]
+              :not           #{:consistent-view}
+              :anomalies
+              {:G-single [{:cycle
+                           [{:index 3, :type :ok, :value [[:r :x [1]]]}
+                            {:index 1, :type :ok, :value [[:append :x 2]]}
+                            {:index 3, :type :ok, :value [[:r :x [1]]]}],
+                           :steps
+                           [{:type :rw,
+                             :key :x,
+                             :value 1,
+                             :value' 2,
+                             :a-mop-index 0,
+                             :b-mop-index 0}
+                            {:type :realtime,
+                             :a' {:index 1, :type :ok, :value [[:append :x 2]]},
+                             :b {:index 2, :type :invoke, :value [[:r :x nil]]}}],
+                           :type :G-single}]}}
+             (c {:anomalies [:G2]
+                 :additional-graphs [elle/realtime-graph]}
+                h)))))
+
+  (testing "contradictory read orders"
+    (let [t1 (op "ax1ry1")  ; read t3's ay1
+          t2 (op "ax2")
+          t3 (op "ax3ay1")  ; append of x happens later
+          t4 (op "rx13")
+          t5 (op "rx123")
+          h [t1 t2 t3 t4 t5]]
+      (is (= {:valid? false
+              :anomaly-types [:G1c :incompatible-order]
+              :not           #{:read-committed :read-atomic}
+              :anomalies
+              {:incompatible-order [{:key :x, :values [[1 3] [1 2 3]]}]
+               :G1c [{:cycle
+                      [{:type :ok, :value [[:append :x 3] [:append :y 1]]}
+                       {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+                       {:type :ok, :value [[:append :x 3] [:append :y 1]]}],
                       :steps
-                      [{:type :rw,
+                      [{:type :wr,
                         :key :y,
-                        :value :elle.list-append/init,
-                        :value' 1,
+                        :value 1,
                         :a-mop-index 1,
-                        :b-mop-index 0}
-                       {:type :rw,
+                        :b-mop-index 1}
+                       {:type :ww,
                         :key :x,
-                        :value :elle.list-append/init,
-                        :value' 1,
-                        :a-mop-index 1,
-                        :b-mop-index 0}],
-              :type :G2}]}}
-               (c {:anomalies [:G2]} h)))))
-
-    (testing "Strict-1SR violation"
-      (let [; T1 anti-depends on T2, but T1 happens first in wall-clock order.
-            t1  {:index 0, :type :invoke, :value [[:append :x 2]]}
-            t1' {:index 1, :type :ok,     :value [[:append :x 2]]}
-            t2  {:index 2, :type :invoke, :value [[:r :x nil]]}
-            t2' {:index 3, :type :ok,     :value [[:r :x [1]]]}
-            t3  {:index 4, :type :invoke, :value [[:r :x nil]]}
-            t3' {:index 5, :type :ok,     :value [[:r :x [1 2]]]}
-            h [t1 t1' t2 t2' t3 t3']]
-        ; G2 won't catch this by itself
-        (is (= {:valid? true}
-               (c {:anomalies [:G2]} h)))
-        ; But it will if we introduce a realtime graph component
-        (is (= {:valid? false
-                :anomaly-types [:G-single]
-                :not           #{:consistent-view}
-                :anomalies
-                {:G-single [{:cycle
-                             [{:index 3, :type :ok, :value [[:r :x [1]]]}
-                              {:index 1, :type :ok, :value [[:append :x 2]]}
-                              {:index 3, :type :ok, :value [[:r :x [1]]]}],
-                             :steps
-                             [{:type :rw,
-                               :key :x,
-                               :value 1,
-                               :value' 2,
-                               :a-mop-index 0,
-                               :b-mop-index 0}
-                              {:type :realtime,
-                               :a' {:index 1, :type :ok, :value [[:append :x 2]]},
-                               :b {:index 2, :type :invoke, :value [[:r :x nil]]}}],
-                             :type :G-single}]}}
-               (c {:anomalies [:G2]
-                   :additional-graphs [elle/realtime-graph]}
-                  h)))))
-
-    (testing "contradictory read orders"
-      (let [t1 (op "ax1ry1")  ; read t3's ay1
-            t2 (op "ax2")
-            t3 (op "ax3ay1")  ; append of x happens later
-            t4 (op "rx13")
-            t5 (op "rx123")
-            h [t1 t2 t3 t4 t5]]
-        (is (= {:valid? false
-                :anomaly-types [:G1c :incompatible-order]
-                :not           #{:read-committed :read-atomic}
-                :anomalies
-                {:incompatible-order [{:key :x, :values [[1 3] [1 2 3]]}]
-                 :G1c [{:cycle
-                        [{:type :ok, :value [[:append :x 3] [:append :y 1]]}
-                         {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-                         {:type :ok, :value [[:append :x 3] [:append :y 1]]}],
-                        :steps
-                        [{:type :wr,
-                          :key :y,
-                          :value 1,
-                          :a-mop-index 1,
-                          :b-mop-index 1}
-                         {:type :ww,
-                          :key :x,
-                          :value 1,
-                          :value' 3,
-                          :a-mop-index 0,
-                          :b-mop-index 0}]
-                        :type :G1c}]}}
-               (c {:anomalies [:G1]} h)))))
+                        :value 1,
+                        :value' 3,
+                        :a-mop-index 0,
+                        :b-mop-index 0}]
+                      :type :G1c}]}}
+             (c {:anomalies [:G1]} h)))))
 
   (testing "dirty update"
     (testing "none"
@@ -620,49 +630,53 @@
                                             :txns       [t1 '... t3]}]}}
                (c {:anomalies [:dirty-update]} h))))))
 
-    (testing "duplicated elements"
-      ; This is an instance of G1c
-      (let [t1 (op "ax1ry1") ; read t2's write of y
-            t2 (op "ax2ay1")
-            t3 (op "rx121")
-            h  [t1 t2 t3]]
-        (is (= {:valid? false
-                :anomaly-types [:G1c :duplicate-elements]
-                :not           #{:read-uncommitted}
-                :anomalies
-                {:duplicate-elements [{:op t3
-                                       :mop [:r :x [1 2 1]]
-                                       :duplicates {1 2}}]
-                 :G1c [{:cycle
-                        [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
-                         {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-                         {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
-                        :steps
-                        [{:type :wr,
-                          :key :y,
-                          :value 1,
-                          :a-mop-index 1,
-                          :b-mop-index 1}
-                         {:type :ww,
-                          :key :x,
-                          :value 1,
-                          :value' 2,
-                          :a-mop-index 0,
-                          :b-mop-index 0}],
-                        :type :G1c}]}}
-               (c {:anomalies [:G1]} h)))))
+  (testing "duplicated elements"
+    ; This is an instance of G1c
+    (let [t1 (op "ax1ry1") ; read t2's write of y
+          t2 (op "ax2ay1")
+          t3 (op "rx121")
+          h  [t1 t2 t3]]
+      (is (= {:valid? false
+              :anomaly-types [:G1c :duplicate-elements]
+              :not           #{:read-uncommitted}
+              :anomalies
+              {:duplicate-elements [{:op t3
+                                     :mop [:r :x [1 2 1]]
+                                     :duplicates {1 2}}]
+               :G1c [{:cycle
+                      [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
+                       {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+                       {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+                      :steps
+                      [{:type :wr,
+                        :key :y,
+                        :value 1,
+                        :a-mop-index 1,
+                        :b-mop-index 1}
+                       {:type :ww,
+                        :key :x,
+                        :value 1,
+                        :value' 2,
+                        :a-mop-index 0,
+                        :b-mop-index 0}],
+                      :type :G1c}]}}
+             (c {:anomalies [:G1]} h)))))
 
-    (testing "internal consistency violation"
-      (let [t1 (op "ax3rx1234")
-            h  [t1]]
-        (is (= {:valid? false
-                :anomaly-types [:empty-transaction-graph :internal]
-                :not           #{:read-atomic}
-                :anomalies {:empty-transaction-graph true
-                            :internal [{:op t1
-                                        :mop [:r :x [1 2 3 4]]
-                                        :expected '[... 3]}]}}
-               (c {:anomalies [:G1]} h)))))))
+  (testing "internal consistency violation"
+    (let [t1 (op "ax3rx1234")
+          h  [t1]]
+      (is (= {:valid? false
+              :anomaly-types [:empty-transaction-graph :internal]
+              :not           #{:read-atomic}
+              :anomalies {:empty-transaction-graph true
+                          :internal [{:op t1
+                                      :mop [:r :x [1 2 3 4]]
+                                      :expected '[... 3]}]}}
+             (c {:anomalies [:G1]} h))))))
+
+; Example of checking a file, for later
+;(deftest dirty-update-1-test
+;  (cf {} "histories/dirty-update-1.edn")))
 
 (deftest merge-order-test
   (is (= [] (merge-orders [] [])))

@@ -1,12 +1,23 @@
 (ns elle.core-test
-  (:require [clojure.test :refer :all]
+  (:require [clojure [test :refer :all]
+                     [edn :as edn]]
+            [clojure.java.io :as io]
             [dom-top.core :refer [real-pmap]]
             [elle [core :refer :all]
                   [graph :as g]]
             [jepsen.txn :as txn]
             [knossos [history :as history]
                      [op :as op]]
-            [slingshot.slingshot :refer [try+ throw+]]))
+            [slingshot.slingshot :refer [try+ throw+]])
+  (:import (java.io PushbackReader)))
+
+(defn read-history
+  "Reads a history of op maps from a file."
+  [filename]
+  (with-open [r (PushbackReader. (io/reader filename))]
+    (->> (repeatedly #(edn/read {:eof nil} r))
+         (take-while identity)
+         vec)))
 
 (deftest process-graph-test
   (let [o1 {:index 0 :process 1 :type :ok}

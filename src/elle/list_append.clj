@@ -755,22 +755,22 @@
           write-read edges.
     :G1   G1a, G1b, and G1c.
     :G2   A dependency cycle with at least one anti-dependency edge.
-
     :dirty-update   A committed write incorporates aborted state.
 
   :G1 implies :G1a, :G1b, and :G1c. :G2 implies :G1c, and :G1c implies :G0,
   because if we construct the graph for G2, it'll include all the edges for
   G1c, and so on. See http://pmg.csail.mit.edu/papers/icde00.pdf for context."
   ([history]
-   (check {:anomalies [:G1 :G2 :dirty-update]} history))
+   (check {} history))
   ([opts history]
-   (let [opts       (update opts :anomalies ct/expand-anomalies)
-         anomalies  (:anomalies opts)
-         history       (remove (comp #{:nemesis} :process) history)
-         pp            (preprocess history)
-         g1a           (when (:G1a anomalies) (g1a-cases history))
-         g1b           (when (:G1b anomalies) (g1b-cases history))
-         internal      (internal-cases history)
+   (let [anomalies    (ct/expand-anomalies
+                        (:anomalies opts #{:G1 :G2 :dirty-update}))
+         opts         (assoc opts :anomalies anomalies)
+         history      (remove (comp #{:nemesis} :process) history)
+         pp           (preprocess history)
+         g1a          (when (:G1a anomalies) (g1a-cases history))
+         g1b          (when (:G1b anomalies) (g1b-cases history))
+         internal     (internal-cases history)
          dirty-update (when (:dirty-update anomalies)
                         (dirty-update-cases (:append-index pp) history))
 
