@@ -60,7 +60,7 @@
                                        ; be a matter of interpretation.
    :repeatable-read          :PL-2.99  ; Adya
    ; We use "serializable" to mean "conflict serializable"
-   :serializable             :Pl-3
+   :serializable             :PL-3
    :snapshot-isolation       :PL-SI    ; Adya
    :strict-serializable      :PL-SS    ; Adya
    :update-serializable      :PL-3U    ; Adya
@@ -110,7 +110,7 @@
         :monotonic-snapshot-read [:PL-2]                      ; Adya
         :parallel-snapshot-isolation [:causal-cerone]         ; Cerone
         :prefix                 [:causal-cerone]              ; Cerone
-        :read-atomic            [:causal]                     ; Cerone
+        :read-atomic            [:causal-cerone]              ; Cerone
         :read-committed         [:read-uncommitted]           ; SQL
         :repeatable-read        [:cursor-stability            ; Adya
                                  :monotonic-atomic-view]      ; Bailis
@@ -120,7 +120,8 @@
                                  :snapshot-isolation]         ; Adya
         :serializable           [:repeatable-read             ; SQL
                                  :snapshot-isolation]         ; Bailis, Cerone
-        :snapshot-isolation     [:monotonic-atomic-view       ; Bailis
+        :snapshot-isolation     [:forward-consistent-view     ; Adya
+                                 :monotonic-atomic-view       ; Bailis
                                  :monotonic-snapshot-read     ; Adya
                                  :parallel-snapshot-isolation ; Cerone
                                  :prefix]                     ; Cerone
@@ -191,16 +192,17 @@
   ; of proscribed anomalies. We start with a map of models to proscribed
   ; anomalies, then canonicalize and invert that map.
   (let [proscribed
-        {:causal-cerone             [:internal]         ; Cerone (incomplete)
+        {:causal-cerone             [:internal :G1a]    ; Cerone (incomplete)
          :cursor-stability          [:G1 :G-cursor]     ; Adya
          :monotonic-view            [:G1 :G-monotonic]  ; Adya
          :monotonic-snapshot-read   [:G1 :G-MSR]        ; Adya
          :consistent-view           [:G1 :G-single]     ; Adya
          :forward-consistent-view   [:G1 :G-SIb]        ; Adya
-         :read-atomic               [:internal]         ; Cerone (incomplete)
+         :read-atomic               [:internal          ; Cerone (incomplete)
+                                     :G1a]              ; Cerone (incomplete)
          :repeatable-read           [:G1 :G2-item]      ; Adya
          :update-serializable       [:G1 :G-update]     ; Adya
-         :parallel-snapshot-isolation [:internal]       ; Cerone (incomplete)
+         :parallel-snapshot-isolation [:internal :G1a]  ; Cerone (incomplete)
          :PL-3                      [:G1 :G2]           ; Adya
          :PL-2                      [:G1]               ; Adya
          :PL-1                      [:G0                ; Adya
@@ -209,7 +211,7 @@
                                      :duplicate-elements
                                      ; Version orders are supposed to be total
                                      :cyclic-versions]
-         :prefix                    [:internal]         ; Cerone (incomplete)
+         :prefix                    [:internal :G1a]    ; Cerone (incomplete)
          :serializable              [:internal]         ; Cerone (incomplete)
          :snapshot-isolation        [:internal          ; Cerone (incomplete)
                                      :G1 :G-SI]         ; Adya
@@ -248,20 +250,18 @@
        (remove (set impossible))))
 
 (defn boundary
-  "Takes a set of anomalies, and yields a map of the weakest consistency models
-  we can rule out based on those anomalies.
+  "Takes a set of anomalies, and yields a map like
 
-  Later we might want a :could-be entry, but I'm worried that might be
-  misleading at the moment, because there are some models whose distinguishing
-  anomalies we don't even look at--it'd be a little weird to claim it could be
-  one of those.
+    {:not       #{:serializable}
+     :also-not  #{:strict-serializable}]}
 
-  {:is-not    #{:strict-serializable}}"
+  ... where :not is the weakest set of consistency models invalidated by the
+  given anomaly, and also-not is the remaining set of stronger models."
   [anomalies]
   (let [impossible (anomalies->impossible-models anomalies)
-        possible   (possible-models impossible)]
-    {:is-not    (weakest-models impossible)}))
-     ;:could-be  (strongest-models possible)}))
+        is-not     (weakest-models impossible)]
+    {:not       is-not
+     :also-not  (into (sorted-set) (remove is-not impossible))}))
 
 (defn friendly-boundary
   "Like boundary, but uses friendly names."

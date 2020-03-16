@@ -297,7 +297,7 @@
                                  false)
             :anomaly-types     (sort (keys anomalies))
             :anomalies         anomalies}
-           (cm/boundary anomalies))))
+           (cm/friendly-boundary (keys anomalies)))))
 
 (defn wr-txns
   "A lazy sequence of write and read transactions over a pool of n numeric

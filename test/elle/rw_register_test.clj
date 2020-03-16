@@ -289,7 +289,10 @@
                 g/->clj)))))
 
 (let [c (fn [checker-opts history]
-					(check checker-opts (history/index history)))]
+					(-> (check checker-opts (history/index history))
+              ; We don't need to clutter up our test with these; they're just
+              ; for humans
+              (dissoc :also-not)))]
 	(deftest checker-test
     (testing "G0"
       ; What (could be) a pure write cycle: T1 < T2 on x, T2 < T1 on y.
@@ -299,6 +302,7 @@
         ; can't say anything about versions. This *isn't* illegal yet!
         (is (= {:valid?         :unknown
                 :anomaly-types  [:empty-transaction-graph]
+                :not            #{}
                 :anomalies      {:empty-transaction-graph true}}
                (c {:anomalies [:G0]} [t1 t2])))
 
@@ -309,6 +313,7 @@
               [t4 t4'] (pair (op 1 :ok "ry2"))]
           (is (= {:valid?         false
                   :anomaly-types  [:G0]
+                  :not            #{:read-uncommitted}
                   :anomalies      {:G0 [{:cycle
                                         [{:type :ok,
                                           :value [[:w :x 1] [:w :y 2]],
@@ -346,6 +351,7 @@
             t2 (op "rx1")]
         (is (= {:valid? false
                 :anomaly-types [:G1a :empty-transaction-graph]
+                :not           #{:read-atomic :read-committed}
                 :anomalies {:empty-transaction-graph true
                             :G1a [{:op      (assoc t2 :index 0)
                                    :writer  (assoc t1 :index 1)
@@ -358,14 +364,16 @@
             t2 (op "rx1")
             h  [t1 t2]]
         ; G0 checker won't catch this
-        (is (= {:valid? :unknown
-                :anomaly-types [:empty-transaction-graph]
+        (is (= {:valid?         :unknown
+                :anomaly-types  [:empty-transaction-graph]
+                :not            #{}
                 :anomalies {:empty-transaction-graph true}}
                (c {:anomalies [:G0]} h)))
 
         ; G1 will
         (is (= {:valid? false
                 :anomaly-types [:G1b :empty-transaction-graph]
+                :not       #{:read-committed}
                 :anomalies {:empty-transaction-graph true
                               :G1b [{:op      (assoc t2 :index 1)
                                    :writer  (assoc t1 :index 0)
@@ -397,11 +405,13 @@
         (is (= {:valid? true} (c {:anomalies [:G0]} h)))
         ; But G1 will!
         (is (= {:valid? false
-                :anomaly-types [:G1c]
+                :anomaly-types  [:G1c]
+                :not            #{:read-committed}
                 :anomalies {:G1c [msg]}}
                (c {:anomalies [:G1]} h)))
         ; As will G2
         (is (= {:valid? false
+                :not           #{:read-committed}
                 :anomaly-types [:G1c]
                 :anomalies {:G1c [msg]}}
                (c {:anomalies [:G2]} h)))))
@@ -425,8 +435,9 @@
         ; G2 should catch this, so long as we can use the linearizable key
         ; assumption to infer that t2 and t3's writes of 2 follow
         ; the initial states of 1.
-        (is (= {:valid? false
-                :anomaly-types [:G2]
+        (is (= {:valid?         false
+                :anomaly-types  [:G2]
+                :not            #{:serializable}
                 :anomalies {:G2 [{:cycle
                                   [{:type :ok,
                                     :value [[:r :x 1] [:w :y 2]],
@@ -463,6 +474,7 @@
             h  [t1]]
         (is (= {:valid? false
                 :anomaly-types [:empty-transaction-graph :internal]
+                :not       #{:read-atomic}
                 :anomalies {:internal [{:op       (assoc t1 :index 0)
                                         :mop      [:r :x 2]
                                         :expected 1}]
@@ -477,6 +489,7 @@
         ; anomaly!
         (is (= {:valid? false
                 :anomaly-types [:G-single]
+                :not           #{:consistent-view}
                 :anomalies {:G-single [{:cycle
                                         [{:type :ok,
                                           :value [[:r :x nil] [:r :y 1]],
@@ -514,6 +527,7 @@
         ; But if we use WFR, we know 1 < 2, and can see the G-single
         (is (= {:valid? false
                 :anomaly-types [:G-single]
+                :not           #{:consistent-view}
                 :anomalies {:G-single
                             [{:cycle
                               [{:type :ok,
@@ -548,6 +562,7 @@
             [t2 t2'] (pair (op 0 :ok "wx2"))
             [t3 t3'] (pair (op 0 :ok "rx1"))]
         (is (= {:valid?         false
+                :not            #{:read-uncommitted}
                 :anomaly-types  [:cyclic-versions]
                 :anomalies      {:cyclic-versions
                                  [{:key :x, :scc #{1 2} :sources [:initial-state

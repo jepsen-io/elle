@@ -312,7 +312,9 @@
               (internal-cases h))))))
 
 (let [c (fn [checker-opts history]
-          (check checker-opts history))]
+          (-> (check checker-opts history)
+              ; We don't bother checking this; it's redundant
+              (dissoc :also-not)))]
   (deftest checker-test
     (testing "G0"
       (let [; A pure write cycle: x => t1, t2; but y => t2, t1
@@ -340,16 +342,19 @@
                  :type :G0}]
         ; All checkers catch this.
         (is (= {:valid? false
-                :anomaly-types [:G0]
+                :anomaly-types  [:G0]
+                :not            #{:read-uncommitted}
                 :anomalies {:G0 [msg]}}
                (c {:anomalies [:G0]} h)))
         (is (= {:valid? false
-                :anomaly-types [:G0]
+                :anomaly-types  [:G0]
+                :not            #{:read-uncommitted}
                 :anomalies {:G0 [msg]}}
                (c {:anomalies [:G1]} h)))
         ; G2 doesn't actually include G0, but catches it anyway.
         (is (= {:valid? false
-                :anomaly-types [:G0]
+                :anomaly-types  [:G0]
+                :not            #{:read-uncommitted}
                 :anomalies {:G0 [msg]}}
                (c {:anomalies [:G2]} h)))))
 
@@ -360,12 +365,14 @@
             h  [t1 t2]]
         ; G0 checker won't catch this
         (is (= {:valid? :unknown
-                :anomaly-types [:empty-transaction-graph]
+                :anomaly-types  [:empty-transaction-graph]
+                :not            #{}
                 :anomalies {:empty-transaction-graph true}}
                (c {:anomalies [:G0]} h)))
         ; G1 will
         (is (= {:valid? false
-                :anomaly-types [:G1a :empty-transaction-graph]
+                :anomaly-types  [:G1a :empty-transaction-graph]
+                :not            #{:read-committed :read-atomic}
                 :anomalies {:empty-transaction-graph true
                             :G1a [{:op      t2
                                    :writer  t1
@@ -375,7 +382,8 @@
         ; G2 won't: even though the graph covers G1c, we don't do the specific
         ; G1a/b checks unless asked.
         (is (= {:valid? :unknown,
-                :anomaly-types [:empty-transaction-graph]
+                :anomaly-types  [:empty-transaction-graph]
+                :not            #{}
                 :anomalies {:empty-transaction-graph true}}
                (c {:anomalies [:G2]} h)))))
 
@@ -388,7 +396,8 @@
         (is (= {:valid? true} (c {:anomalies [:G0]} h)))
         ; G1 will
         (is (= {:valid? false
-                :anomaly-types [:G1b]
+                :anomaly-types  [:G1b]
+                :not            #{:read-committed}
                 :anomalies {:G1b [{:op      t2
                                    :writer  t1
                                    :mop     [:r :x [1]]
@@ -426,12 +435,14 @@
         (is (= {:valid? true} (c {:anomalies [:G0]} h)))
         ; But G1 will!
         (is (= {:valid? false
-                :anomaly-types [:G1c]
+                :anomaly-types  [:G1c]
+                :not            #{:read-committed}
                 :anomalies {:G1c [msg]}}
                (c {:anomalies [:G1]} h)))
         ; As will G2
         (is (= {:valid? false
                 :anomaly-types [:G1c]
+                :not           #{:read-committed}
                 :anomalies {:G1c [msg]}}
                (c {:anomalies [:G2]} h)))))
 
@@ -463,10 +474,12 @@
         ; But G-single and G2 will!
         (is (= {:valid? false
                 :anomaly-types [:G-single]
+                :not           #{:consistent-view}
                 :anomalies {:G-single [msg]}}
                (c {:anomalies [:G-single]} h)))
         (is (= {:valid? false
                 :anomaly-types [:G-single]
+                :not           #{:consistent-view}
                 :anomalies {:G-single [msg]}}
                (c {:anomalies [:G2]} h)))))
 
@@ -480,7 +493,8 @@
         (is (= {:valid? true} (c {:anomalies [:G1]} h)))
         ; But G2 will
         (is (= {:valid? false
-                :anomaly-types [:G2]
+                :anomaly-types  [:G2]
+                :not            #{:serializable}
                 :anomalies
                 {:G2 [{:cycle
                       [{:type :ok, :value [[:append :x 1] [:r :y]]}
@@ -517,6 +531,7 @@
         ; But it will if we introduce a realtime graph component
         (is (= {:valid? false
                 :anomaly-types [:G-single]
+                :not           #{:consistent-view}
                 :anomalies
                 {:G-single [{:cycle
                              [{:index 3, :type :ok, :value [[:r :x [1]]]}
@@ -546,6 +561,7 @@
             h [t1 t2 t3 t4 t5]]
         (is (= {:valid? false
                 :anomaly-types [:G1c :incompatible-order]
+                :not           #{:read-committed :read-atomic}
                 :anomalies
                 {:incompatible-order [{:key :x, :values [[1 3] [1 2 3]]}]
                  :G1c [{:cycle
@@ -572,7 +588,8 @@
       (let [t1 (op 0 :fail "ax1")
             h [t1]]
         (is (= {:valid? :unknown
-                :anomaly-types [:empty-transaction-graph]
+                :anomaly-types  [:empty-transaction-graph]
+                :not            #{}
                 :anomalies {:empty-transaction-graph true}}
                (c {:anomalies [:dirty-update]} h)))))
 
@@ -583,6 +600,7 @@
             h [t1 t2 t3]]
         (is (= {:valid? false
                 :anomaly-types [:dirty-update]
+                :not           #{:read-committed :read-atomic}
                 :anomalies {:dirty-update [{:key        :x
                                             :values     [1 2]
                                             :txns       [t1 '... t2]}]}}
@@ -596,6 +614,7 @@
             h [t1 t2 t3 t4]]
         (is (= {:valid? false
                 :anomaly-types [:dirty-update]
+                :not           #{:read-committed :read-atomic}
                 :anomalies {:dirty-update [{:key        :x
                                             :values     [1 2 3]
                                             :txns       [t1 '... t3]}]}}
@@ -609,6 +628,7 @@
             h  [t1 t2 t3]]
         (is (= {:valid? false
                 :anomaly-types [:G1c :duplicate-elements]
+                :not           #{:read-uncommitted}
                 :anomalies
                 {:duplicate-elements [{:op t3
                                        :mop [:r :x [1 2 1]]
@@ -637,6 +657,7 @@
             h  [t1]]
         (is (= {:valid? false
                 :anomaly-types [:empty-transaction-graph :internal]
+                :not           #{:read-atomic}
                 :anomalies {:empty-transaction-graph true
                             :internal [{:op t1
                                         :mop [:r :x [1 2 3 4]]
