@@ -4,6 +4,7 @@
             [clojure.pprint :refer [pprint]]
             [clojure.java.io :as io]
             [elle [core :as elle]
+                  [consistency-model :as cm]
                   [graph :as g]
                   [viz :as viz]]
             [jepsen.txn :as txn :refer [reduce-mops]]
@@ -285,16 +286,18 @@
 
   {:valid?        true | :unknown | false
    :anomaly-types [:g1c ...]
-   :anomalies     {:g1c [...] ...}"
+   :anomalies     {:g1c [...] ...}
+   :impossible-models #{:snapshot-isolation ...}}"
   [anomalies]
   (if (empty? anomalies)
     {:valid? true}
-    {:valid?         (if (every? unknown-anomaly-types
-                                 (keys anomalies))
-                       :unknown
-                       false)
-     :anomaly-types  (sort (keys anomalies))
-     :anomalies      anomalies}))
+    (merge {:valid?            (if (every? unknown-anomaly-types
+                                           (keys anomalies))
+                                 :unknown
+                                 false)
+            :anomaly-types     (sort (keys anomalies))
+            :anomalies         anomalies}
+           (cm/boundary anomalies))))
 
 (defn wr-txns
   "A lazy sequence of write and read transactions over a pool of n numeric

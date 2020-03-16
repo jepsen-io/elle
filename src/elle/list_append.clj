@@ -760,11 +760,7 @@
 
   :G1 implies :G1a, :G1b, and :G1c. :G2 implies :G1c, and :G1c implies :G0,
   because if we construct the graph for G2, it'll include all the edges for
-  G1c, and so on. See http://pmg.csail.mit.edu/papers/icde00.pdf for context.
-
-  Note that while we can *find* instances of G0, G1c and G2, we can't (yet)
-  categorize them automatically. These anomalies are grouped under :G0+G1c+G2
-  in checker results."
+  G1c, and so on. See http://pmg.csail.mit.edu/papers/icde00.pdf for context."
   ([history]
    (check {:anomalies [:G1 :G2 :dirty-update]} history))
   ([opts history]

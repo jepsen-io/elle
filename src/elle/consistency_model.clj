@@ -7,7 +7,8 @@
   - Adya, Liskov, O'Neil, 'Generalized Isolation Level Definitions'
   - Bailis, Davidson, Fekete, et al, 'Highly Available Transactions'
   - Cerone, Bernardi, Gotsman, 'A Framework for Transactional Consistency Models with Atomic Visibility'"
-  (:require [elle [graph :as g]]
+  (:require [elle [graph :as g]
+                  [util :as util :refer [map-vals]]]
             [clojure [set :as set]])
   (:import (java.util.function Function)
            (io.lacuna.bifurcan Graphs)))
@@ -43,40 +44,46 @@
   [anomalies]
   (g/bfs (partial g/out implied-anomalies) anomalies))
 
-(def friendly-model-names
+(def canonical-model-names
   "Lots of models have different names, and I can't keep them all straight.
-  This structure maps canonical names to friendly ones."
-  {:PL-SS   :strict-serializable      ; Adya
-   :PL-3    :full-serializable        ; Adya
-   :PL-2.99 :repeatable-read          ; Adya
-   :PL-3U   :update-serializable      ; Adya
-   :PL-FCV  :forward-consistent-view  ; Adya
-   :PL-2+   :consistent-view          ; Adya
-   :PL-2L   :monotonic-view           ; Adya
-   :PL-CS   :cursor-stability         ; Adya
-   :PL-MSR  :monotonic-snapshot-reads ; Adya
-   :PL-SI   :snapshot-isolation       ; Adya
-   :PL-2    :read-committed           ; I thiiiink Adya means this, but I'm not
-                                      ; sure
-   :PL-1    :read-uncommitted         ; Ditto, I'm guessing here. This might
-                                      ; be a matter of interpretation.
+  This structure maps friendly names to canonical ones."
+  {
+   :consistent-view          :PL-2+    ; Adya
+   :conflict-serializable    :PL-3     ; Adya
+   :cursor-stability         :PL-CS    ; Adya
+   :forward-consistent-view  :PL-FCV   ; Adya
+   :monotonic-snapshot-read  :PL-MSR   ; Adya
+   :monotonic-view           :PL-2L    ; Adya
+   :read-committed           :PL-2     ; I thiiiink Adya means this, but I'm not
+                                       ; sure
+   :read-uncommitted         :PL-1     ; Ditto, I'm guessing here. This might
+                                       ; be a matter of interpretation.
+   :repeatable-read          :PL-2.99  ; Adya
+   ; We use "serializable" to mean "conflict serializable"
+   :serializable             :Pl-3
+   :snapshot-isolation       :PL-SI    ; Adya
+   :strict-serializable      :PL-SS    ; Adya
+   :update-serializable      :PL-3U    ; Adya
    })
 
-(defn friendly-model-name
-  "Returns the friendly name of a consistency model."
-  [model]
-  (get friendly-model-names model model))
-
-(def canonical-model-names
-  "Maps friendly model names to canonical ones."
-  (->> friendly-model-names
-       (map (juxt val key))
-       (into {})))
+(def friendly-model-names
+  "Maps canonical model names to friendly ones."
+  (assoc (->> canonical-model-names
+              (map (juxt val key))
+              (into {}))
+         ; There are multiple options here, and serializable seems
+         ; simplest.
+         :PL-3 :serializable))
 
 (defn canonical-model-name
   "Returns the canonical name of a consistency model."
   [model]
   (get canonical-model-names model model))
+
+(defn friendly-model-name
+  "Returns the friendly name of a consistency model."
+  [model]
+  (get friendly-model-names model model))
 
 (def models
   "This graph relates consistency models in a hierarchy, such that if a->b in
@@ -89,15 +96,18 @@
         :causal-cerone          [:read-atomic]                ; Cerone
         :consistent-view        [:cursor-stability            ; Adya
                                  :monotonic-view]             ; Adya
+        :conflict-serializable  [:view-serializable]
         :cursor-stability       [:read-committed              ; Bailis
                                  :PL-2]                       ; Adya
         :forward-consistent-view [:consistent-view]           ; Adya
         :PL-2                    [:PL-1]                      ; Adya
         :PL-3                   [:repeatable-read             ; Adya
-                                 :update-serializable]        ; Adya
+                                 :update-serializable         ; Adya
+                                 :conflict-serializable]      ; Adya
         :update-serializable    [:forward-consistent-view]    ; Adya
         :monotonic-atomic-view  [:read-committed]             ; Bailis
         :monotonic-view         [:PL-2]                       ; Adya
+        :monotonic-snapshot-read [:PL-2]                      ; Adya
         :parallel-snapshot-isolation [:causal-cerone]         ; Cerone
         :prefix                 [:causal-cerone]              ; Cerone
         :read-atomic            [:causal]                     ; Cerone
@@ -121,7 +131,7 @@
         :causal                [:writes-follow-reads         ; Bailis
                                 :PRAM]                       ; Bailis
 
-        :pram                  [:monotonic-reads             ; Bailis
+        :PRAM                  [:monotonic-reads             ; Bailis
                                 :monotonic-writes            ; Bailis
                                 :read-your-writes]}          ; Bailis
        (g/map->bdigraph)
@@ -133,6 +143,37 @@
   [impossible]
   (g/bfs (partial g/in models)
          impossible))
+
+(defn most-models
+  "Given a set of models, and a direction function (g/in or g/out), gives a
+  subset of models which imply/are implied by the other models in the set.
+  Canonicalizes model names."
+  [dir ms]
+  ; The graph's not that big. We just brute-force this by searching the full
+  ; downstream set. It's not minimal, but it should be good enough.
+  (let [ms (map canonical-model-name ms)]
+    (reduce (fn [ms model]
+              (let [ms' (disj ms model)]
+                (if (some ms' (g/bfs (partial dir models) [model]))
+                  ; Some other model covers this one.
+                  ms'
+                  ms)))
+            (set ms)
+            ms)))
+
+(defn strongest-models
+  "Given a set of models, returns a (hopefully smaller) subset of those models
+  which implies all the rest. For instance, (strongest-models
+  #{:strict-serializable :serializable}) => #{:strict-serializable}."
+  [ms]
+  (most-models g/in ms))
+
+(defn weakest-models
+  "Given a set of models, returns a (hopefully smaller) subset of those models
+  which are implied by all the rest. For instance, (weakest-models
+  #{:strict-serializable :serializable}) => #{:serializable}."
+  [ms]
+  (most-models g/out ms))
 
 (def proscribed-anomalies-1
   "This is a map of anomalies to the (canonical) consistency models which the
@@ -162,7 +203,12 @@
          :parallel-snapshot-isolation [:internal]       ; Cerone (incomplete)
          :PL-3                      [:G1 :G2]           ; Adya
          :PL-2                      [:G1]               ; Adya
-         :PL-1                      [:G0]               ; Adya
+         :PL-1                      [:G0                ; Adya
+                                     ; I don't think an Adya history can exist
+                                     ; with either of these.
+                                     :duplicate-elements
+                                     ; Version orders are supposed to be total
+                                     :cyclic-versions]
          :prefix                    [:internal]         ; Cerone (incomplete)
          :serializable              [:internal]         ; Cerone (incomplete)
          :snapshot-isolation        [:internal          ; Cerone (incomplete)
@@ -193,3 +239,32 @@
        all-impossible-models
        ; Forming a set
        (into (sorted-set))))
+
+(defn possible-models
+  "Given a set of ruled-out models, returns all models that *are* possible."
+  [impossible]
+  (->> (g/vertices models)
+       g/->clj
+       (remove (set impossible))))
+
+(defn boundary
+  "Takes a set of anomalies, and yields a map of the weakest consistency models
+  we can rule out based on those anomalies.
+
+  Later we might want a :could-be entry, but I'm worried that might be
+  misleading at the moment, because there are some models whose distinguishing
+  anomalies we don't even look at--it'd be a little weird to claim it could be
+  one of those.
+
+  {:is-not    #{:strict-serializable}}"
+  [anomalies]
+  (let [impossible (anomalies->impossible-models anomalies)
+        possible   (possible-models impossible)]
+    {:is-not    (weakest-models impossible)}))
+     ;:could-be  (strongest-models possible)}))
+
+(defn friendly-boundary
+  "Like boundary, but uses friendly names."
+  [anomalies]
+  (map-vals #(into (sorted-set) (map friendly-model-name %))
+            (boundary anomalies)))
