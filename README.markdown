@@ -53,16 +53,16 @@ observes `x`, and sees its value as `[1 2]`.
 h
 ```
 
-Now, we ask Elle to check this history, looking for anomalies up to G2, and
+Now, we ask Elle to check this history, expecting it to be serializable, and
 have it dump anomalies to a directory called `out/`.
 
 ```clj
-=> (pprint (a/check {:anomalies [:G2], :directory "out"} h))
+=> (pprint (a/check {:consistency-models [:serializable], :directory "out"} h))
 {:valid? false,
  :anomaly-types (:G1c),
  :anomalies
  {:G1c
-  ({:cycle
+  [{:cycle
     [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
      {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
      {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
@@ -74,16 +74,28 @@ have it dump anomalies to a directory called `out/`.
       :value' 2,
       :a-mop-index 0,
       :b-mop-index 0}),
-    :type :G1c})}}
+    :type :G1c}]},
+ :not #{:read-committed},
+ :also-not
+ #{:consistent-view :cursor-stability :forward-consistent-view
+   :monotonic-atomic-view :monotonic-snapshot-read :monotonic-view
+   :repeatable-read :serializable :snapshot-isolation
+   :strict-serializable :update-serializable}}
 ```
 
 Here, Elle can infer the write-read relationship between T1 and T2 on the basis
 of their respective reads and writes. The write-write relationship between T2
-and T1 is inferrable because T3 observed x = [1,2], which constrains the
+and T1 is inferrable because T3 observed `x = [1,2]`, which constrains the
 possible orders of appends. This is a G1c anomaly: cyclic information flow. The
 `:cycle` field shows the operations in that cycle, and `:steps` shows the
-dependencies between each pair of operations in the cycle. Let's see that in
-text:
+dependencies between each pair of operations in the cycle.
+
+On the basis of this anomaly, Elle has concluded that this history is not
+read-committed---this is the weakest level Elle can demonstrate is violated. In
+addition, several stronger isolation levels, such as consistent-view and
+update-serializable are also violated by this history.
+
+Let's see the G1c anomaly in text:
 
 ```sh
 $ cat out/G1c.txt
@@ -116,6 +128,10 @@ As a user, your main entry points into Elle will be `elle.list-append/check`
 and `elle.rw-register/check`. Both namespaces also have code for generating
 sequences of transactions which you can apply to your database; see, for
 example, `elle.list-append/gen`.
+
+Elle has a broad variety of anomalies and consistency models; see
+`elle.consistency-model` for their definitions. Not every anomaly is
+detectable, but we aim for completeness.
 
 If you'd like to define your own relationships between transactions, see
 `elle.core`.
