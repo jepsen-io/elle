@@ -21,7 +21,7 @@
   (g/map->bdigraph
     {; Formally, G0 is also G1.
      :G0          [:G1]
-     :G0-process  [:G1-process :G0-realtime] ; Since processes as singlethreaded
+     :G0-process  [:G1-process :G0-realtime] ; Since processes are singlethreaded
      :G0-realtime [:G1-realtime]
 
      ; G1 is defined in terms of these three anomalies.
