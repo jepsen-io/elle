@@ -20,17 +20,43 @@
   union of G1a, G1b, and G1c."
   (g/map->bdigraph
     {; Formally, G0 is also G1.
-     :G0 [:G1]
+     :G0          [:G1]
+     :G0-process  [:G1-process :G0-realtime] ; Since processes as singlethreaded
+     :G0-realtime [:G1-realtime]
+
      ; G1 is defined in terms of these three anomalies.
      :G1a [:G1]
      :G1b [:G1]
      :G1c [:G1]
+     :G1c-process  [:G1-process :G1c-realtime]
+     :G1c-realtime [:G1-realtime]
+
+     ; G-single is a special case of G2
+     :G-single          [:G2]
+     :G-single-process  [:G2-process :G-single-realtime]
+     :G-single-realtime [:G2-realtime]
+
      ; Every G2-item is also a G2, by definition.
-     :G2-item [:G2]
+     :G2-item           [:G2]
+     :G2-item-process   [:G2-process :G2-item-realtime]
+     :G2-item-realtime  [:G2-realtime]
+
+     ; TODO: we don't distinguish between G-single which applies to items, vs
+     ; G-single on predicates. Right now, our G-singles ARE G2-item, but that's
+     ; not necessarily always going to be the case. This means checkers which
+     ; look for repeatable read are going to miss G-single, because they want
+     ; to see G2-item, but we filter out G-singles from G2 results. What a
+     ; mess. Fix this... in elle.txn, not here.
+
+     ; If we see a process violation, we also have a realtime violation,
+     ; because processes are single-threaded.
+     :G2-process        [:G2-realtime]
+
      ; The list-append test can find an anomaly which we call
      ; incompatible-order, where two committed read versions couldn't have come
      ; from the same timeline. This implies a dirty read.
      :incompatible-order [:G1a]
+
      ; Because we work in a richer data model than Adya, we have an extra class
      ; of anomaly that Adya doesn't: a dirty update. Dirty update is basically
      ; like a dirty read, except it affects writes as well. We say it implies a
@@ -38,11 +64,19 @@
      ; would want to prohibit dirty updates as well.
      :dirty-update [:G1a]}))
 
+(defn all-anomalies-implying
+  "Takes a collection of anomalies, and yields a set of anomalies which would
+  imply any of those anomalies."
+  [anomalies]
+  (when (seq anomalies)
+    (set (g/bfs (partial g/in implied-anomalies) anomalies))))
+
 (defn all-implied-anomalies
   "Takes a collection of anomalies, and yields a set of anomalies implied by
   those."
   [anomalies]
-  (g/bfs (partial g/out implied-anomalies) anomalies))
+  (when (seq anomalies)
+    (set (g/bfs (partial g/out implied-anomalies) anomalies))))
 
 (def canonical-model-names
   "Lots of models have different names, and I can't keep them all straight.
@@ -138,12 +172,17 @@
        (g/map->bdigraph)
        (g/map-vertices canonical-model-name)))
 
+(defn all-implied-models
+  "Takes a set of models, and expands it, using `models`, to a set of all
+  models which are implied by any of those models."
+  [ms]
+  (g/bfs (partial g/out models) ms))
+
 (defn all-impossible-models
   "Takes a set of models which are impossible, and expands it, using `models`,
   to a set of all models which are also impossible."
   [impossible]
-  (g/bfs (partial g/in models)
-         impossible))
+  (g/bfs (partial g/in models) impossible))
 
 (defn most-models
   "Given a set of models, and a direction function (g/in or g/out), gives a
@@ -176,55 +215,59 @@
   [ms]
   (most-models g/out ms))
 
-(def proscribed-anomalies-1
-  "This is a map of anomalies to the (canonical) consistency models which the
-  presence of that anomaly rules out.
+(def direct-proscribed-anomalies
+  "A graph which relates (canonical) consistency models to the anomalies they
+  directly proscribe.
 
   We don't always specify the *full* set of prohibited anomalies for each
   model, just the ones they add over weaker, implied models. This data
   structure is intended to be used in conjunction with `models` and
-  `anomaly-graph`.
+  `anomaly-graph`."
+  (->> {
+        :causal-cerone             [:internal :G1a]    ; Cerone (incomplete)
+        :cursor-stability          [:G1 :G-cursor]     ; Adya
+        :monotonic-view            [:G1 :G-monotonic]  ; Adya
+        :monotonic-snapshot-read   [:G1 :G-MSR]        ; Adya
+        :consistent-view           [:G1 :G-single]     ; Adya
+        :forward-consistent-view   [:G1 :G-SIb]        ; Adya
+        :read-atomic               [:internal          ; Cerone (incomplete)
+                                    :G1a]              ; Cerone (incomplete)
+        :repeatable-read           [:G1 :G2-item]      ; Adya
+        :strict-serializable       [:G1-realtime :G2-realtime] ; Adya
+        :update-serializable       [:G1 :G-update]     ; Adya
+        :parallel-snapshot-isolation [:internal :G1a]  ; Cerone (incomplete)
+        :PL-3                      [:G1 :G2]           ; Adya
+        :PL-2                      [:G1]               ; Adya
+        :PL-1                      [:G0                ; Adya
+                                    ; I don't think an Adya history can exist
+                                    ; with either of these. We might want to
+                                    ; include these in other, non-Adya models
+                                    ; too, but I don't understand their
+                                    ; formalisms well enough to say for sure.
+                                    :duplicate-elements
+                                    ; Version orders are supposed to be total
+                                    :cyclic-versions]
+        :prefix                    [:internal :G1a]    ; Cerone (incomplete)
+        :serializable              [:internal]         ; Cerone (incomplete)
+        :snapshot-isolation        [:internal          ; Cerone (incomplete)
+                                    :G1 :G-SI]         ; Adya
+        }
+       (g/map->bdigraph)
+       (g/map-vertices canonical-model-name)))
 
-  For example, repeatable read proscribes G2-item--but we don't have to say
-  that it also proscribes G0, because the consistency-model graph says that
-  repeatable-read implies read-committed, and read-committed proscribes G0."
-  ; It's easier to express this backwards, because models are defined in terms
-  ; of proscribed anomalies. We start with a map of models to proscribed
-  ; anomalies, then canonicalize and invert that map.
-  (let [proscribed
-        {:causal-cerone             [:internal :G1a]    ; Cerone (incomplete)
-         :cursor-stability          [:G1 :G-cursor]     ; Adya
-         :monotonic-view            [:G1 :G-monotonic]  ; Adya
-         :monotonic-snapshot-read   [:G1 :G-MSR]        ; Adya
-         :consistent-view           [:G1 :G-single]     ; Adya
-         :forward-consistent-view   [:G1 :G-SIb]        ; Adya
-         :read-atomic               [:internal          ; Cerone (incomplete)
-                                     :G1a]              ; Cerone (incomplete)
-         :repeatable-read           [:G1 :G2-item]      ; Adya
-         :update-serializable       [:G1 :G-update]     ; Adya
-         :parallel-snapshot-isolation [:internal :G1a]  ; Cerone (incomplete)
-         :PL-3                      [:G1 :G2]           ; Adya
-         :PL-2                      [:G1]               ; Adya
-         :PL-1                      [:G0                ; Adya
-                                     ; I don't think an Adya history can exist
-                                     ; with either of these.
-                                     :duplicate-elements
-                                     ; Version orders are supposed to be total
-                                     :cyclic-versions]
-         :prefix                    [:internal :G1a]    ; Cerone (incomplete)
-         :serializable              [:internal]         ; Cerone (incomplete)
-         :snapshot-isolation        [:internal          ; Cerone (incomplete)
-                                     :G1 :G-SI]         ; Adya
-        ; Should we consider PL-3 and serializable equivalent? I don't know
-        ; yet; it probably depends on view/conflict/full serializability.
-        ; Better to be conservative now.
-        }]
-    ; Now we invert those relationships to get a mapping of anomalies to models
-    ; that can't be true if those anomalies hold.
-    (->> (for [[model anomalies] proscribed
-               anomaly           anomalies]
-           {anomaly #{(canonical-model-name model)}})
-         (apply merge-with set/union))))
+(defn anomalies-prohibited-by
+  "Takes a collection of consistency models, and returns a set of anomalies
+  which can't be present if all of those models are to hold."
+  [models]
+  (->> ; Canonicalize models
+       (map canonical-model-name models)
+       ; Take every model implied by those
+       all-implied-models
+       ; And expand those to proscribed anomalies...
+       (mapcat (comp g/->clj (partial g/out direct-proscribed-anomalies)))
+       ; And any anomalies which would imply those anomalies.
+       all-anomalies-implying
+       (into (sorted-set))))
 
 (defn anomalies->impossible-models
   "Takes a collection of anomalies, and returns a set of models which can't
@@ -233,13 +276,10 @@
   (->> ; Consider not just these direct anomalies, but also the anomalies these
        ; ones imply.
        (all-implied-anomalies anomalies)
-       ; Get a collection of sets of models we know can't hold
-       (keep proscribed-anomalies-1)
-       ; Squash that
-       (reduce set/union)
+       ; Map those to consistency models which directly forbid them
+       (mapcat (comp g/->clj (partial g/in direct-proscribed-anomalies)))
        ; And expand to implied impossible models
        all-impossible-models
-       ; Forming a set
        (into (sorted-set))))
 
 (defn possible-models

@@ -225,7 +225,7 @@
        ; append operation to infer a value.
        (merge (values-from-single-appends history))
        ; And sort
-       (util/map-vals (partial sort-by count))))
+         (util/map-vals (partial sort-by count))))
 
 (defn incompatible-orders
   "Takes a map of keys to sorted observed values and verifies that for each key
@@ -367,8 +367,8 @@
                  sorted-values))
 
 (defn write-index
-  "Takes a history restricted to oks and infos, and constructs a map of keys to
-  append values to the operations that appended those values."
+  "Takes a history and constructs a map of keys to append values to the
+  operations that appended those values."
   [history]
   (reduce (fn [index op]
             (reduce (fn [index [f k v]]
@@ -397,7 +397,7 @@
                                (let [vs (conj vs v)
                                      t2 (get (get write-index k) v)]
                                  (assert t2 (str "No transaction wrote "
-                                                 k " = " v))
+                                                 (pr-str k) " " (pr-str v)))
                                  (case [(:type t1) (:type t2)]
                                    ; Moving along happily
                                    [:ok    :ok] [t2 [v] cases]
@@ -535,7 +535,8 @@
    (verify-unique-appends history)
 
    ; We only care about ok and info ops; invocations don't matter, and failed
-   ; ops can't contribute to the state.
+   ; ops can't contribute to the state. TODO: do we... want to start inferring
+   ; deps for failed ops too? Might simplify the dirty-update codepath.
    (let [history       (filter (comp #{:ok :info} :type) history)
          sorted-values (sorted-values history)]
      ; Compute indices
@@ -738,41 +739,30 @@
 (defn check
   "Full checker for append and read histories. Options are:
 
+    :consistency-models     A collection of consistency models we expect this
+                            history to obey. Defaults to [:strict-serializable].
+                            See elle.consistency-model for available models.
+
+    :anomalies              You can also specify a collection of specific
+                            anomalies you'd like to look for. Performs limited
+                            expansion as per
+                            elle.consistency-model/implied-anomalies.
+
     :additional-graphs      A collection of graph analyzers (e.g. realtime)
                             which should be merged with our own dependencies.
-    :anomalies              A collection of anomalies which should be reported,
-                            if found.
+
     :directory              Where to output files, if desired. (default nil)
-    :plot-format            Either :png or :svg (default :svg)
 
-  Supported anomalies are:
-
-    :G0   Write Cycle. A cycle comprised purely of write-write deps.
-    :G1a  Aborted Read. A transaction observes data from a failed txn.
-    :G1b  Intermediate Read. A transaction observes a value from the middle of
-          another transaction.
-    :G1c  Circular Information Flow. A cycle comprised of write-write and
-          write-read edges.
-    :G1   G1a, G1b, and G1c.
-    :G2   A dependency cycle with at least one anti-dependency edge.
-    :dirty-update   A committed write incorporates aborted state.
-
-  :G1 implies :G1a, :G1b, and :G1c. :G2 implies :G1c, and :G1c implies :G0,
-  because if we construct the graph for G2, it'll include all the edges for
-  G1c, and so on. See http://pmg.csail.mit.edu/papers/icde00.pdf for context."
+    :plot-format            Either :png or :svg (default :svg)"
   ([history]
    (check {} history))
   ([opts history]
-   (let [anomalies    (ct/expand-anomalies
-                        (:anomalies opts #{:G1 :G2 :dirty-update}))
-         opts         (assoc opts :anomalies anomalies)
-         history      (remove (comp #{:nemesis} :process) history)
-         pp           (preprocess history)
-         g1a          (when (:G1a anomalies) (g1a-cases history))
-         g1b          (when (:G1b anomalies) (g1b-cases history))
+   (let [history      (remove (comp #{:nemesis} :process) history)
+         g1a          (g1a-cases history)
+         g1b          (g1b-cases history)
          internal     (internal-cases history)
-         dirty-update (when (:dirty-update anomalies)
-                        (dirty-update-cases (:append-index pp) history))
+         dirty-update (dirty-update-cases (append-index (sorted-values history))
+                                          history)
 
          ; We don't want to detect duplicates or incompatible orders for
          ; aborted txns.
@@ -782,11 +772,11 @@
          incmp-order   (incompatible-orders sorted-values)
 
          ; Great, now construct a graph analyzer...
-         analyzers     (into [graph] (:additional-graphs opts))
+         analyzers     (into [graph] (ct/additional-graphs opts))
          analyzer      (apply elle/combine analyzers)
          cycles        (:anomalies (ct/cycles! opts analyzer history))
 
-         ; Categorize anomalies and build up a map of types to examples
+         ; And merge in our own anomalies
          anomalies (cond-> cycles
                      dups           (assoc :duplicate-elements dups)
                      incmp-order    (assoc :incompatible-order incmp-order)
@@ -794,7 +784,7 @@
                      dirty-update   (assoc :dirty-update dirty-update)
                      (seq g1a)      (assoc :G1a g1a)
                      (seq g1b)      (assoc :G1b g1b))]
-     (ct/result-map anomalies))))
+     (ct/result-map opts anomalies))))
 
 (defn append-txns
   "Like wr-txns, we just rewrite writes to be appends."

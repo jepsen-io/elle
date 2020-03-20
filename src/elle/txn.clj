@@ -1,7 +1,8 @@
 (ns elle.txn
   "Functions for cycle analysis over transactional workloads."
-  (:require [clojure.tools.logging :refer [info warn]]
-            [clojure.pprint :refer [pprint]]
+  (:require [clojure [pprint :refer [pprint]]
+                      [set :as set]]
+            [clojure.tools.logging :refer [info warn]]
             [clojure.java.io :as io]
             [elle [core :as elle]
                   [consistency-model :as cm]
@@ -93,165 +94,257 @@
           history))
 
 (def cycle-explainer
-  ; We categorize cycles based on their dependency edges
+  "This cycle explainer wraps elle.core's cycle explainer, and categorizes
+  cycles based on what kinds of edges they contain; e.g. an all-ww cycle is
+  :G0, one with realtime, ww, and wr edges is :G1c-realtime, etc."
   (reify elle/CycleExplainer
     (explain-cycle [_ pair-explainer cycle]
       (let [ex (elle/explain-cycle elle/cycle-explainer pair-explainer cycle)
             ; What types of relationships are involved here?
             type-freqs (frequencies (map :type (:steps ex)))
-            ww (:ww type-freqs 0)
-            wr (:wr type-freqs 0)
-            rw (:rw type-freqs 0)]
-        ; Tag the cycle with a type based on the edges involved. Note that we
-        ; might have edges from, say, real-time or process orders, so we try to
-        ; be permissive.
-        (assoc ex :type (cond (< 1 rw) :G2
-                              (= 1 rw) :G-single
-                              (< 0 wr) :G1c
-                              (< 0 ww) :G0
-                              true (throw (IllegalStateException.
-                                            (str "Don't know how to classify"
-                                                 (pr-str ex))))))))
+            realtime  (:realtime  type-freqs 0)
+            process   (:process   type-freqs 0)
+            ww        (:ww        type-freqs 0)
+            wr        (:wr        type-freqs 0)
+            rw        (:rw        type-freqs 0)
+            ; We compute a type based on data dependencies alone
+            data-dep-type (cond (< 1 rw) "G2"
+                                (= 1 rw) "G-single"
+                                (< 0 wr) "G1c"
+                                (< 0 ww) "G0"
+                                true (throw (IllegalStateException.
+                                              (str "Don't know how to classify"
+                                                   (pr-str ex)))))
+            ; And tack on a -process or -realtime tag if there are those types
+            ; of edges.
+            subtype (cond (< 0 realtime) "-realtime"
+                          (< 0 process)  "-process"
+                          true           "")]
+        (assoc ex :type (keyword (str data-dep-type subtype)))))
 
     (render-cycle-explanation [_ pair-explainer
                                {:keys [type cycle steps] :as ex}]
       (elle/render-cycle-explanation
         elle/cycle-explainer pair-explainer ex))))
 
-(defn cycle-explanations
-  "Takes a pair explainer, a function taking an scc and possible yielding a
-  cycle, and a series of strongly connected components. Produces a seq (nil if
-  empty) of explanations of cycles."
-  [pair-explainer cycle-fn sccs]
-  (seq (keep (fn [scc]
-               (when-let [cycle (cycle-fn scc)]
-                 (elle/explain-cycle cycle-explainer pair-explainer cycle)))
-             sccs)))
+(def cycle-anomaly-specs
+  "We define a specification language for different anomaly types, and a small
+   interpreter to search for them. An anomaly is specified by a map including:
 
-(defn g0-cases
-  "Given a graph, a pair explainer, and a collection of strongly connected
-  components, searches for instances of G0 anomalies within it. Returns nil if
-  none are present."
-  [graph pair-explainer sccs]
-  ; For g0, we want to restrict the graph purely to write-write edges.
-  (let [g0-graph (-> graph
-                     (g/remove-relationship :rw)
-                     (g/remove-relationship :wr))]
-		(cycle-explanations pair-explainer
-												(partial g/find-cycle g0-graph)
-												sccs)))
+     :rels         A set of relationships which must intersect with every
+                   edge in the cycle
 
-(defn g1c-cases
-  "Given a graph, an explainer, and a collection of strongly connected
-  components, searches for instances of G1c anomalies within them. Returns nil
-  if none are present."
-  [graph pair-explainer sccs]
-  ; For g1c, we want to restrict the graph to write-write edges or write-read
-  ; edges. We also need *just* the write-read graph, so that we can
-  ; differentiate from G0--this differs from Adya, but we'd like to say
-  ; specifically that an anomaly is G1c and NOT G0.
-  (let [ww+wr-graph (g/remove-relationship graph        :rw)
-        wr-graph    (g/remove-relationship ww+wr-graph  :ww)]
-    (cycle-explanations pair-explainer
-                        (partial g/find-cycle-starting-with
-                                 wr-graph ww+wr-graph)
-                        sccs)))
+     - or -
 
-(defn g-single-cases
-  "Given a graph, an explainer, and a collection of strongly connected
-  components, searches for instances of G-single anomalies within them.
-  Returns nil if none are present."
-  [graph pair-explainer sccs]
-  ; For G-single, we want exactly one rw edge in a cycle, and the remaining
-  ; edges from ww or wr.
-  (let [rw-graph      (-> graph
-                          (g/remove-relationship :ww)
-                          (g/remove-relationship :wr))
-        ww+wr-graph   (-> graph
-                          (g/remove-relationship :rw))]
-    (cycle-explanations pair-explainer
-                        (partial g/find-cycle-starting-with
-                                 rw-graph ww+wr-graph)
-                        sccs)))
+     :first-rels   A set of relationships which must intersect with the first
+                   edge in the cycle.
+     :rest-rels    A set of relationships which must intersect with remaining
+                   edges.
 
-(defn g2-cases
-  "Given a graph, an explainer, and a collection of strongly connected
-  components, searches for instances of G2 anomalies within them. Returns nil
-  if none are present."
-  [graph pair-explainer sccs]
-  ; For G2, we want at least one rw edge in a cycle; the other edges can be
-  ; anything.
-  (let [rw-graph (-> graph
-                     (g/remove-relationship :ww)
-                     (g/remove-relationship :wr))]
-    ; Sort of a hack; we reject cycles that don't have at least two rw edges,
-    ; because single rw edges fall under g-single.
-    (seq (keep (fn [scc]
-                 (when-let [cycle (g/find-cycle-starting-with
-                                    rw-graph graph scc)]
-                   ; Good, we've got a cycle. We're going to reject any cycles
-                   ; that are actually G-single, because the G-single checker
-                   ; will pick up on those. This could mean we might miss some
-                   ; G2 cycles that we COULD find by modifying find-cycle to
-                   ; return more candidates, but I don't think it's the end of
-                   ; the world; G-single is worse, and if we see it, G2 is
-                   ; just icing on the cake
-                   (let [cx (elle/explain-cycle cycle-explainer
-                                                 pair-explainer
-                                                 cycle)]
-                     (when (= :G2 (:type cx))
-                       cx))))
-               sccs))))
+     - and optionally -
+
+     :filter-ex    A predicate over a cycle explanation. We use this
+                   to restrict cycles to e.g. *just* G2 instead of G-single."
+  {:G0        {:rels #{:ww}}
+   ; We want at least one wr edge, so we specify that as first-rels.
+   :G1c       {:first-rels #{:wr}
+               :rest-rels  #{:ww :wr}}
+   ; Likewise, G-single starts with the anti-dependency edge.
+   :G-single  {:first-rels  #{:rw}
+               :rest-rels   #{:ww :wr}}
+   ; G2, likewise, starts with an anti-dep edge, but allows more, and insists
+   ; on being G2, rather than G-single. Not bulletproof, but G-single is worse,
+   ; so I'm OK with it.
+   :G2        {:first-rels  #{:rw}
+               :rest-rels   #{:ww :wr :rw}
+               :filter-ex   (comp #{:G2} :type)}
+
+   ; A process G0 can use any number of process and ww edges--process is
+   ; acyclic, so there's got to be at least one ww edge. We also demand the
+   ; resulting cycle be G0-process, to filter out plain old G0s.
+   :G0-process        {:rels        #{:ww :process}
+                       :filter-ex   (comp #{:G0-process} :type)}
+   ; G1c-process needs at least one wr-edge to distinguish itself from
+   ; G0-process.
+   :G1c-process       {:first-rels  #{:wr}
+                       :rest-rels   #{:ww :wr :process}
+                       :filter-ex   (comp #{:G1c-process} :type)}
+   ; G-single-process starts with an anti-dep edge and can use processes from
+   ; there.
+   :G-single-process  {:first-rels  #{:rw}
+                       :rest-rels   #{:ww :wr :process}
+                       :filter-ex   (comp #{:G-single-process} :type)}
+   ; G2-process starts with an anti-dep edge, and allows anything from there.
+   ; Plus it's gotta be G2-process, so we don't report G2s or G-single-process
+   ; etc.
+   :G2-process        {:first-rels  #{:rw}
+                       :rest-rels   #{:ww :wr :rw :process}
+                       :filter-ex   (comp #{:G2-process} :type)}
+
+   ; Ditto for realtime
+   :G0-realtime        {:rels        #{:ww :realtime}
+                        :filter-ex   (comp #{:G0-realtime} :type)}
+   :G1c-realtime       {:first-rels  #{:wr}
+                        :rest-rels   #{:ww :wr :realtime}
+                        :filter-ex   (comp #{:G1c-realtime} :type)}
+   :G-single-realtime  {:first-rels  #{:rw}
+                        :rest-rels   #{:ww :wr :realtime}
+                        :filter-ex   (comp #{:G-single-realtime} :type)}
+   :G2-realtime        {:first-rels  #{:rw}
+                        :rest-rels   #{:ww :wr :rw :realtime}
+                        :filter-ex   (comp #{:G2-realtime} :type)}})
 
 (def cycle-types
   "All types of cycles we can detect."
-  #{:G0 :G1c :G-single :G2})
+  (set (keys cycle-anomaly-specs)))
+
+(def process-anomaly-types
+  "Anomaly types involving process edges."
+  (set (filter (comp (partial re-find #"-process") name) cycle-types)))
+
+(def realtime-anomaly-types
+  "Anomaly types involving realtime edges."
+  (set (filter (comp (partial re-find #"-realtime") name) cycle-types)))
 
 (def unknown-anomaly-types
   "Anomalies which cause the analysis to yield :valid? :unknown, rather than
   false."
   #{:empty-transaction-graph})
 
-(defn expand-anomalies
-  "Takes a collection of anomalies, and returns the fully expanded version of
-  those anomalies as a set: e.g. [:G1] -> #{:G0 :G1a :G1b :G1c}"
-  [as]
-  (let [as (set as)
-        as (if (:G2 as)       (conj as :G-single :G1c) as)
-        as (if (:G-single as) (conj as :G1c) as)
-        as (if (:G1 as)       (conj as :G1a :G1b :G1c) as)
-        as (if (:G1c as)      (conj as :G0) as)]
-    as))
+(defn prohibited-anomaly-types
+  "Takes an options map with
+
+      :consistency-models   A collection of consistency models we expect hold
+      :anomalies            A set of additional, specific anomalies we don't
+                            want to see
+
+  and returns a set of anomalies which would constitute a test failure.
+  Defaults to {:consistency-models [:strict-serializable]}"
+  [opts]
+  (set/union (cm/all-anomalies-implying (:anomalies opts))
+             (cm/anomalies-prohibited-by
+               (:consistency-models opts [:strict-serializable]))))
+
+(defn reportable-anomaly-types
+  "Anomalies worth reporting on, even if they don't cause the test to fail."
+  [opts]
+  (set/union (prohibited-anomaly-types opts)
+             unknown-anomaly-types))
+
+(defn additional-graphs
+  "Given options, determines what additional graphs we'll need to consider for
+  this analysis. Options:
+
+      :consistency-models   A collection of consistency models we expect hold
+      :anomalies            A set of additional, specific anomalies we don't
+                            want to see
+      :additional-graphs    If you'd like even more dependencies"
+  [opts]
+  (let [ats (reportable-anomaly-types opts)]
+    (-> ; If we need realtime, use realtime-graph. No need to bother
+        ; with process, cuz we'll find those too.
+        (cond (seq (set/intersection realtime-anomaly-types ats))
+              #{elle/realtime-graph}
+
+              ; If we're looking for any process anomalies...
+              (seq (set/intersection process-anomaly-types ats))
+              #{elle/process-graph}
+
+              ; Otherwise, the usual graph is fine.
+              true nil)
+        ; Tack on any other requested graphs.
+        (into (:additional-graphs opts)))))
+
+(defn filtered-graphs
+  "Takes a graph g. Returns a function that takes a set of relationships, and
+  yields g filtered to just those relationships. Memoized."
+  [graph]
+  (memoize (fn [rels] (g/filter-relationships rels graph))))
+
+(defn cycle-cases
+  "We take the unified graph, a pair explainer that can justify relationships
+  between pairs of transactions, and a collection of strongly connected
+  components in the unified graph. We proceed to find allllll kinds of cycles,
+  returning a map of anomaly names to sequences of cycle explanations for each.
+  We find:
+
+  :G0                 ww edges only
+  :G1c                ww, at least one wr edge
+  :G-single           ww, wr, exactly one rw
+  :G2                 ww, wr, 2+ rw
+
+  :G0-process         G0, but with process edges
+  ...
+
+  :G0-realtime        G0, but with realtime edges
+  ..."
+  [graph pair-explainer sccs]
+  (let [fg (filtered-graphs graph)]
+    ; This is basically a miniature interpreter for the anomaly specification
+    ; language we defined above. It's... clean, but it also duplicates a lot of
+    ; work--for instance, a G1c cycle will be detected three times, by G1c,
+    ; G1c-process, and G1c-realtime; we then have to ignore 2 of those in the
+    ; filter step. I don't think this is super expensive, but future self, if
+    ; you're looking at a profiler and trying to find constant factors to
+    ; optimize, this might be a good spot to start.
+    (->> (for [scc          sccs
+               [type spec]  cycle-anomaly-specs]
+           ; First, find a cycle using the spec.
+           (let [;_      (prn)
+                 ;_      (prn :spec type spec)
+                 cycle (if-let [rels (:rels spec)]
+                         ; All edges in the same set of relationships
+                         (do ;(prn :find-cycle rels)
+                             ;(prn :graph (fg rels))
+                             (g/find-cycle (fg rels) scc))
+                         ; First edge special
+                         (do ;(prn :find-first-cycle (:first-rels spec)
+                             ;     (:rest-rels spec))
+                             ;(prn :first-graph (fg (:first-rels spec)))
+                             ;(prn :rest-graph  (fg (:rest-rels spec)))
+                             (g/find-cycle-starting-with (fg (:first-rels spec))
+                                                         (fg (:rest-rels spec))
+                                                         scc)))]
+             (when cycle
+               ; Explain the cycle
+               (let [ex (elle/explain-cycle cycle-explainer pair-explainer
+                                            cycle)]
+                 ;(prn :explanation ex)
+                 ; Make sure it passes the filter, if we have one.
+                 (if-let [p (:filter-ex spec)]
+                   (when (p ex) ex)
+                   ex)))))
+         ; Strip out missing cycles, or explanations that didn't pass muster
+         (remove nil?)
+         ; And group them by type
+         (group-by :type))))
 
 (defn cycles
-  "Takes an options map, including a set of :anomalies, an analyzer function,
+  "Takes an options map, including a collection of expected consistency models
+  :consistency-models, a set of additional :anomalies, an analyzer function,
   and a history. Analyzes the history and yields the analysis, plus an anomaly
   map like {:G1c [...]}."
   [opts analyzer history]
   (let [; Analyze the history
-        {:keys [graph explainer sccs anomalies] :as analysis}
+        {:keys [graph explainer sccs] :as analysis}
         (elle/check- analyzer history)
 
         ; Find anomalies
-        as  (:anomalies opts)
-        g0  (when (:G0 as)        (g0-cases       graph explainer sccs))
-        g1c (when (:G1c as)       (g1c-cases      graph explainer sccs))
-        g-s (when (:G-single as)  (g-single-cases graph explainer sccs))
-        g2  (when (:G2 as)        (g2-cases       graph explainer sccs))]
-
+        anomalies (cycle-cases graph explainer sccs)]
+    ;(prn :cycles)
+    ;(pprint anomalies)
     ; Merge our cases into the existing anomalies map.
-    (assoc analysis :anomalies (cond-> anomalies
-                                 g0  (assoc :G0 g0)
-                                 g1c (assoc :G1c g1c)
-                                 g-s (assoc :G-single g-s)
-                                 g2  (assoc :G2 g2)))))
+    (update analysis :anomalies merge anomalies)))
 
 (defn cycles!
-  "Like cycles, but writes out files as a side effect."
+  "Like cycles, but writes out files as a side effect. Only writes files for
+  relevant anomalies."
   [opts analyzer history]
-  (let [analysis (cycles opts analyzer history)]
+  (let [analysis (cycles opts analyzer history)
+        anomalies (select-keys (:anomalies analysis)
+                               (reportable-anomaly-types opts))]
     ; First, text files.
-    (doseq [[type cycles] (:anomalies analysis)]
+    (doseq [[type cycles] anomalies]
       (when (cycle-types type)
         (elle/write-cycles! (assoc opts
                                    :pair-explainer  (:explainer analysis)
@@ -275,29 +368,36 @@
                     (viz/plot-analysis! (assoc analysis :sccs sccs)
                                         (io/file d (name type))
                                         opts))))
-        (:anomalies analysis))))
+        anomalies)))
 
     ; And return analysis
     analysis))
 
 (defn result-map
-  "Takes options, and a map of anomaly names to anomalies, and returns a map of
-  the form...
+  "Takes options, including :anomalies and :consistency-models, which define
+  what specific anomalies and consistency models to look for, and a map of
+  anomaly names to anomalies, and returns a map of the form...
 
   {:valid?        true | :unknown | false
    :anomaly-types [:g1c ...]
    :anomalies     {:g1c [...] ...}
    :impossible-models #{:snapshot-isolation ...}}"
-  [anomalies]
-  (if (empty? anomalies)
-    {:valid? true}
-    (merge {:valid?            (if (every? unknown-anomaly-types
-                                           (keys anomalies))
-                                 :unknown
-                                 false)
-            :anomaly-types     (sort (keys anomalies))
-            :anomalies         anomalies}
-           (cm/friendly-boundary (keys anomalies)))))
+  [opts anomalies]
+  ;(prn :anomalies anomalies)
+  ;(prn :reportable-anomalies (reportable-anomaly-types opts))
+  (let [bad         (select-keys anomalies (prohibited-anomaly-types opts))
+        reportable  (select-keys anomalies (reportable-anomaly-types opts))]
+    (if (empty? reportable)
+      ; TODO: Maybe return anomalies and/or a boundary here too, and just not
+      ; flag them as invalid? Maybe? I dunno, might be noisy, especially if we
+      ; expect to see them all the time.
+      {:valid? true}
+      (merge {:valid?            (cond (seq bad)          false
+                                       (seq reportable)   :unknown
+                                       true               true)
+              :anomaly-types     (sort (keys reportable))
+              :anomalies         reportable}
+             (cm/friendly-boundary (keys anomalies))))))
 
 (defn wr-txns
   "A lazy sequence of write and read transactions over a pool of n numeric

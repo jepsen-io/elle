@@ -630,7 +630,7 @@
     {:anomalies anomalies
      :graph     tg
      :explainer (elle/->CombinedExplainer [(WWExplainer. graphs)
-                                            (RWExplainer. graphs)])}))
+                                           (RWExplainer. graphs)])}))
 
 (defrecord WRExplainer []
   elle/DataExplainer
@@ -725,7 +725,7 @@
   [opts history]
   (let [; Build our combined analyzers
         analyzers (into [wr-graph (partial ww+rw-graph opts)]
-                        (:additional-graphs opts))
+                        (ct/additional-graphs opts))
         analyzer (apply elle/combine analyzers)]
     ; And go!
     (analyzer history)))
@@ -733,55 +733,48 @@
 (defn check
   "Full checker for write-read registers. Options are:
 
+    :consistency-models     A collection of consistency models we expect this
+                            history to obey. Defaults to [:strict-serializable].
+                            See elle.consistency-model for available models.
+
+    :anomalies              You can also specify a collection of specific
+                            anomalies you'd like to look for. Performs limited
+                            expansion as per
+                            elle.consistency-model/implied-anomalies.
+
     :additional-graphs      A collection of graph analyzers (e.g. realtime)
                             which should be merged with our own dependency
                             graph.
-    :anomalies              A collection of anomalies which should be reported,
-                            if found.
+
     :sequential-keys?       Assume that each key is independently sequentially
                             consistent, and use each processes' transaction
                             order to derive a version order.
+
     :linearizable-keys?     Assume that each key is independently linearizable,
                             and use the realtime process order to derive a
                             version order.
+
     :wfr-keys?              Assume that within each transaction, writes follow
                             reads, and use that to infer a version order.
-    :plot-format            Either :png or :svg (default :svg)
 
+    :directory              Where to output files, if desired. (default nil)
 
-  Supported anomalies are:
-
-    :G0   Write Cycle. A cycle comprised purely of write-write deps.
-    :G1a  Aborted Read. A transaction observes data from a failed txn.
-    :G1b  Intermediate Read. A transaction observes a value from the middle of
-          another transaction.
-    :G1c  Circular information flow. A cycle comprised of write-write and
-          write-read edges.
-    :G-single  An dependency cycle with exactly one anti-dependency edge.
-    :G2   A dependency cycle with at least one anti-dependency edge.
-    :internal Internal consistency anomalies. A transaction fails to observe
-              state consistent with its own prior reads or writes.
-
-  :G2 implies :G-single and :G1c. :G1 implies :G1a, :G1b, and :G1c. G1c implies
-  G0. The default is [:G2 :G1a :G1b :internal], which catches everything."
+    :plot-format            Either :png or :svg (default :svg)"
   ([history]
    (check {}))
   ([opts history]
-   (let [anomalies (ct/expand-anomalies
-                     (get opts :anomalies [:G2 :G1a :G1b :internal]))
-         opts     (assoc opts :anomalies anomalies)
-         history  (remove (comp #{:nemesis} :process) history)
+   (let [history  (remove (comp #{:nemesis} :process) history)
          _        (ct/assert-type-sanity history)
-         g1a      (when (:G1a anomalies) (g1a-cases history))
-         g1b      (when (:G1b anomalies) (g1b-cases history))
-         internal (when (:internal anomalies) (internal-cases history))
+         g1a      (g1a-cases history)
+         g1b      (g1b-cases history)
+         internal (internal-cases history)
          cycles   (:anomalies (ct/cycles! opts (partial graph opts) history))
          ; Build up anomaly map
          anomalies (cond-> cycles
                      internal (assoc :internal internal)
                      g1a      (assoc :G1a g1a)
                      g1b      (assoc :G1b g1b))]
-     (ct/result-map anomalies))))
+     (ct/result-map opts anomalies))))
 
 (defn gen
   "See elle.txn/wr-txns for options"

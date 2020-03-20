@@ -350,36 +350,35 @@
                  :a-mop-index 0,
                  :b-mop-index 0}],
                :type :G0}]
-      ; All checkers catch this.
+      ; G1 and G0 both catch this, because technically G0 *is* G1.
       (is (= {:valid? false
               :anomaly-types  [:G0]
               :not            #{:read-uncommitted}
               :anomalies {:G0 [msg]}}
-             (c {:anomalies [:G0]} h)))
+             (c {:consistency-models nil, :anomalies [:G0]} h)))
       (is (= {:valid? false
               :anomaly-types  [:G0]
               :not            #{:read-uncommitted}
               :anomalies {:G0 [msg]}}
-             (c {:anomalies [:G1]} h)))
-      ; G2 doesn't actually include G0, but catches it anyway.
-      (is (= {:valid? false
-              :anomaly-types  [:G0]
-              :not            #{:read-uncommitted}
-              :anomalies {:G0 [msg]}}
-             (c {:anomalies [:G2]} h)))))
+             (c {:consistency-models nil, :anomalies [:G1]} h)))
+      ; G2 doesn't actually include G0, so it won't.
+      (is (= {:valid? true}
+             (c {:consistency-models nil, :anomalies [:G2]} h)))))
 
   (testing "G1a"
     (let [; T2 sees T1's failed write
           t1 {:type :fail, :value [[:append :x 1]]}
           t2 (op "rx1")
           h  [t1 t2]]
-      ; G0 checker won't catch this
-      (is (= {:valid? :unknown
+      ; Read-uncommitted won't catch this
+      (is (= {:valid?         :unknown
               :anomaly-types  [:empty-transaction-graph]
-              :not            #{}
-              :anomalies {:empty-transaction-graph true}}
-             (c {:anomalies [:G0]} h)))
-      ; G1 will
+              :anomalies      {:empty-transaction-graph true}
+              ; Right now, it'll see that it's not RC/RA, though it won't tell
+              ; you WHY.
+              :not #{:read-atomic :read-committed}}
+             (c {:consistency-models [:read-uncommitted]} h)))
+      ; Read-committed will, of course
       (is (= {:valid? false
               :anomaly-types  [:G1a :empty-transaction-graph]
               :not            #{:read-committed :read-atomic}
@@ -388,35 +387,57 @@
                                  :writer  t1
                                  :mop     [:r :x [1]]
                                  :element 1}]}}
-             (c {:anomalies [:G1]} h)))
-      ; G2 won't: even though the graph covers G1c, we don't do the specific
-      ; G1a/b checks unless asked.
-      (is (= {:valid? :unknown,
-              :anomaly-types  [:empty-transaction-graph]
-              :not            #{}
-              :anomalies {:empty-transaction-graph true}}
-             (c {:anomalies [:G2]} h)))))
+             (c {:consistency-models [:read-committed]} h)))
+      ; Just asking for G2 won't complain about this, though it *will* complain
+      ; about the empty transaction graph.
+      (is (= {:valid? :unknown
+              :anomaly-types [:empty-transaction-graph]
+              :anomalies {:empty-transaction-graph true}
+              ; Right now, it'll see that it's not RC/RA, though it won't tell
+              ; you WHY.
+              :not #{:read-atomic :read-committed}}
+             (c {:consistency-models nil, :anomalies [:G2]} h)))
+      ; But a repeatable-read checker will see it, because they prohibit both
+      ; G1 and G2-item.
+      (is (= {:valid? false
+              :anomaly-types  [:G1a :empty-transaction-graph]
+              :not            #{:read-committed :read-atomic}
+              :anomalies {:empty-transaction-graph true
+                          :G1a [{:op      t2
+                                 :writer  t1
+                                 :mop     [:r :x [1]]
+                                 :element 1}]}}
+             (c {:consistency-models [:repeatable-read]} h)))))
 
   (testing "G1b"
     (let [; T2 sees T1's intermediate write
-          t1 (op "ax1ax2")
-          t2 (op "rx1")
-          h  [t1 t2]]
+          [t1 t1'] (pair (op "ax1ax2"))
+          [t2 t2'] (pair (op "rx1"))
+          [t1 t1' t2 t2' :as h] (history/index [t1 t1' t2 t2'])]
       ; G0 checker won't catch this
-      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
+      (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G0]} h)))
       ; G1 will
       (is (= {:valid? false
               :anomaly-types  [:G1b]
               :not            #{:read-committed}
-              :anomalies {:G1b [{:op      t2
-                                 :writer  t1
+              :anomalies {:G1b [{:op      t2'
+                                 :writer  t1'
                                  :mop     [:r :x [1]]
                                  :element 1}]}}
-             (c {:anomalies [:G1]} h)))
+             (c {:consistency-models nil, :anomalies [:G1]} h)))
       ; G2 won't: even though the graph covers G1c, we don't do the specific
       ; G1a/b checks unless asked.
       (is (= {:valid? true}
-             (c {:anomalies [:G2]} h)))))
+             (c {:consistency-models nil, :anomalies [:G2]} h)))
+      ; But, say, strict-1SR will
+      (is (= {:valid? false
+              :anomaly-types  [:G1b]
+              :not            #{:read-committed}
+              :anomalies {:G1b [{:op      t2'
+                                 :writer  t1'
+                                 :mop     [:r :x [1]]
+                                 :element 1}]}}
+             (c {:consistency-models [:strict-serializable]} h)))))
 
   (testing "G1c"
     (let [; T2 writes x after T1, but T1 observes T2's write on y.
@@ -442,19 +463,16 @@
                  :b-mop-index 0}],
                :type :G1c}]
       ; G0 won't see this
-      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
+      (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G0]} h)))
       ; But G1 will!
       (is (= {:valid? false
               :anomaly-types  [:G1c]
               :not            #{:read-committed}
               :anomalies {:G1c [msg]}}
-             (c {:anomalies [:G1]} h)))
-      ; As will G2
-      (is (= {:valid? false
-              :anomaly-types [:G1c]
-              :not           #{:read-committed}
-              :anomalies {:G1c [msg]}}
-             (c {:anomalies [:G2]} h)))))
+             (c {:consistency-models nil, :anomalies [:G1]} h)))
+      ; G2 won't
+      (is (= {:valid? true}
+             (c {:consistency-models nil, :anomalies [:G2]} h)))))
 
   (testing "G-single"
     (let [t1  (op "ax1ay1")  ; T1 writes y after T1's read
@@ -479,19 +497,19 @@
                  :b-mop-index 0}],
                :type :G-single}]
       ; G0 and G1 won't catch this
-      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
-      (is (= {:valid? true} (c {:anomalies [:G1]} h)))
+      (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G0]} h)))
+      (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G1]} h)))
       ; But G-single and G2 will!
       (is (= {:valid? false
               :anomaly-types [:G-single]
               :not           #{:consistent-view}
               :anomalies {:G-single [msg]}}
-             (c {:anomalies [:G-single]} h)))
+             (c {:consistency-models nil, :anomalies [:G-single]} h)))
       (is (= {:valid? false
               :anomaly-types [:G-single]
               :not           #{:consistent-view}
               :anomalies {:G-single [msg]}}
-             (c {:anomalies [:G2]} h)))))
+             (c {:consistency-models nil, :anomalies [:G2]} h)))))
 
   (testing "G2"
     (let [; A pure anti-dependency cycle
@@ -499,67 +517,77 @@
           t2 (op "ay1rx")
           h  [t1 t2]]
       ; G0 and G1 won't catch this
-      (is (= {:valid? true} (c {:anomalies [:G0]} h)))
-      (is (= {:valid? true} (c {:anomalies [:G1]} h)))
+      (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G0]} h)))
+      (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G1]} h)))
+      ; Nor will checkers for, say, read committed.
+      (is (= {:valid? true} (c {:consistency-models [:read-committed]} h)))
       ; But G2 will
-      (is (= {:valid? false
-              :anomaly-types  [:G2]
-              :not            #{:serializable}
-              :anomalies
-              {:G2 [{:cycle
-                     [{:type :ok, :value [[:append :x 1] [:r :y]]}
-                      {:type :ok, :value [[:append :y 1] [:r :x]]}
-                      {:type :ok, :value [[:append :x 1] [:r :y]]}],
-                     :steps
-                     [{:type :rw,
-                       :key :y,
-                       :value :elle.list-append/init,
-                       :value' 1,
-                       :a-mop-index 1,
-                       :b-mop-index 0}
-                      {:type :rw,
-                       :key :x,
-                       :value :elle.list-append/init,
-                       :value' 1,
-                       :a-mop-index 1,
-                       :b-mop-index 0}],
-                     :type :G2}]}}
-             (c {:anomalies [:G2]} h)))))
+      (let [err {:valid? false
+                 :anomaly-types  [:G2]
+                 :not            #{:serializable}
+                 :anomalies
+                 {:G2 [{:cycle
+                        [{:type :ok, :value [[:append :x 1] [:r :y]]}
+                         {:type :ok, :value [[:append :y 1] [:r :x]]}
+                         {:type :ok, :value [[:append :x 1] [:r :y]]}],
+                        :steps
+                        [{:type :rw,
+                          :key :y,
+                          :value :elle.list-append/init,
+                          :value' 1,
+                          :a-mop-index 1,
+                          :b-mop-index 0}
+                         {:type :rw,
+                          :key :x,
+                          :value :elle.list-append/init,
+                          :value' 1,
+                          :a-mop-index 1,
+                          :b-mop-index 0}],
+                        :type :G2}]}}]
+      (is (= err (c {:consistency-models nil, :anomalies [:G2]} h)))
+      ; As will a serializable checker.
+      (is (= err (c {:consistency-models [:serializable]} h)))
+      ; TODO: repeatable read won't catch this yet, because we call it G2, not
+      ; G2-item.
+      ; (is (= err (c {:consistency-models [:repeatable-read]} h)))
+      )))
 
   (testing "Strict-1SR violation"
     (let [; T1 anti-depends on T2, but T1 happens first in wall-clock order.
-          t1  {:index 0, :type :invoke, :value [[:append :x 2]]}
-          t1' {:index 1, :type :ok,     :value [[:append :x 2]]}
-          t2  {:index 2, :type :invoke, :value [[:r :x nil]]}
-          t2' {:index 3, :type :ok,     :value [[:r :x [1]]]}
-          t3  {:index 4, :type :invoke, :value [[:r :x nil]]}
-          t3' {:index 5, :type :ok,     :value [[:r :x [1 2]]]}
-          h [t1 t1' t2 t2' t3 t3']]
+          t0  {:index 0, :type :invoke, :value [[:append :x 1]]}
+          t0' {:index 1, :type :ok,     :value [[:append :x 1]]}
+          t1  {:index 2, :type :invoke, :value [[:append :x 2]]}
+          t1' {:index 3, :type :ok,     :value [[:append :x 2]]}
+          t2  {:index 4, :type :invoke, :value [[:r :x nil]]}
+          t2' {:index 5, :type :ok,     :value [[:r :x [1]]]}
+          t3  {:index 6, :type :invoke, :value [[:r :x nil]]}
+          t3' {:index 7, :type :ok,     :value [[:r :x [1 2]]]}
+          h [t0 t0' t1 t1' t2 t2' t3 t3']]
       ; G2 won't catch this by itself
       (is (= {:valid? true}
-             (c {:anomalies [:G2]} h)))
-      ; But it will if we introduce a realtime graph component
-      (is (= {:valid? false
-              :anomaly-types [:G-single]
-              :not           #{:consistent-view}
+             (c {:consistency-models nil, :anomalies [:G2]} h)))
+      ; Nor will a serializable checker
+      (is (= {:valid? true}
+             (c {:consistency-models [:serializable]} h)))
+      ; But it will if we ask for strict-serializable.
+      (is (= {:valid?         false
+              :anomaly-types  [:G-single-realtime]
+              :not            #{:strict-serializable}
               :anomalies
-              {:G-single [{:cycle
-                           [{:index 3, :type :ok, :value [[:r :x [1]]]}
-                            {:index 1, :type :ok, :value [[:append :x 2]]}
-                            {:index 3, :type :ok, :value [[:r :x [1]]]}],
-                           :steps
-                           [{:type :rw,
-                             :key :x,
-                             :value 1,
-                             :value' 2,
-                             :a-mop-index 0,
-                             :b-mop-index 0}
-                            {:type :realtime,
-                             :a' {:index 1, :type :ok, :value [[:append :x 2]]},
-                             :b {:index 2, :type :invoke, :value [[:r :x nil]]}}],
-                           :type :G-single}]}}
-             (c {:anomalies [:G2]
-                 :additional-graphs [elle/realtime-graph]}
+              {:G-single-realtime
+               [{:cycle [t2' t1' t2']
+                 :steps
+                 [{:type :rw,
+                   :key :x,
+                   :value 1,
+                   :value' 2,
+                   :a-mop-index 0,
+                   :b-mop-index 0}
+                  {:type :realtime,
+                   :a' t1'
+                   :b  t2}],
+                 :type :G-single-realtime}]}}
+             (c {:consistency-models [:strict-serializable]}
                 h)))))
 
   (testing "contradictory read orders"
@@ -591,17 +619,17 @@
                         :a-mop-index 0,
                         :b-mop-index 0}]
                       :type :G1c}]}}
-             (c {:anomalies [:G1]} h)))))
+             (c {:consistency-models nil, :anomalies [:G1]} h)))))
 
   (testing "dirty update"
     (testing "none"
       (let [t1 (op 0 :fail "ax1")
             h [t1]]
-        (is (= {:valid? :unknown
+        (is (= {:valid?         :unknown
                 :anomaly-types  [:empty-transaction-graph]
                 :not            #{}
-                :anomalies {:empty-transaction-graph true}}
-               (c {:anomalies [:dirty-update]} h)))))
+                :anomalies      {:empty-transaction-graph true}}
+               (c {:consistency-models nil, :anomalies [:dirty-update]} h)))))
 
     (testing "direct"
       (let [t1 (op 0 :fail "ax1")
@@ -614,7 +642,7 @@
                 :anomalies {:dirty-update [{:key        :x
                                             :values     [1 2]
                                             :txns       [t1 '... t2]}]}}
-               (c {:anomalies [:dirty-update]} h)))))
+               (c {:consistency-models nil, :anomalies [:dirty-update]} h)))))
 
     (testing "indirect"
       (let [t1 (op 0 :fail "ax1")
@@ -628,10 +656,10 @@
                 :anomalies {:dirty-update [{:key        :x
                                             :values     [1 2 3]
                                             :txns       [t1 '... t3]}]}}
-               (c {:anomalies [:dirty-update]} h))))))
+               (c {:consistency-models nil, :anomalies [:dirty-update]} h))))))
 
   (testing "duplicated elements"
-    ; This is an instance of G1c
+    ; This is also an instance of G1c.
     (let [t1 (op "ax1ry1") ; read t2's write of y
           t2 (op "ax2ay1")
           t3 (op "rx121")
@@ -660,19 +688,26 @@
                         :a-mop-index 0,
                         :b-mop-index 0}],
                       :type :G1c}]}}
-             (c {:anomalies [:G1]} h)))))
+             ; We flag this as an instance of G-single, because the x = [1 2 1]
+             ; read looks like 1 was appended most recently. Whether you want
+             ; consider this "real" seems up for debate, cuz duplicate elements
+             ; break everything. Let's do read-committed for now to avoid
+             ; seeing it.
+             (c {:consistency-models [:read-committed]} h)))))
 
   (testing "internal consistency violation"
-    (let [t1 (op "ax3rx1234")
-          h  [t1]]
-      (is (= {:valid? false
-              :anomaly-types [:empty-transaction-graph :internal]
-              :not           #{:read-atomic}
-              :anomalies {:empty-transaction-graph true
-                          :internal [{:op t1
-                                      :mop [:r :x [1 2 3 4]]
-                                      :expected '[... 3]}]}}
-             (c {:anomalies [:G1]} h))))))
+    (let [t1 (op "ax1ax2ax4")
+          t2 (op "ax3rx1234")
+          h  [t1 t2]]
+      (is (= {:valid?         false
+              :anomaly-types  [:internal]
+              ; Read-atomic ruled out by internal, read-uncommitted by the G0.
+              :not            #{:read-atomic :read-uncommitted}
+              :anomalies      {:internal [{:op t2
+                                           :mop [:r :x [1 2 3 4]]
+                                           :expected '[... 3]}]}}
+             ; There's a G0 here too, but we don't care.
+             (c {:consistency-models nil, :anomalies [:internal]} h))))))
 
 ; Example of checking a file, for later
 ;(deftest dirty-update-1-test

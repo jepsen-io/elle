@@ -54,17 +54,32 @@
              (s [:read-atomic :serializable]))))))
 
 (let [as #(into (sorted-set)
+                (anomalies-prohibited-by %))]
+  (deftest anomalies-prohibited-by-test
+    (testing "read committed"
+      (is (= #{:dirty-update
+               :G1a
+               :G1b
+               :G1c
+               :G1
+               :G0
+               :cyclic-versions
+               :duplicate-elements
+               :incompatible-order}
+             (as [:read-committed]))))))
+
+(let [as #(into (sorted-set)
                 (map friendly-model-name (anomalies->impossible-models %)))]
 
   (deftest anomaly->impossible-models-test
     (testing "G-single"
-    (is (= #{:forward-consistent-view
-             :serializable
-             :consistent-view
-             :strict-serializable
-             :update-serializable
-             :snapshot-isolation}
-           (as [:G-single]))))
+      (is (= #{:forward-consistent-view
+               :serializable
+               :consistent-view
+               :strict-serializable
+               :update-serializable
+               :snapshot-isolation}
+             (as [:G-single]))))
 
     (testing "G-SI"
       (is (= #{:snapshot-isolation

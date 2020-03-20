@@ -300,11 +300,12 @@
             [t2 t2'] (pair (op 1 :ok "wx2wy1"))]
         ; Of course we can't detect this naively: there's no wr-cycle, and we
         ; can't say anything about versions. This *isn't* illegal yet!
-        (is (= {:valid?         :unknown
+        (is (= {:valid? :unknown
                 :anomaly-types  [:empty-transaction-graph]
-                :not            #{}
-                :anomalies      {:empty-transaction-graph true}}
-               (c {:anomalies [:G0]} [t1 t2])))
+                :anomalies      {:empty-transaction-graph true}
+                :not            #{}}
+               (c {:consistency-models nil
+                   :anomalies          [:G0]} [t1 t2])))
 
         ; But let's say we observe a read *after* both transactions which shows
         ; that the final value of x and y are both 2? We can infer this from
@@ -341,8 +342,9 @@
                                           :a-mop-index 1,
                                           :b-mop-index 1}],
                                         :type :G0}]}}
-                 (c {:anomalies         [:G0]
-                     :sequential-keys?  true}
+                 (c {:consistency-models  nil
+                     :anomalies           [:G0]
+                     :sequential-keys?    true}
                     [t1 t1' t2 t2' t3 t3' t4 t4']))))))
 
     (testing "G1a"
@@ -356,21 +358,24 @@
                             :G1a [{:op      (assoc t2 :index 0)
                                    :writer  (assoc t1 :index 1)
                                    :mop     [:r :x 1]}]}}
-               (c {:anomalies [:G1]} [t2 t1])))))
+               (c {:consistency-models nil, :anomalies [:G1]} [t2 t1])))))
 
     (testing "G1b"
       (let [; T2 sees T1's intermediate write
             t1 (op "wx1wx2")
             t2 (op "rx1")
             h  [t1 t2]]
-        ; G0 checker won't catch this
+        ; G0 checker won't catch this. The txn graph is empty though,
+        ; because the read dep isn't external.
         (is (= {:valid?         :unknown
                 :anomaly-types  [:empty-transaction-graph]
-                :not            #{}
-                :anomalies {:empty-transaction-graph true}}
-               (c {:anomalies [:G0]} h)))
+                :anomalies      {:empty-transaction-graph true}
+                :not            #{:read-committed}}
+               (c {:consistency-models  nil
+                   :anomalies           [:G0]}
+                  h)))
 
-        ; G1 will
+        ; G1 will, as will a read-committed checker.
         (is (= {:valid? false
                 :anomaly-types [:G1b :empty-transaction-graph]
                 :not       #{:read-committed}
@@ -378,7 +383,11 @@
                               :G1b [{:op      (assoc t2 :index 1)
                                    :writer  (assoc t1 :index 0)
                                    :mop     [:r :x 1]}]}}
-               (c {:anomalies [:G1]} h)))))
+               (c {:consistency-models nil
+                   :anomalies          [:G1]}
+                  h)
+               (c {:consistency-models [:repeatable-read]}
+                  h)))))
 
     (testing "G1c"
       (let [; T2 observes T1's write of x, and vice versa on y.
@@ -401,20 +410,41 @@
                     :a-mop-index 0,
                     :b-mop-index 1}],
                   :type :G1c}]
-        ; G0 won't see this
-        (is (= {:valid? true} (c {:anomalies [:G0]} h)))
-        ; But G1 will!
+        ; G0/read-uncommitted won't see this
+        (is (= {:valid? true}
+               (c {:consistency-models nil
+                   :anomalies [:G0]}
+                  h)))
+        (is (= {:valid? true}
+               (c {:consistency-models [:read-uncommitted]}
+                  h)))
+
+        ; But G1 will, as will a read-committed checker.
+        (let [res {:valid? false
+                   :anomaly-types  [:G1c]
+                   :not            #{:read-committed}
+                   :anomalies {:G1c [msg]}}]
+          (is (= res (c {:consistency-models  nil
+                         :anomalies           [:G1]}
+                        h)))
+          (is (= res (c {:consistency-models  [:read-committed]}
+                        h))))
+
+        ; A checker looking for G2 alone won't care about this, because G1c is
+        ; not G2
+        (is (= {:valid? true}
+               (c {:consistency-models  nil
+                   :anomalies           [:G2]}
+                  h)))
+
+        ; But a serializable checker will catch this, because serializability
+        ; proscribes both G1 and G2.
         (is (= {:valid? false
-                :anomaly-types  [:G1c]
-                :not            #{:read-committed}
-                :anomalies {:G1c [msg]}}
-               (c {:anomalies [:G1]} h)))
-        ; As will G2
-        (is (= {:valid? false
-                :not           #{:read-committed}
-                :anomaly-types [:G1c]
-                :anomalies {:G1c [msg]}}
-               (c {:anomalies [:G2]} h)))))
+                   :not            #{:read-committed}
+                   :anomaly-types  [:G1c]
+                   :anomalies      {:G1c [msg]}}
+               (c {:consistency-models [:serializable]}
+                  h)))))
 
     (testing "writing files"
       (let [; T2 observes T1's write of x, and vice versa on y.
@@ -423,7 +453,8 @@
             h  [t1 t2]
             msg "G1c #0\nLet:\n  T1 = {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}\n  T2 = {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}\n\nThen:\n  - T1 < T2, because T1 wrote :y = 1, which was read by T2.\n  - However, T2 < T1, because T2 wrote :x = 1, which was read by T1: a contradiction!"]
         ; Write out file and check for a cycle txt file
-        (c {:anomalies [:G1]
+        (c {:consistency-models nil
+            :anomalies [:G1]
             :plot-format :png
             :directory "test-output"} h)
         (is (= msg (slurp "test-output/G1c.txt")))))
@@ -465,7 +496,8 @@
                                     :a-mop-index 0,
                                     :b-mop-index 1}],
                                   :type :G2}]}}
-               (c {:anomalies         [:G2]
+               (c {:consistency-models nil
+                   :anomalies         [:G2]
                    :linearizable-keys? true}
                   [t1 t1' t2 t3 t3' t2'])))))
 
@@ -479,7 +511,7 @@
                                         :mop      [:r :x 2]
                                         :expected 1}]
                             :empty-transaction-graph true}}
-               (c {:anomalies [:internal]} h)))))
+               (c {:consistency-models nil, :anomalies [:internal]} h)))))
 
     (testing "initial state"
       (let [[t1 t1'] (pair (op 0 :ok "rx_ry1"))
@@ -516,14 +548,16 @@
                                           :a-mop-index 0,
                                           :b-mop-index 1}],
                                         :type :G-single}]}}
-               (c {} [t1 t2 t2' t1'])))))
+               (c {:consistency-models [:serializable]} [t1 t2 t2' t1'])))))
 
     (testing "wfr"
       (let [t1 (op 0 :ok "ry1wx1wy2")  ; Establishes y: 1 -> 2
             t2 (op 0 :ok "rx1ry1")]    ; t1 <wr t2, on x, but also t2 <rw t1, on y!
         ; We can't see this without knowing the version order on y
         (is (= {:valid? true}
-               (c {:wfr-keys? false} [t1 t2])))
+               (c {:wfr-keys?           false
+                   :consistency-models  [:serializable]}
+                  [t1 t2])))
         ; But if we use WFR, we know 1 < 2, and can see the G-single
         (is (= {:valid? false
                 :anomaly-types [:G-single]
@@ -555,7 +589,9 @@
                                 :a-mop-index 1,
                                 :b-mop-index 0}],
                               :type :G-single}]}}
-               (c {:wfr-keys? true} [t1 t2])))))
+               (c {:wfr-keys? true
+                   :consistency-models [:serializable]}
+                  [t1 t2])))))
 
     (testing "cyclic version order"
       (let [[t1 t1'] (pair (op 0 :ok "wx1"))
@@ -587,7 +623,7 @@
            ]]
     (is (= {:valid? false}
            (checker/check (checker {:additional-graphs  [cycle/realtime-graph]
-																		:anomalies [:G-single :G1a :G1b :internal]
+                                    :consistency-models [:snapshot-isolation]
                                     :sequential-keys?   true
                                     :wfr-keys?          true})
                           nil

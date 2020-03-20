@@ -246,6 +246,16 @@
     (keep-edge-values (fn [rs] (when (contains? rs rel) rs'))
                       g)))
 
+(defn filter-relationships
+  "Filters a graph g to just those edges which intersect with the given set of
+  relationships."
+  [target-rels g]
+  (keep-edge-values (fn [rs]
+                      (let [rs' (set/intersection target-rels rs)]
+                        (when-not (empty? rs')
+                          rs')))
+                    g))
+
 (defn ^DirectedGraph remove-self-edges
   "There are times when it's just way simpler to use link-all-to-all between
   sets that might intersect, and instead of writing all-new versions of link-*
