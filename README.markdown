@@ -97,7 +97,7 @@ update-serializable are also violated by this history.
 
 Let's see the G1c anomaly in text:
 
-```sh
+```
 $ cat out/G1c.txt
 G1c #0
 Let:
