@@ -233,7 +233,9 @@
         :read-atomic               [:internal          ; Cerone (incomplete)
                                     :G1a]              ; Cerone (incomplete)
         :repeatable-read           [:G1 :G2-item]      ; Adya
-        :strict-serializable       [:G1-realtime :G2-realtime] ; Adya
+        :strict-serializable       [:G1                ; Adya
+                                    :G1c-realtime      ; Adya
+                                    :G2-realtime]      ; Adya
         :update-serializable       [:G1 :G-update]     ; Adya
         :parallel-snapshot-isolation [:internal :G1a]  ; Cerone (incomplete)
         :PL-3                      [:G1 :G2]           ; Adya

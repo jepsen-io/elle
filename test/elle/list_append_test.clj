@@ -523,33 +523,32 @@
       (is (= {:valid? true} (c {:consistency-models [:read-committed]} h)))
       ; But G2 will
       (let [err {:valid? false
-                 :anomaly-types  [:G2]
-                 :not            #{:serializable}
+                 :anomaly-types  [:G2-item]
+                 :not            #{:repeatable-read}
                  :anomalies
-                 {:G2 [{:cycle
-                        [{:type :ok, :value [[:append :x 1] [:r :y]]}
-                         {:type :ok, :value [[:append :y 1] [:r :x]]}
-                         {:type :ok, :value [[:append :x 1] [:r :y]]}],
-                        :steps
-                        [{:type :rw,
-                          :key :y,
-                          :value :elle.list-append/init,
-                          :value' 1,
-                          :a-mop-index 1,
-                          :b-mop-index 0}
-                         {:type :rw,
-                          :key :x,
-                          :value :elle.list-append/init,
-                          :value' 1,
-                          :a-mop-index 1,
-                          :b-mop-index 0}],
-                        :type :G2}]}}]
+                 {:G2-item [{:cycle
+                             [{:type :ok, :value [[:append :x 1] [:r :y]]}
+                              {:type :ok, :value [[:append :y 1] [:r :x]]}
+                              {:type :ok, :value [[:append :x 1] [:r :y]]}],
+                             :steps
+                             [{:type :rw,
+                               :key :y,
+                               :value :elle.list-append/init,
+                               :value' 1,
+                               :a-mop-index 1,
+                               :b-mop-index 0}
+                              {:type :rw,
+                               :key :x,
+                               :value :elle.list-append/init,
+                               :value' 1,
+                               :a-mop-index 1,
+                               :b-mop-index 0}],
+                             :type :G2-item}]}}]
       (is (= err (c {:consistency-models nil, :anomalies [:G2]} h)))
       ; As will a serializable checker.
       (is (= err (c {:consistency-models [:serializable]} h)))
-      ; TODO: repeatable read won't catch this yet, because we call it G2, not
-      ; G2-item.
-      ; (is (= err (c {:consistency-models [:repeatable-read]} h)))
+      ; And repeatable-read
+      (is (= err (c {:consistency-models [:repeatable-read]} h)))
       )))
 
   (testing "Strict-1SR violation"
@@ -708,6 +707,36 @@
                                            :expected '[... 3]}]}}
              ; There's a G0 here too, but we don't care.
              (c {:consistency-models nil, :anomalies [:internal]} h))))))
+
+(deftest repeatable-read-test
+  ; This is a long fork, which is also G2-item, by virtue of its only cycle
+  ; being two anti-dependency edges. We shouldn't be able to detect this with
+  ; read-committed, but repeatable-read should fail.
+  (let [t1 (op "rxay1")
+        t2 (op "ryax1")
+        h  [t1 t2]]
+    (is (= {:valid? true}
+           (c {:consistency-models [:read-committed]} h)))
+    (is (= {:valid?         false
+            :not            #{:repeatable-read}
+            :anomaly-types  [:G2-item]
+            :anomalies {:G2-item [{:cycle
+                                   [t2 t1 t2]
+                                   :steps
+                                   [{:type :rw,
+                                     :key :y,
+                                     :value :elle.list-append/init,
+                                     :value' 1,
+                                     :a-mop-index 0,
+                                     :b-mop-index 1}
+                                    {:type :rw,
+                                     :key :x,
+                                     :value :elle.list-append/init,
+                                     :value' 1,
+                                     :a-mop-index 0,
+                                     :b-mop-index 1}],
+                                   :type :G2-item}]}}
+           (c {:consistency-models [:repeatable-read]} h)))))
 
 ; Example of checking a file, for later
 ;(deftest dirty-update-1-test

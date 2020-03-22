@@ -108,7 +108,7 @@
             wr        (:wr        type-freqs 0)
             rw        (:rw        type-freqs 0)
             ; We compute a type based on data dependencies alone
-            data-dep-type (cond (< 1 rw) "G2"
+            data-dep-type (cond (< 1 rw) "G2-item"
                                 (= 1 rw) "G-single"
                                 (< 0 wr) "G1c"
                                 (< 0 ww) "G0"
@@ -152,12 +152,15 @@
    ; Likewise, G-single starts with the anti-dependency edge.
    :G-single  {:first-rels  #{:rw}
                :rest-rels   #{:ww :wr}}
-   ; G2, likewise, starts with an anti-dep edge, but allows more, and insists
-   ; on being G2, rather than G-single. Not bulletproof, but G-single is worse,
-   ; so I'm OK with it.
-   :G2        {:first-rels  #{:rw}
+   ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
+   ; insists on being G2, rather than G-single. Not bulletproof, but G-single
+   ; is worse, so I'm OK with it.
+   ;
+   ; Note that right now we have no model for predicate dependencies, so
+   ; *everything* we find is G2-item.
+   :G2-item   {:first-rels  #{:rw}
                :rest-rels   #{:ww :wr :rw}
-               :filter-ex   (comp #{:G2} :type)}
+               :filter-ex   (comp #{:G2-item} :type)}
 
    ; A process G0 can use any number of process and ww edges--process is
    ; acyclic, so there's got to be at least one ww edge. We also demand the
@@ -177,9 +180,9 @@
    ; G2-process starts with an anti-dep edge, and allows anything from there.
    ; Plus it's gotta be G2-process, so we don't report G2s or G-single-process
    ; etc.
-   :G2-process        {:first-rels  #{:rw}
+   :G2-item-process   {:first-rels  #{:rw}
                        :rest-rels   #{:ww :wr :rw :process}
-                       :filter-ex   (comp #{:G2-process} :type)}
+                       :filter-ex   (comp #{:G2-item-process} :type)}
 
    ; Ditto for realtime
    :G0-realtime        {:rels        #{:ww :realtime}
@@ -190,9 +193,9 @@
    :G-single-realtime  {:first-rels  #{:rw}
                         :rest-rels   #{:ww :wr :realtime}
                         :filter-ex   (comp #{:G-single-realtime} :type)}
-   :G2-realtime        {:first-rels  #{:rw}
+   :G2-item-realtime   {:first-rels  #{:rw}
                         :rest-rels   #{:ww :wr :rw :realtime}
-                        :filter-ex   (comp #{:G2-realtime} :type)}})
+                        :filter-ex   (comp #{:G2-item-realtime} :type)}})
 
 (def cycle-types
   "All types of cycles we can detect."
@@ -271,7 +274,7 @@
   :G0                 ww edges only
   :G1c                ww, at least one wr edge
   :G-single           ww, wr, exactly one rw
-  :G2                 ww, wr, 2+ rw
+  :G2-item            ww, wr, 2+ rw
 
   :G0-process         G0, but with process edges
   ...

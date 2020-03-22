@@ -459,47 +459,54 @@
             :directory "test-output"} h)
         (is (= msg (slurp "test-output/G1c.txt")))))
 
-    (testing "G2"
+    (testing "G2-item"
       (let [[t1 t1'] (pair (op 0 :ok "rx1ry1"))  ; Establish the initial state
             [t2 t2'] (pair (op 1 :ok "rx1wy2"))  ; Advance y
-            [t3 t3'] (pair (op 2 :ok "ry1wx2"))] ; Advance x
+            [t3 t3'] (pair (op 2 :ok "ry1wx2"))  ; Advance x
+            h        [t1 t1' t2 t3 t3' t2']]
         ; G2 should catch this, so long as we can use the linearizable key
         ; assumption to infer that t2 and t3's writes of 2 follow
         ; the initial states of 1.
-        (is (= {:valid?         false
-                :anomaly-types  [:G2]
-                :not            #{:serializable}
-                :anomalies {:G2 [{:cycle
-                                  [{:type :ok,
-                                    :value [[:r :x 1] [:w :y 2]],
-                                    :process 1,
-                                    :index 5}
-                                   {:type :ok,
-                                    :value [[:r :y 1] [:w :x 2]],
-                                    :process 2,
-                                    :index 4}
-                                   {:type :ok,
-                                    :value [[:r :x 1] [:w :y 2]],
-                                    :process 1,
-                                    :index 5}],
-                                  :steps
-                                  [{:key :x,
-                                    :value 1,
-                                    :value' 2,
-                                    :type :rw,
-                                    :a-mop-index 0,
-                                    :b-mop-index 1}
-                                   {:key :y,
-                                    :value 1,
-                                    :value' 2,
-                                    :type :rw,
-                                    :a-mop-index 0,
-                                    :b-mop-index 1}],
-                                  :type :G2}]}}
-               (c {:consistency-models nil
-                   :anomalies         [:G2]
-                   :linearizable-keys? true}
-                  [t1 t1' t2 t3 t3' t2'])))))
+        (let [res {:valid?         false
+                   :anomaly-types  [:G2-item]
+                   :not            #{:serializable}
+                   :anomalies {:G2 [{:cycle
+                                     [{:type :ok,
+                                       :value [[:r :x 1] [:w :y 2]],
+                                       :process 1,
+                                       :index 5}
+                                      {:type :ok,
+                                       :value [[:r :y 1] [:w :x 2]],
+                                       :process 2,
+                                       :index 4}
+                                      {:type :ok,
+                                       :value [[:r :x 1] [:w :y 2]],
+                                       :process 1,
+                                       :index 5}],
+                                     :steps
+                                     [{:key :x,
+                                       :value 1,
+                                       :value' 2,
+                                       :type :rw,
+                                       :a-mop-index 0,
+                                       :b-mop-index 1}
+                                      {:key :y,
+                                       :value 1,
+                                       :value' 2,
+                                       :type :rw,
+                                       :a-mop-index 0,
+                                       :b-mop-index 1}],
+                                     :type :G2-item}]}}]
+          ; Read committed won't see this, since it's G2-item.
+          (is (= {:valid? true}
+                 (c {:consistency-models [:read-committed]
+                     :linearizable-keys? true}
+                    h)))
+          ; But repeatable read will!
+          (c {:consistency-models nil
+              :anomalies         [:G2]
+              :linearizable-keys? true}
+             [t1 t1' t2 t3 t3' t2']))))
 
     (testing "internal"
       (let [t1 (op "rx1rx2")
