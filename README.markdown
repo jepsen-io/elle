@@ -228,6 +228,19 @@ may or may not have taken place. After an `:info`, a process may not perform ano
 - `elle.wr`: Write/Read registers. Weaker inference rules, but applicable to basically all systems. Objects are registers; writes blindly replace values. TODO: rename this.
 - `elle.append`: Elle's most powerful inference rules. Objects are lists, writes append unique elements to those lists. TODO: rename this too.
 
+## Consistency Models
+
+The following plot shows Elle's relationships between consistency models: an
+arrow `a -> b` implies if `a` holds, then so does `b`. Sources for this
+structure can be found in `elle.consistency-model`.
+
+![](images/models.png)
+
+This plot shows the relationships between Elle's anomalies. An arrow `a -> b`
+implies if we observe anomaly `a` in a history, then `b` exists in the history
+as well.
+
+![](images/anomalies.png)
 
 ## License
 
