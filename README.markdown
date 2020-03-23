@@ -3,10 +3,10 @@
 Elle is a transactional consistency checker for black-box databases. Based
 purely on client observations of transactions, and given some minimal
 constraints on datatypes and operations, it can tell you whether that
-observation exhibits a variety of transactional anomalies. Like a clever lawyer
-who knows her hair-care rules, Elle looks for a sequence of events in a story
-which couldn't possibly have happened in that order, and uses that inference to
-prove the database isn't telling a consistent story.
+observation exhibits a variety of transactional anomalies. Like a clever
+lawyer, Elle looks for a sequence of events in a story which couldn't possibly
+have happened in that order, and uses that inference to prove the story can't
+be consistent.
 
 In a nutshell, Elle is:
 
