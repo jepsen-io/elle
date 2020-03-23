@@ -93,7 +93,7 @@ dependencies between each pair of operations in the cycle.
 On the basis of this anomaly, Elle has concluded that this history is not
 read-committed---this is the weakest level Elle can demonstrate is violated. In
 addition, several stronger isolation levels, such as consistent-view and
-update-serializable are also violated by this history.
+update-serializable, are also violated by this history.
 
 Let's see the G1c anomaly in text:
 
@@ -135,6 +135,42 @@ detectable, but we aim for completeness.
 
 If you'd like to define your own relationships between transactions, see
 `elle.core`.
+
+### Observed Histories
+
+Elle expects its observed histories in the same format as [Jepsen](https://github.com/jepsen-io/jepsen). An observed history should be a list of operations in real-time order, where each operation is a map of the form:
+
+```clj
+{:type    One of :invoke, ok, :info, :fail
+ :process A logical identifier for a single thread of execution
+ :value   A transaction; structure and semantics vary}
+```
+
+Each process should perform alternating `:invoke` and `:ok`/`:info`/`:fail`
+operations. `:ok` indicates the operation definitely committed. `:fail`
+indicates it definitely did not occur--e.g. it was aborted, was never submitted
+to the database, etc. `:info` indicates an indeterminate state; the transaction
+may or may not have taken place. After an `:info`, a process may not perform another operation; the invocation remains open for the rest of the history.
+
+### Types of Tests
+
+- `elle.core`: The heart of Elle's inference system. Computes transaction graphs and finds cycles over them. Includes general-purpose graphs for per-process and realtime orders.
+- `elle.wr`: Write/Read registers. Weaker inference rules, but applicable to basically all systems. Objects are registers; writes blindly replace values. TODO: rename this.
+- `elle.append`: Elle's most powerful inference rules. Objects are lists, writes append unique elements to those lists. TODO: rename this too.
+
+## Consistency Models
+
+The following plot shows Elle's relationships between consistency models: an
+arrow `a -> b` implies if `a` holds, then so does `b`. Sources for this
+structure can be found in `elle.consistency-model`.
+
+![](images/models.png)
+
+This plot shows the relationships between Elle's anomalies. An arrow `a -> b`
+implies if we observe anomaly `a` in a history, then `b` exists in the history
+as well.
+
+![](images/anomalies.png)
 
 ## Soundness
 
@@ -205,42 +241,6 @@ I haven't really optimized Elle yet---I'm sure it can be made faster with time.
 There are some spots (especially in inferring version orders from transaction
 graphs during register tests) which might be painful; I'll sand off rough edges
 as I go.
-
-## Observed Histories
-
-Elle expects its observed histories in the same format as [Jepsen](https://github.com/jepsen-io/jepsen). An observed history should be a list of operations in real-time order, where each operation is a map of the form:
-
-```clj
-{:type    One of :invoke, ok, :info, :fail
- :process A logical identifier for a single thread of execution
- :value   A transaction; structure and semantics vary}
-```
-
-Each process should perform alternating `:invoke` and `:ok`/`:info`/`:fail`
-operations. `:ok` indicates the operation definitely committed. `:fail`
-indicates it definitely did not occur--e.g. it was aborted, was never submitted
-to the database, etc. `:info` indicates an indeterminate state; the transaction
-may or may not have taken place. After an `:info`, a process may not perform another operation; the invocation remains open for the rest of the history.
-
-## Types of Tests
-
-- `elle.core`: The heart of Elle's inference system. Computes transaction graphs and finds cycles over them. Includes general-purpose graphs for per-process and realtime orders.
-- `elle.wr`: Write/Read registers. Weaker inference rules, but applicable to basically all systems. Objects are registers; writes blindly replace values. TODO: rename this.
-- `elle.append`: Elle's most powerful inference rules. Objects are lists, writes append unique elements to those lists. TODO: rename this too.
-
-## Consistency Models
-
-The following plot shows Elle's relationships between consistency models: an
-arrow `a -> b` implies if `a` holds, then so does `b`. Sources for this
-structure can be found in `elle.consistency-model`.
-
-![](images/models.png)
-
-This plot shows the relationships between Elle's anomalies. An arrow `a -> b`
-implies if we observe anomaly `a` in a history, then `b` exists in the history
-as well.
-
-![](images/anomalies.png)
 
 ## License
 
