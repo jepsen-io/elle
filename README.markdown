@@ -27,6 +27,8 @@ Elle is still under active development, and we're not 100% confident in its
 inference rules yet. Jepsen recommends checking reported anomalies by hand to
 make sure they're valid.
 
+Questions? <b>[Read the paper](paper/elle.pdf)!</b>
+
 ## Demo
 
 First, you'll need a copy of Graphviz installed.
