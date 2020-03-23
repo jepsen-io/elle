@@ -18,16 +18,18 @@ In a nutshell, Elle is:
 
 This repository encompasses a [Clojure implementation](src/elle/) of the Elle
 consistency checker and its [accompanying test suite](test/elle/), which you
-can use to check your own histories. Our [paper](paper/elle.pdf) provides deep
-insight into the goals and intuition behind Elle, and a rough formalization of
-its soundness proof. A nowhere-near-complete formal [proof](proof/) is written
-in the [Isabelle/HOL](https://isabelle.in.tum.de/) proof language.
+can use to check your own histories. Our
+[paper](https://github.com/jepsen-io/elle/raw/master/paper/elle.pdf) provides
+deep insight into the goals and intuition behind Elle, and a rough
+formalization of its soundness proof. A nowhere-near-complete formal
+[proof](proof/) sketch is written in the
+[Isabelle/HOL](https://isabelle.in.tum.de/) proof language.
 
 Elle is still under active development, and we're not 100% confident in its
 inference rules yet. Jepsen recommends checking reported anomalies by hand to
 make sure they're valid.
 
-Questions? <b>[Read the paper](paper/elle.pdf)!</b>
+Questions? <b>[Read the paper](https://github.com/jepsen-io/elle/raw/master/paper/elle.pdf)!</b>
 
 ## Demo
 
