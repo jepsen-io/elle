@@ -212,3 +212,9 @@
                         :strong-session-snapshot-isolation
                         :strong-snapshot-isolation}}
            (friendly-boundary [:G2 :internal])))))
+
+; This is more for building plots than anything else; it's not actually testing
+; anything.
+(deftest plot-test
+  (plot-models!)
+  (plot-anomalies!))

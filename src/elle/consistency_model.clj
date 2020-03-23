@@ -31,7 +31,9 @@
   formalizations."
   (:require [elle [graph :as g]
                   [util :as util :refer [map-vals]]]
-            [clojure [set :as set]])
+            [clojure [set :as set]]
+            [rhizome [dot :refer [graph->dot]]
+                      [viz :as rv]])
   (:import (java.util.function Function)
            (io.lacuna.bifurcan Graphs)))
 
@@ -41,17 +43,16 @@
   aborted reads. If G1a is present, so is G1, because G1 is defined as the
   union of G1a, G1b, and G1c."
   (g/map->bdigraph
-    {; Formally, G0 is also G1.
-     :G0          [:G1]
-     :G0-process  [:G1-process :G0-realtime] ; Since processes are singlethreaded
-     :G0-realtime [:G1-realtime]
+    {:G0          [:G1c] ; Adya
+     ; Since processes are singlethreaded
+     :G0-process  [:G1c-process :G0-realtime]
+     :G0-realtime [:G1c-realtime]
 
      ; G1 is defined in terms of these three anomalies.
      :G1a [:G1]
      :G1b [:G1]
      :G1c [:G1]
      :G1c-process  [:G1-process :G1c-realtime]
-     :G1c-realtime [:G1-realtime]
 
      ; G-single is a special case of G-nonadjacent
      :G-single          [:G-nonadjacent
@@ -174,14 +175,15 @@
         :PL-2                    [:PL-1]                      ; Adya
         :PL-3                   [:repeatable-read             ; Adya
                                  :update-serializable         ; Adya
-                                 :conflict-serializable]      ; Adya
+                                 ; We define PL-3 *as* conflict serializable
+                                 ;:conflict-serializable]      ; Adya
+                                 ]
         :update-serializable    [:forward-consistent-view]    ; Adya
         :monotonic-atomic-view  [:read-committed]             ; Bailis
         :monotonic-view         [:PL-2]                       ; Adya
         :monotonic-snapshot-read [:PL-2]                      ; Adya
         :parallel-snapshot-isolation [:causal-cerone]         ; Cerone
         :prefix                 [:causal-cerone]              ; Cerone
-        :read-atomic            [:causal-cerone]              ; Cerone
         :read-committed         [:read-uncommitted]           ; SQL
         :repeatable-read        [:cursor-stability            ; Adya
                                  :monotonic-atomic-view]      ; Bailis
@@ -376,3 +378,23 @@
   [anomalies]
   (map-vals #(into (sorted-set) (map friendly-model-name %))
             (boundary anomalies)))
+
+; Visualizations
+
+
+(defn plot-graph!
+  [g filename]
+  (let [dot (graph->dot (g/vertices g)
+                        (partial g/out g)
+                        :node->descriptor (fn [x] {:label (name x)}))
+        img (rv/dot->image dot)]
+    (rv/view-image img)
+    (rv/save-image img filename)))
+
+(defn plot-models!
+  []
+  (plot-graph! models "images/models.png"))
+
+(defn plot-anomalies!
+  []
+  (plot-graph! implied-anomalies "images/anomalies.png"))
