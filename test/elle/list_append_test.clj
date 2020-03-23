@@ -738,6 +738,51 @@
                                    :type :G2-item}]}}
            (c {:consistency-models [:repeatable-read]} h)))))
 
+(deftest G-nonadjacent-test
+  ; For G-nonadjacent, we need two rw edges (just one would be G-single), and
+  ; they can't be adjacent, so that's four edges altogether.
+  (let [[t1 t1'] (pair (op "ax1"))
+        [t2 t2'] (pair (op "rx1ry"))
+        [t3 t3'] (pair (op "ay1"))
+        [t4 t4'] (pair (op "ry1rx"))
+        h (history/index [t1 t1' t2 t2' t3 t3' t4 t4'])]
+    (is (= {:valid?         false
+            ; Cerone et al describe nonadjacency vis strict session SI, but,
+            ; like... there's nothing realtime about this graph, and we don't
+            ; have any concept of a session here. Can we just call it SI? TODO:
+            ; investigate.
+            :not            #{:strong-session-snapshot-isolation
+                              ; cuz strict-session-SI is incomparable to
+                              ; serializability.
+                              :serializable}
+            :anomaly-types  [:G-nonadjacent]
+            :anomalies      {:G-nonadjacent
+                             [{:cycle [(h 1) (h 3) (h 5) (h 7) (h 1)]
+                               :steps [{:type :wr,
+                                        :key :x,
+                                        :value 1,
+                                        :a-mop-index 0,
+                                        :b-mop-index 0}
+                                       {:type :rw,
+                                        :key :y,
+                                        :value :elle.list-append/init,
+                                        :value' 1,
+                                        :a-mop-index 1,
+                                        :b-mop-index 0}
+                                       {:type :wr,
+                                        :key :y,
+                                        :value 1,
+                                        :a-mop-index 0,
+                                        :b-mop-index 0}
+                                       {:type :rw,
+                                        :key :x,
+                                        :value :elle.list-append/init,
+                                        :value' 1,
+                                        :a-mop-index 1,
+                                        :b-mop-index 0}],
+                               :type :G-nonadjacent}]}}
+                             (c {} h)))))
+
 ; Example of checking a file, for later
 ;(deftest dirty-update-1-test
 ;  (cf {} "histories/dirty-update-1.edn")))

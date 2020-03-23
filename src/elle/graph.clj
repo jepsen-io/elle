@@ -381,60 +381,6 @@
   (strongly-connected-components (map->bdigraph graph)))
 
 
-
-;; Graph search helpers
-
-(defn prune-alternate-paths
-  "If we have two paths [a b d] and [a c d], we don't need both of them,
-  because both get us from a to d. We collapse a set of paths by filtering out
-  duplicates. Since all paths *start* at the same place, we can do this
-  efficiently by selecting one from the set of all paths that end in the same
-  place."
-  [paths]
-  (->> paths
-       (group-by peek)
-       vals
-       (map first)))
-
-(defn prune-longer-paths
-  "We can also completely remove paths whose tips are in a prefix of any other
-  path, because these paths are simply longer versions of paths we've already
-  explored."
-  [paths]
-  (let [old (->> paths
-                 (mapcat butlast)
-                 (into #{}))]
-    (remove (comp old peek) paths)))
-
-(defn grow-paths
-  "Given a graph g, and a set of paths (each a sequence like [a b c]),
-  constructs a new set of paths by taking the tip c of each path p, and
-  expanding p to all vertices c can reach: [a b c] => #{[a b c d] [a b c e]}."
-  [^DirectedGraph g, paths]
-  (->> paths
-       (mapcat (fn [path]
-                 (let [tip (peek path)]
-                   ; Expand the tip to all nodes it can reach
-                   (map (partial conj path) (.out g tip)))))))
-
-(defn path-shells
-  "Given a graph, and a starting collection of paths, constructs shells
-  outwards from those paths: collections of longer and longer paths."
-  [^DirectedGraph g starting-paths]
-  ; The longest possible cycle is the entire graph, plus one.
-  (take (inc (.size g))
-        (iterate (comp prune-alternate-paths
-                       (partial grow-paths g)
-                       prune-longer-paths)
-                 starting-paths)))
-
-(defn loop?
-  "Does the given vector begin and end with identical elements, and is longer
-  than 1?"
-  [v]
-  (and (< 1 (count v))
-       (= (first v) (peek v))))
-
 (defn map-vertices
   "Takes a function of vertices, and a graph, and returns graph with all
   vertices mapped via f. Edge values are merged with set union."
@@ -475,6 +421,128 @@
                  (assoc! vertices index vertex))
                (transient (vec (repeat (count mapping) nil)))
                mapping))]))
+
+; Advanced graph search
+;
+; Given a graph and a strongly connected component in it, we're interested in
+; finding cycles in that graph which satisfy certain properties. For instance,
+; we might want to restrict ourselves to only ww or wr edges (for G1c), or
+; find a cycle in which every rw edge is *not* adjacent to another rw edge.
+; (for G2-nonadjacent). Enumeration of all paths and filtering them for these
+; criteria after the fact may be hugely expensive. Instead, we push the
+; filtering process into the enumeration process, making sure that we only
+; explore paths which would satisfy the target cycle requirements.
+;
+; To do this, we define a PathState as a sequence of adjacent vertices in the
+; graph, *plus* an arbitrary state. As a part of our search, we take a state
+; machine transition function (f state path edge-value vertex), which evaluates
+; whether we can append that vertex to the given path. A search for G-single
+; could say, for instance "this state tells me we already saw a rw edge, so we
+; can't add another to this particular path.
+;
+; f returns a new state if it is possible to extend the path to that vertex, or
+; ::invalid if it is not possible.
+
+(defrecord PathState [path state])
+
+(defn prune-alternate-path-states
+  "If we have two paths [a b e] and [a c d e], and they have the same state, we
+  don't need to retain both of them during the search. We take a set of paths,
+  and collapse it to just those which have distinct start and endpoints, and
+  distinct states. Since all paths in our search *start* from the same place,
+  we can do this efficiently by just selecting one from the set of all paths
+  that end in the same place with the same state."
+  [path-states]
+  (->> path-states
+       (group-by (fn [ps] [(peek (:path ps)) (:state ps)]))
+       vals
+       (map first)))
+
+;; Graph search helpers
+
+(defn prune-alternate-paths
+  "If we have two paths [a b d] and [a c d], we don't need both of them,
+  because both get us from a to d. We collapse a set of paths by filtering out
+  duplicates. Since all paths *start* at the same place, we can do this
+  efficiently by selecting one from the set of all paths that end in the same
+  place."
+  [paths]
+  (->> paths
+       (group-by peek)
+       vals
+       (map first)))
+
+(defn prune-longer-paths
+  "We can also completely remove paths whose tips are in a prefix of any other
+  path, because these paths are simply longer versions of paths we've already
+  explored."
+  [paths]
+  (let [old (->> paths
+                 (mapcat butlast)
+                 (into #{}))]
+    (remove (comp old peek) paths)))
+
+(defn grow-path-states
+  "Given a transition function f, graph g, and a set of PathStates, constructs
+  a new set of Pathstates by taking the tip t of each PathState p and extending
+  it to all vertices t can reach, such that (f state path edge next-vertex)
+  returns anything but ::invalid."
+  [f g path-states]
+  (mapcat (fn grow-path-state [ps]
+            (let [path    (:path ps)
+                  tip     (peek path)
+                  state   (:state ps)]
+              (keep (fn to [tip']
+                      (let [edge   (edge g tip tip')
+                            state' (f state path edge tip')]
+                        (when-not (= ::invalid state')
+                          (PathState. (conj path tip') state'))))
+                    (out g tip))))
+          path-states))
+
+(defn grow-paths
+  "Given a graph g, and a set of paths (each a sequence like [a b c]),
+  constructs a new set of paths by taking the tip c of each path p, and
+  expanding p to all vertices c can reach: [a b c] => #{[a b c d] [a b c e]}."
+  [^DirectedGraph g, paths]
+  (->> paths
+       (mapcat (fn [path]
+                 (let [tip (peek path)]
+                   ; Expand the tip to all nodes it can reach
+                   (map (partial conj path) (.out g tip)))))))
+
+(defn path-state-shells
+  "Given a graph, and a starting collection of path states, constructs shells
+  outwards from those paths: collections of longer and longer path states."
+  [f g starting-path-states]
+  ; The longest possible cycle is the entire graph, plus one.
+  (take (inc (size g))
+        (iterate (comp prune-alternate-path-states
+                       (partial grow-path-states f g))
+                 starting-path-states)))
+
+(defn path-shells
+  "Given a graph, and a starting collection of paths, constructs shells
+  outwards from those paths: collections of longer and longer paths."
+  [^DirectedGraph g starting-paths]
+  ; The longest possible cycle is the entire graph, plus one.
+  (take (inc (.size g))
+        (iterate (comp prune-alternate-paths
+                       (partial grow-paths g)
+                       prune-longer-paths)
+                 starting-paths)))
+
+(defn loop?
+  "Does the given vector begin and end with identical elements, and is longer
+  than 1?"
+  [v]
+  (and (< 1 (count v))
+       (= (first v) (peek v))))
+
+(defn path-state-loop?
+  "Is the given PathState a loop?"
+  [path-state]
+  (loop? (:path path-state)))
 
 (defn find-cycle-starting-with
   "Some anomalies consist of a cycle with exactly, or at least, one edge of a
@@ -522,6 +590,48 @@
                       (filter loop?)
                       first)))
          first)))
+
+(defn find-cycle-with-
+  "Searches for a cycle in a graph, given a set of strongly connected vertices
+  `scc`, along which path a state machine holds. The state machine is given as
+  a transition function f.
+
+  (f vertex) gives the initial state for a path which consists of just
+  [vertex].
+
+  (transition state path relationship vertex) yields the state when we append
+  vertex to path; relationship is the value of the edge which we take to get to
+  vertex.
+
+  The special state ::invalid indicates that the given path should not be
+  followed.
+
+  Any cycle found must pass (pred state path). This is helpful for enforcing
+  criteria that can't be rejected incrementally by `transition`--for instance,
+  that a cycle must contain at least two edges of a certain type.
+
+  Returns the resulting PathState."
+  [transition pred ^IGraph graph scc]
+  ; First, restrict the graph to the SCC.
+  (let [g     (.select graph (->bset scc))
+        cycle (->> (vertices g)
+                   (keep (fn [start]
+                           (let [state (transition start)
+                                 init-path-state (PathState. [start] state)]
+                             (when (not= ::invalid? init-path-state)
+                               (->> (path-state-shells transition g
+                                                       [init-path-state])
+                                    (mapcat identity)
+                                    (filter path-state-loop?)
+                                    (filter pred)
+                                    first)))))
+                   first)]
+    cycle))
+
+(defn find-cycle-with
+  "Like find-cycle-with-, but just returns the cycle, not the full PathState."
+  [transition pred g scc]
+  (:path (find-cycle-with- transition pred g scc)))
 
 (defn find-cycle
   "Given a graph and a strongly connected component within it, finds a short

@@ -78,13 +78,15 @@
                :consistent-view
                :strict-serializable
                :update-serializable
-               :snapshot-isolation}
+               :snapshot-isolation
+               :strong-session-snapshot-isolation}
              (as [:G-single]))))
 
     (testing "G-SI"
       (is (= #{:snapshot-isolation
                :serializable
-               :strict-serializable}
+               :strict-serializable
+               :strong-session-snapshot-isolation}
              (as [:G-SI]))))
 
     (testing "dirty update"
@@ -104,6 +106,7 @@
                :parallel-snapshot-isolation
                :prefix
                :read-atomic
+               :strong-session-snapshot-isolation
                }
              (as [:dirty-update]))))
 
@@ -114,6 +117,7 @@
                :read-atomic
                :serializable
                :snapshot-isolation
+               :strong-session-snapshot-isolation
                :strict-serializable
                }
              (as [:internal]))))))
@@ -143,7 +147,8 @@
                         :monotonic-snapshot-read
                         :update-serializable
                         :forward-consistent-view
-                        :monotonic-view}}
+                        :monotonic-view
+                        :strong-session-snapshot-isolation}}
            (friendly-boundary [:cyclic-versions]))))
 
   (testing "internal"
@@ -153,7 +158,8 @@
                         :prefix
                         :serializable
                         :snapshot-isolation
-                        :strict-serializable}}
+                        :strict-serializable
+                        :strong-session-snapshot-isolation}}
            (friendly-boundary [:internal]))))
 
   (testing "G1a"
@@ -162,7 +168,9 @@
                         :forward-consistent-view :monotonic-atomic-view
                         :monotonic-snapshot-read :monotonic-view
                         :parallel-snapshot-isolation :prefix :repeatable-read
-                        :serializable :snapshot-isolation :strict-serializable
+                        :serializable :snapshot-isolation
+                        :strict-serializable
+                        :strong-session-snapshot-isolation
                         :update-serializable}}
            (friendly-boundary [:G1a]))))
 
@@ -171,6 +179,7 @@
             :also-not #{:snapshot-isolation
                         :serializable
                         :strict-serializable
+                        :strong-session-snapshot-isolation
                         :forward-consistent-view
                         :update-serializable}}
            (friendly-boundary [:G-single]))))
@@ -180,7 +189,8 @@
             :also-not #{:causal-cerone
                            :parallel-snapshot-isolation
                            :prefix
-                           :snapshot-isolation
                            :serializable
-                           :strict-serializable}}
+                           :snapshot-isolation
+                           :strict-serializable
+                           :strong-session-snapshot-isolation}}
            (friendly-boundary [:G2 :internal])))))

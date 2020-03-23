@@ -135,6 +135,86 @@
       (is (= [0 1 3 0]
              (find-cycle-starting-with initial remaining #{0 1 2 3}))))))
 
+(deftest find-cycle-satisfying-test
+  ; This transition function considers every path legal.
+  (let [trivial (fn trivial
+                  ([v] :trivial)
+                  ([state path rel v'] state))
+        ; This fn ensures that no :rw is next to another by testing successive
+        ; edge types. In addition, we ensure that the first edge in the cycle
+        ; is not an rw. Cycles must have at least two edges, and in order for
+        ; no two rw edges to be adjacent, there must be at least one non-rw
+        ; edge among them. This constraint ensures a sort of boundary condition
+        ; for the first and last nodes--even if the last edge is rw, we don't
+        ; have to worry about violating the nonadjacency property when we jump
+        ; to the first.
+        nonadjacent (fn
+                      ([v] true) ; To start, pretend we just came along an rw
+                      ([last-was-rw? path rel v']
+                       ; It's fine to follow *non* rw links, but if you've only
+                       ; got rw, and we just did one, this path is invalid.
+                       (let [rw? (= #{:rw} rel)]
+                         (if (and last-was-rw? rw?)
+                           :elle.graph/invalid
+                           rw?))))
+
+        ; This predicate is always true.
+        always (fn [_] true)]
+
+    (testing "empty graph"
+      (is (= nil (find-cycle-with- trivial always
+                                   (map->bdigraph {}) []))))
+
+    (testing "singleton scc"
+      (is (= nil (find-cycle-with- trivial
+                                   always
+                                   (map->bdigraph {1 [2], 2 [1]}) [1]))))
+
+    (testing "basic cycle"
+      (is (= (->PathState [2 3 2] :trivial)
+             (find-cycle-with- trivial
+                               always
+                               (map->bdigraph {1 [2]
+                                               2 [3]
+                                               3 [2]})
+                               [1 2 3]))))
+
+    (testing "non-adjacent"
+      (testing "double rw"
+        (is (= nil (find-cycle-with nonadjacent
+                                    always
+                                    (-> (digraph)
+                                        (link 1 2 :rw)
+                                        (link 2 1 :rw))
+                                    [1 2]))))
+      (testing "rw, rw+ww"
+        (is (= [2 1 2] (find-cycle-with nonadjacent
+                                        always
+                                        (-> (digraph)
+                                            (link 1 2 :rw)
+                                            (link 2 1 :rw)
+                                            (link 2 1 :ww))
+                                        [1 2]))))
+
+      (testing "rw, ww, rw"
+        (is (= nil (find-cycle-with nonadjacent
+                                    always
+                                    (-> (digraph)
+                                        (link 1 2 :rw)
+                                        (link 2 3 :ww)
+                                        (link 3 1 :rw))
+                                    [1 2 3]))))
+
+      (testing "rw, ww, rw, ww"
+        (is (= [2 3 4 1 2] (find-cycle-with nonadjacent
+                                            always
+                                            (-> (digraph)
+                                                (link 1 2 :rw)
+                                                (link 2 3 :ww)
+                                                (link 3 4 :rw)
+                                                (link 4 1 :ww))
+                                            [1 2 3 4])))))))
+
 (deftest renumber-graph-test
   (is (= [{} []]
          (update (renumber-graph (map->bdigraph {})) 0 ->clj)))

@@ -4,9 +4,25 @@
   by, or ruled out by, a given history. For sources, see
 
   - Adya, 'Weak Consistency'
+
   - Adya, Liskov, O'Neil, 'Generalized Isolation Level Definitions'
+
   - Bailis, Davidson, Fekete, et al, 'Highly Available Transactions'
-  - Cerone, Bernardi, Gotsman, 'A Framework for Transactional Consistency Models with Atomic Visibility'"
+
+  - Cerone, Bernardi, Gotsman, 'A Framework for Transactional Consistency Models with Atomic Visibility'
+
+  - Fekete, Liarokapis, O'Neil, O'Neil, 'Making Snapshot Isolation Serializable'
+
+  - Cerone-SI: Cerone, Gotsman, 'Analysing Snapshot Isolation' (http://software.imdea.org/~gotsman/papers/si-podc16.pdf)
+
+  ## Choices
+
+  -  When we say 'serializability', we mean conflict-serializability. This means
+  we may flag histories as non-serializable which are in fact
+  view-serializable. In practice, this doesn't seem to come up.
+
+  - Our snapshot isolation mixes (perhaps incorrectly) a variety of
+  formalizations."
   (:require [elle [graph :as g]
                   [util :as util :refer [map-vals]]]
             [clojure [set :as set]])
@@ -31,12 +47,17 @@
      :G1c-process  [:G1-process :G1c-realtime]
      :G1c-realtime [:G1-realtime]
 
-     ; G-single is a special case of G2
-     :G-single          [:G2]
-     :G-single-process  [:G2-process :G-single-realtime]
-     :G-single-realtime [:G2-realtime]
+     ; G-single is a special case of G-nonadjacent
+     :G-single          [:G-nonadjacent]
+     :G-single-process  [:G-nonadjacent-process :G-single-realtime]
+     :G-single-realtime [:G-nonadjacent-realtime]
 
-     ; Every G2-item is also a G2, by definition.
+     ; And G-nonadjacent is, in turn, a special case of G2
+     :G-nonadjacent           [:G2]
+     :G-nonadjacent-process   [:G2-process :G-nonadjacent-realtime]
+     :G-nonadjacent-realtime  [:G2-realtime]
+
+     ; Every G2-item is also a G2, by definition
      :G2-item           [:G2]
      :G2-item-process   [:G2-process :G2-item-realtime]
      :G2-item-realtime  [:G2-realtime]
@@ -148,10 +169,6 @@
         :read-committed         [:read-uncommitted]           ; SQL
         :repeatable-read        [:cursor-stability            ; Adya
                                  :monotonic-atomic-view]      ; Bailis
-        :strict-serializable    [:PL-3                        ; Adya
-                                 :serializable                ; Bailis
-                                 :linearizable                ; Bailis
-                                 :snapshot-isolation]         ; Adya
         :serializable           [:repeatable-read             ; SQL
                                  :snapshot-isolation]         ; Bailis, Cerone
         :snapshot-isolation     [:forward-consistent-view     ; Adya
@@ -159,6 +176,15 @@
                                  :monotonic-snapshot-read     ; Adya
                                  :parallel-snapshot-isolation ; Cerone
                                  :prefix]                     ; Cerone
+        :strict-serializable    [:PL-3                        ; Adya
+                                 :serializable                ; Bailis
+                                 :linearizable                ; Bailis
+                                 :snapshot-isolation]         ; Adya
+        ; TODO: Fekete et al suggests there's a concurrency restriction for
+        ; SI-but-nonserializable anomalies here: https://www.cse.iitb.ac.in/infolab/Data/Courses/CS632/2009/Papers/p492-fekete.pdf, but I don't fully understand
+        ; their formalism.
+        ; TODO: should this imply session-SI? And should session-SI imply SI?
+        :strong-session-snapshot-isolation [:snapshot-isolation] ; Cerone-SI
 
         ; Single-object (ish) models
         :linearizable          [:sequential]                 ; Bailis
@@ -236,6 +262,10 @@
         :strict-serializable       [:G1                ; Adya
                                     :G1c-realtime      ; Adya
                                     :G2-realtime]      ; Adya
+        ; TODO: right now, G-nonadjacent just uses ww/rw/wr edges, and we're
+        ; not taking into account realtime/process order. Should we do those
+        ; too? Are there analogues for plain old (generalized) SI?
+        :strong-session-snapshot-isolation [:G-nonadjacent] ; Cerone-SI
         :update-serializable       [:G1 :G-update]     ; Adya
         :parallel-snapshot-isolation [:internal :G1a]  ; Cerone (incomplete)
         :PL-3                      [:G1 :G2]           ; Adya

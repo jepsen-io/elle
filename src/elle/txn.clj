@@ -107,9 +107,19 @@
             ww        (:ww        type-freqs 0)
             wr        (:wr        type-freqs 0)
             rw        (:rw        type-freqs 0)
+            ; Are any pair of rw's together?
+            rw-adj?   (->> (:steps ex)
+                           (cons (last (:steps ex))) ; For last->first edge
+                           (map :type)
+                           (partition 2 1)        ; Take pairs
+                           (filter #{[:rw :rw]})  ; Find an rw, rw pair
+                           seq
+                           boolean)
             ; We compute a type based on data dependencies alone
-            data-dep-type (cond (< 1 rw) "G2-item"
-                                (= 1 rw) "G-single"
+            data-dep-type (cond (= 1 rw) "G-single"
+                                (< 1 rw) (if rw-adj?
+                                           "G2-item"
+                                           "G-nonadjacent")
                                 (< 0 wr) "G1c"
                                 (< 0 ww) "G0"
                                 true (throw (IllegalStateException.
@@ -120,12 +130,30 @@
             subtype (cond (< 0 realtime) "-realtime"
                           (< 0 process)  "-process"
                           true           "")]
+        ; (prn :type (keyword (str data-dep-type subtype)))
         (assoc ex :type (keyword (str data-dep-type subtype)))))
 
     (render-cycle-explanation [_ pair-explainer
                                {:keys [type cycle steps] :as ex}]
       (elle/render-cycle-explanation
         elle/cycle-explainer pair-explainer ex))))
+
+(defn nonadjacent-rw
+  "This fn ensures that no :rw is next to another by testing successive edge
+  types. In addition, we ensure that the first edge in the cycle is not an rw.
+  Cycles must have at least two edges, and in order for no two rw edges to be
+  adjacent, there must be at least one non-rw edge among them. This constraint
+  ensures a sort of boundary condition for the first and last nodes--even if
+  the last edge is rw, we don't have to worry about violating the nonadjacency
+  property when we jump to the first."
+  ([v] [0 true]) ; Our accumulator here is a map of rw-count, last-was-rw.
+  ([[n last-was-rw?] path rel v']
+   ; It's fine to follow *non* rw links, but if you've only
+   ; got rw, and we just did one, this path is invalid.
+   (let [rw? (= #{:rw} rel)]
+     (if (and last-was-rw? rw?)
+       :elle.graph/invalid
+       [(if rw? (inc n) n) rw?]))))
 
 (def cycle-anomaly-specs
   "We define a specification language for different anomaly types, and a small
@@ -149,9 +177,23 @@
    ; We want at least one wr edge, so we specify that as first-rels.
    :G1c       {:first-rels #{:wr}
                :rest-rels  #{:ww :wr}}
-   ; Likewise, G-single starts with the anti-dependency edge.
+   ; Likewise, G-single starts with the anti-dependency edge. This anomaly is
+   ; read skew, and is proscribed by SI.
    :G-single  {:first-rels  #{:rw}
                :rest-rels   #{:ww :wr}}
+
+   ; Per Cerone & Gotsman
+   ; (http://software.imdea.org/~gotsman/papers/si-podc16.pdf), strong session
+   ; SI is equivalent to allowing only cycles with 2+ adjacent rw edges.
+   ; G-single is a special case, where there is exactly one such edge. We
+   ; define a more general form of G-single, which we call G-nonadjacent: a
+   ; cycle which has rw edges, and no pair of rw edges are adjacent.
+   :G-nonadjacent {:rels              #{:ww :wr :rw}
+                   :with              nonadjacent-rw
+                   ; We need more than one rw edge for this to count; otherwise
+                   ; it's G-single.
+                   :filter-path-state (fn [ps] (< 1 (first (:state ps))))}
+
    ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
    ; insists on being G2, rather than G-single. Not bulletproof, but G-single
    ; is worse, so I'm OK with it.
@@ -290,24 +332,33 @@
     ; filter step. I don't think this is super expensive, but future self, if
     ; you're looking at a profiler and trying to find constant factors to
     ; optimize, this might be a good spot to start.
+    ;
+    ; TODO: many anomalies imply others. We should use the dependency graph to
+    ; check for special-case anomalies before general ones, and only check for
+    ; the general ones if we can't find special-case ones. e.g. if we find a
+    ; g-single, there's no need to look for g-nonadjacent.
     (->> (for [scc          sccs
                [type spec]  cycle-anomaly-specs]
            ; First, find a cycle using the spec.
            (let [;_      (prn)
-                 ;_      (prn :spec type spec)
-                 cycle (if-let [rels (:rels spec)]
-                         ; All edges in the same set of relationships
-                         (do ;(prn :find-cycle rels)
-                             ;(prn :graph (fg rels))
-                             (g/find-cycle (fg rels) scc))
-                         ; First edge special
-                         (do ;(prn :find-first-cycle (:first-rels spec)
-                             ;     (:rest-rels spec))
-                             ;(prn :first-graph (fg (:first-rels spec)))
-                             ;(prn :rest-graph  (fg (:rest-rels spec)))
+                 ; _      (prn :spec type spec)
+                 ; Restrict the graph to certain relationships, if necessary.
+                 g     (if-let [rels (:rels spec)]
+                         (fg rels)
+                         graph)
+                 ; Now, we have three cycle-finding strategies...
+                 cycle (cond (:with spec)
+                             (g/find-cycle-with (:with spec)
+                                                (:filter-path-state spec)
+                                                g scc)
+
+                             (:rels spec)
+                             (g/find-cycle g scc)
+
+                             true
                              (g/find-cycle-starting-with (fg (:first-rels spec))
                                                          (fg (:rest-rels spec))
-                                                         scc)))]
+                                                         scc))]
              (when cycle
                ; Explain the cycle
                (let [ex (elle/explain-cycle cycle-explainer pair-explainer
@@ -386,8 +437,8 @@
    :anomalies     {:g1c [...] ...}
    :impossible-models #{:snapshot-isolation ...}}"
   [opts anomalies]
-  ;(prn :anomalies anomalies)
-  ;(prn :reportable-anomalies (reportable-anomaly-types opts))
+  ; (prn :anomalies anomalies)
+  ; (prn :reportable-anomalies (reportable-anomaly-types opts))
   (let [bad         (select-keys anomalies (prohibited-anomaly-types opts))
         reportable  (select-keys anomalies (reportable-anomaly-types opts))]
     (if (empty? reportable)
