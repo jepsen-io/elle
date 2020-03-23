@@ -21,11 +21,14 @@
 
   - Daudjee-SI: Daudjee, Salem, 'Lazy Database Replication with Snapshot Isolation' (http://www.vldb.org/conf/2006/p715-daudjee.pdf)
 
+  - Bernstein, Hazilacos, Goodman, 'Concurrency Control and Recovery in Database Systems' (https://www.microsoft.com/en-us/research/people/philbe/)
+
+  - Zuikeviciute, Pedone, 'Correctness Criteria for Database Replication' (https://www.researchgate.net/profile/Fernando_Pedone/publication/225706071_Correctness_Criteria_for_Database_Replication_Theoretical_and_Practical_Aspects/links/00b7d53274a4c89278000000/Correctness-Criteria-for-Database-Replication-Theoretical-and-Practical-Aspects.pdf)
+
   ## Choices
 
-  -  When we say 'serializability', we mean conflict-serializability. This means
-  we may flag histories as non-serializable which are in fact
-  view-serializable. In practice, this doesn't seem to come up.
+  -  When we say 'serializability', we follow Bernstein et al in meaning
+  'conflict serializability'.
 
   - Our snapshot isolation mixes (perhaps incorrectly) a variety of
   formalizations."
@@ -132,8 +135,16 @@
    ; We use "serializable" to mean "conflict serializable"
    :serializable             :PL-3
    :snapshot-isolation       :PL-SI    ; Adya
-   ; What do we want to do about "1SR" and "strong serializable"? Are they
+   ; TODO: What do we want to do about "1SR" and "strong serializable"? Are they
    ; equivalent to strict serializable?
+   ;
+   ; Bernstein introduces the concept of strict-1SR, but the entire point is
+   ; that it's indistinguishible (for users) from (conflict) serializability.
+   ; OTOH, they also say "As we have seen, another explanation why a
+   ; serializable execution may not be 1SR is that different transactions
+   ; observe failures and recoveries in different orders", which implies SR is
+   ; weaker than 1SR. Is there an implication here? Is it visible to users?
+   ; :strict-1SR               :serializable
    :strict-serializable      :PL-SS    ; Adya
    :update-serializable      :PL-3U    ; Adya
    })
@@ -188,7 +199,9 @@
         :repeatable-read        [:cursor-stability            ; Adya
                                  :monotonic-atomic-view]      ; Bailis
         :serializable           [:repeatable-read             ; SQL
-                                 :snapshot-isolation]         ; Bailis, Cerone
+                                 :snapshot-isolation          ; Bailis, Cerone
+                                 :view-serializable]          ; Bernstein
+        :session-serializable   [:1SR]                        ; Zuikeviciute
         :snapshot-isolation     [:forward-consistent-view     ; Adya
                                  :monotonic-atomic-view       ; Bailis
                                  :monotonic-snapshot-read     ; Adya
@@ -199,6 +212,10 @@
                                  :linearizable                ; Bailis
                                  :snapshot-isolation          ; Adya
                                  :strong-session-serializable]; Daudjee???
+        ; TODO: does strong mean PL-SS?
+        ; TODO: What about strict-1SR? Zuikeviciute's informal definitions
+        ; make it sound like these are all PL-SS, but I'm not SURE
+        :strong-serializable    [:session-serializable]       ; Zuikeviciute
         :strong-session-serializable [:serializable]          ; Daudjee
 
         ; TODO: Fekete et al suggests there's a concurrency restriction for
