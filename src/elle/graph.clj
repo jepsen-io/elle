@@ -606,7 +606,7 @@
   The special state ::invalid indicates that the given path should not be
   followed.
 
-  Any cycle found must pass (pred state path). This is helpful for enforcing
+  Any cycle found must pass (pred path-state). This is helpful for enforcing
   criteria that can't be rejected incrementally by `transition`--for instance,
   that a cycle must contain at least two edges of a certain type.
 

@@ -405,7 +405,7 @@
                         (partial g/out g)
                         :node->descriptor (fn [x] {:label (name x)}))
         img (rv/dot->image dot)]
-    (rv/view-image img)
+    ;(rv/view-image img)
     (rv/save-image img filename)))
 
 (defn plot-models!
