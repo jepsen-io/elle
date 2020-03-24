@@ -457,18 +457,51 @@
   "A lazy sequence of write and read transactions over a pool of n numeric
   keys; every write is unique per key. Options:
 
-    :key-count            Number of distinct keys at any point
+    :key-dist             Controls probability distribution for keys being
+                          selected for a given operation. Choosing :uniform
+                          means every key has an equal probability of appearing.
+                          :exponential means that key i in the current key pool
+                          is k^i times more likely than the first key to be
+                          chosen. Defaults to :exponential.
+
+    :key-dist-base        The base for an exponential distribution. Defaults
+                          to 2, so the first key is twice as likely as the
+                          second, which is twice as likely as the third, etc.
+
+    :key-count            Number of distinct keys at any point. Defaults to
+                          10 for exponential, 3 for uniform.
+
     :min-txn-length       Minimum number of operations per txn
+
     :max-txn-length       Maximum number of operations per txn
+
     :max-writes-per-key   Maximum number of operations per key"
+
   ([opts]
-   (wr-txns opts {:active-keys (vec (range (:key-count opts 2)))}))
+   (let [key-dist  (:key-dist  opts :exponential)
+         key-count (:key-count opts (case key-dist
+                                      :exponential 3
+                                      :uniform     3))]
+     (wr-txns (assoc opts
+                     :key-dist  key-dist
+                     :key-count key-count)
+              {:active-keys (vec (range key-count))})))
   ([opts state]
    (lazy-seq
-     (let [min-length           (:min-txn-length opts 1)
-           max-length           (:max-txn-length opts 2)
-           max-writes-per-key   (:max-writes-per-key opts 32)
-           key-count            (:key-count opts 2)
+     (let [min-length           (:min-txn-length      opts 1)
+           max-length           (:max-txn-length      opts 2)
+           max-writes-per-key   (:max-writes-per-key  opts 32)
+           key-dist             (:key-dist            opts :exponential)
+           key-dist-base        (:key-dist-base       opts 2)
+           key-count            (:key-count           opts (case key-dist
+                                                             :exponential 3
+                                                             :uniform     3))
+           ; Choosing our random numbers from this range converts them to an
+           ; index in the range [0, key-count).
+           key-dist-scale       (-> (Math/pow key-dist-base key-count)
+                                    (- 1)
+                                    (* key-dist-base)
+                                    (/ (- key-dist-base 1)))
            length               (+ min-length (rand-int (- (inc max-length)
                                                            min-length)))
            [txn state] (loop [length  length
@@ -481,7 +514,16 @@
                              [txn state]
                              ; Add an op
                              (let [f (rand-nth [:r :w])
-                                   k (rand-nth active-keys)
+                                   ki (-> (rand key-dist-scale)
+                                              (+ key-dist-base)
+                                              Math/log
+                                              (/ (Math/log key-dist-base))
+                                              (- 1)
+                                              Math/floor
+                                              long)
+                                   k (case key-dist
+                                       :uniform     (rand-nth active-keys)
+                                       :exponential (nth active-keys ki))
                                    v (when (= f :w) (get state k 1))]
                                (if (and (= :w f)
                                         (< max-writes-per-key v))
