@@ -1,6 +1,7 @@
 (ns elle.viz
   (:require [clojure.string :as str]
             [clojure.java.io :as io]
+            [clojure.tools.logging :refer [info warn]]
             [elle [core :as elle]
                   [graph :as g]]
             [rhizome [dot :as dot]
@@ -172,6 +173,18 @@
      (concat (map (partial op->node node-idx) scc)
              (mapcat (partial op->edges analysis scc node-idx) scc))]))
 
+(defn save-dot!
+  "Renders dot to a file. Options are the same as plot-analysis!"
+  [^String dot directory opts i]
+  (if (< (:max-plot-bytes opts 1048576) ; 1 MB
+         (.length dot))
+    (info "Skipping plot of" (.length dot) "bytes")
+    (case (:plot-format opts :svg)
+      :png (rv/save-image (rv/dot->image dot)
+                          (io/file directory (str i ".png")))
+      :svg (spit (io/file directory (str i ".svg"))
+                 (rv/dot->svg dot)))))
+
 (defn plot-analysis!
   "Takes an analysis (e.g. {:graph g, :explainer e, :sccs [...]} and a
   directory, and renders every SCC in that analysis to a file in the given
@@ -179,27 +192,22 @@
 
   Options:
 
-    :plot-format      Either :png or :svg"
+    :plot-format      Either :png or :svg
+    :max-plot-bytes   Maximum number of bytes of DOT-formatted graph to feed
+                      to graphviz. Big SCCs can make graphviz choke!"
   ([analysis directory]
    (plot-analysis! analysis directory {}))
   ([analysis directory opts]
    (when (seq (:sccs analysis))
      (io/make-parents (io/file directory ".")))
-   (let [plotter (case (:plot-format opts :svg)
-                   :png (fn png [dot i]
-                          (rv/save-image (rv/dot->image dot)
-                                         (io/file directory (str i ".png"))))
-                   :svg (fn svg [dot i]
-                          (spit (io/file directory (str i ".svg"))
-                                (rv/dot->svg dot))))]
-     (->> (:sccs analysis)
-          (map-indexed vector)
-          (pmap (fn [[i scc]]
-                  (-> analysis
-                      (scc->ast scc)
-                      dot
-                      (plotter i))))
-          dorun))
+   (->> (:sccs analysis)
+        (map-indexed vector)
+        (pmap (fn [[i scc]]
+                (-> analysis
+                    (scc->ast scc)
+                    dot
+                    (save-dot! directory opts i))))
+        dorun)
    analysis))
 
 (defn view-scc
