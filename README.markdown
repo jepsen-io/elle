@@ -251,3 +251,7 @@ as I go.
 ## License
 
 Elle is copyright 2019--2020 Jepsen, LLC and Peter Alvaro. The Elle library is available under the Eclipse Public License, version 2.0, or, at your option, GPL-2.0 with the classpath exception.
+
+## Thanks
+
+Elle was inspired by conversations with Asha Karim, and Kit Patella (@mkcp) wrote the first prototype of the Elle checker.
