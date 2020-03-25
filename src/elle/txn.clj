@@ -7,6 +7,7 @@
             [elle [core :as elle]
                   [consistency-model :as cm]
                   [graph :as g]
+                  [util :as util]
                   [viz :as viz]]
             [jepsen.txn :as txn :refer [reduce-mops]]
 						[knossos.op :as op])
@@ -254,7 +255,8 @@
 (def unknown-anomaly-types
   "Anomalies which cause the analysis to yield :valid? :unknown, rather than
   false."
-  #{:empty-transaction-graph})
+  #{:empty-transaction-graph
+    :cycle-search-timeout})
 
 (defn prohibited-anomaly-types
   "Takes an options map with
@@ -306,6 +308,10 @@
   [graph]
   (memoize (fn [rels] (g/filter-relationships rels graph))))
 
+(def cycle-search-timeout
+  "How long, in milliseconds, to look for a certain cycle in any given SCC."
+  1000)
+
 (defn cycle-cases
   "We take the unified graph, a pair explainer that can justify relationships
   between pairs of transactions, and a collection of strongly connected
@@ -339,35 +345,47 @@
     ; g-single, there's no need to look for g-nonadjacent.
     (->> (for [scc          sccs
                [type spec]  cycle-anomaly-specs]
-           ; First, find a cycle using the spec.
-           (let [;_      (prn)
-                 ; _      (prn :spec type spec)
-                 ; Restrict the graph to certain relationships, if necessary.
-                 g     (if-let [rels (:rels spec)]
-                         (fg rels)
-                         graph)
-                 ; Now, we have three cycle-finding strategies...
-                 cycle (cond (:with spec)
-                             (g/find-cycle-with (:with spec)
-                                                (:filter-path-state spec)
-                                                g scc)
+           (util/timeout
+             cycle-search-timeout
+             ; If we time out...
+             (let [err {:type               :cycle-search-timeout
+                        :anomaly-spec-type  type
+                        :scc-size           (count scc)
+                        :scc                scc}]
+               (info "Timing out search for" type "in SCC of" (count scc)
+                     "transactions")
+               err)
 
-                             (:rels spec)
-                             (g/find-cycle g scc)
+             ; First, find a cycle using the spec.
+             (let [;_      (prn)
+                   ; _      (prn :spec type spec)
+                   ; Restrict the graph to certain relationships, if necessary.
+                   g     (if-let [rels (:rels spec)]
+                           (fg rels)
+                           graph)
+                   ; Now, we have three cycle-finding strategies...
+                   cycle (cond (:with spec)
+                               (g/find-cycle-with (:with spec)
+                                                  (:filter-path-state spec)
+                                                  g scc)
 
-                             true
-                             (g/find-cycle-starting-with (fg (:first-rels spec))
-                                                         (fg (:rest-rels spec))
-                                                         scc))]
-             (when cycle
-               ; Explain the cycle
-               (let [ex (elle/explain-cycle cycle-explainer pair-explainer
-                                            cycle)]
-                 ;(prn :explanation ex)
-                 ; Make sure it passes the filter, if we have one.
-                 (if-let [p (:filter-ex spec)]
-                   (when (p ex) ex)
-                   ex)))))
+                               (:rels spec)
+                               (g/find-cycle g scc)
+
+                               true
+                               (g/find-cycle-starting-with
+                                 (fg (:first-rels spec))
+                                 (fg (:rest-rels spec))
+                                 scc))]
+               (when cycle
+                 ; Explain the cycle
+                 (let [ex (elle/explain-cycle cycle-explainer pair-explainer
+                                              cycle)]
+                   ;(prn :explanation ex)
+                   ; Make sure it passes the filter, if we have one.
+                   (if-let [p (:filter-ex spec)]
+                     (when (p ex) ex)
+                     ex))))))
          ; Strip out missing cycles, or explanations that didn't pass muster
          (remove nil?)
          ; And group them by type

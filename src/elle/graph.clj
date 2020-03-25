@@ -8,7 +8,7 @@
   (:require [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
             [clojure.set :as set]
-            [elle.util :refer [map-vals]])
+            [elle.util :refer [map-vals maybe-interrupt]])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
                                Graphs$Edge
@@ -442,6 +442,7 @@
   we can do this efficiently by just selecting one from the set of all paths
   that end in the same place with the same state."
   [path-states]
+  (maybe-interrupt)
   (->> path-states
        (group-by (fn [ps] [(peek (:path ps)) (:state ps)]))
        vals
@@ -456,20 +457,11 @@
   efficiently by selecting one from the set of all paths that end in the same
   place."
   [paths]
+  (maybe-interrupt)
   (->> paths
        (group-by peek)
        vals
        (map first)))
-
-(defn prune-longer-paths
-  "We can also completely remove paths whose tips are in a prefix of any other
-  path, because these paths are simply longer versions of paths we've already
-  explored."
-  [paths]
-  (let [old (->> paths
-                 (mapcat butlast)
-                 (into #{}))]
-    (remove (comp old peek) paths)))
 
 (defn grow-path-states
   "Given a transition function f, graph g, and a set of PathStates, constructs
@@ -517,8 +509,7 @@
   ; The longest possible cycle is the entire graph, plus one.
   (take (inc (.size g))
         (iterate (comp prune-alternate-paths
-                       (partial grow-paths g)
-                       prune-longer-paths)
+                       (partial grow-paths g))
                  starting-paths)))
 
 (defn loop?
