@@ -161,8 +161,8 @@ may or may not have taken place. After an `:info`, a process may not perform ano
 ### Types of Tests
 
 - `elle.core`: The heart of Elle's inference system. Computes transaction graphs and finds cycles over them. Includes general-purpose graphs for per-process and realtime orders.
-- `elle.wr`: Write/Read registers. Weaker inference rules, but applicable to basically all systems. Objects are registers; writes blindly replace values. TODO: rename this.
-- `elle.append`: Elle's most powerful inference rules. Objects are lists, writes append unique elements to those lists. TODO: rename this too.
+- `elle.rw-register`: Write/Read registers. Weaker inference rules, but applicable to basically all systems. Objects are registers; writes blindly replace values.
+- `elle.list-append`: Elle's most powerful inference rules. Objects are lists, writes append unique elements to those lists.
 
 ## Consistency Models
 
