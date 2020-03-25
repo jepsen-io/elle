@@ -403,19 +403,8 @@
                   (reduce (fn [mapping v]
                             (assoc! mapping v (count mapping)))
                           (transient {})
-                          (vertices g)))
-        g' (reduce (fn [g' v]
-                     ; Find the index of this vertex
-                     (let [vi (get mapping v)]
-                       (reduce (fn [g' n]
-                                 ; And the index of this neighbor
-                                 (let [ni (get mapping n)]
-                                   (link g' vi ni)))
-                               g'
-                               (out g v))))
-                (linear (digraph))
-                (vertices g))]
-    [(forked g')
+                          (vertices g)))]
+    [(map-vertices mapping g)
      (persistent!
        (reduce (fn [vertices [vertex index]]
                  (assoc! vertices index vertex))
@@ -591,6 +580,21 @@
                       first)))
          first)))
 
+(defn map-path-state
+  "We try to do as much of our search as possible over Longs, rather than ops,
+  which are expensive to compare. Given a function mapping integers to ops, and
+  a PathState, we remap the path in the PathState from integers back to ops."
+  [mapping path-state]
+  (PathState. (mapv mapping (:path path-state)) (:state path-state)))
+
+(defn unchunk
+  "Unchunks a possible chunked collection. We do this to avoid finding more
+  solutions than necessary during graph search."
+  [coll]
+  (lazy-seq
+    (when-let [[x] (seq coll)]
+      (cons x (unchunk (rest coll))))))
+
 (defn find-cycle-with-
   "Searches for a cycle in a graph, given a set of strongly connected vertices
   `scc`, along which path a state machine holds. The state machine is given as
@@ -614,15 +618,23 @@
   [transition pred ^IGraph graph scc]
   ; First, restrict the graph to the SCC.
   (let [g     (.select graph (->bset scc))
-        cycle (->> (vertices g)
+        ; Renumber the subgraph to speed up equality comparison
+        ; TODO: this means we pass weird numeric vertices to transition, which
+        ; is OK right now because our transition fns don't CARE about vertices,
+        ; but... later we should maybe ensure the history is indexed and use
+        ; that for equality comparison instead? Something else fast?
+        [gn mapping] (renumber-graph g)
+        cycle (->> (vertices gn)
                    (keep (fn [start]
                            (let [state (transition start)
                                  init-path-state (PathState. [start] state)]
                              (when (not= ::invalid? init-path-state)
-                               (->> (path-state-shells transition g
+                               (->> (path-state-shells transition gn
                                                        [init-path-state])
                                     (mapcat identity)
+                                    unchunk
                                     (filter path-state-loop?)
+                                    (map (partial map-path-state mapping))
                                     (filter pred)
                                     first)))))
                    first)]
