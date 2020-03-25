@@ -442,7 +442,6 @@
   we can do this efficiently by just selecting one from the set of all paths
   that end in the same place with the same state."
   [path-states]
-  (maybe-interrupt)
   (->> path-states
        (group-by (fn [ps] [(peek (:path ps)) (:state ps)]))
        vals
@@ -457,7 +456,6 @@
   efficiently by selecting one from the set of all paths that end in the same
   place."
   [paths]
-  (maybe-interrupt)
   (->> paths
        (group-by peek)
        vals
@@ -470,6 +468,7 @@
   returns anything but ::invalid."
   [f g path-states]
   (mapcat (fn grow-path-state [ps]
+            (maybe-interrupt)
             (let [path    (:path ps)
                   tip     (peek path)
                   state   (:state ps)]
@@ -488,6 +487,7 @@
   [^DirectedGraph g, paths]
   (->> paths
        (mapcat (fn [path]
+                 (maybe-interrupt)
                  (let [tip (peek path)]
                    ; Expand the tip to all nodes it can reach
                    (map (partial conj path) (.out g tip)))))))
@@ -653,3 +653,22 @@
                                        first)]
                      (mapv mapping cycle))))
          first)))
+
+(defn fallback-cycle
+  "A DFS algorithm which finds ANY cycle in an SCC. We use this as a
+  fallback when BFS is too slow."
+  [graph scc]
+  (let [g     (.select graph (->bset scc))
+        start (first scc)]
+    (loop [path [start]
+           seen {start 0}]
+      (let [vs        (->clj (out g (peek path)))
+            ; TODO: this is wrong when nodes can be nil, but that shouldn't
+            ; matter for us.
+            loop-idx  (some seen vs)]
+        (if loop-idx
+          ; We can jump from this node to something in our own path
+          (conj (subvec path loop-idx) (nth path loop-idx))
+          ; Keep exploring
+          (let [v (first (remove seen vs))]
+            (recur (conj path v) (assoc seen v (count path)))))))))

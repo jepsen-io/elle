@@ -176,7 +176,7 @@
 (defn save-dot!
   "Renders dot to a file. Options are the same as plot-analysis!"
   [^String dot directory opts i]
-  (if (< (:max-plot-bytes opts 1048576) ; 1 MB
+  (if (< (:max-plot-bytes opts 65536) ; 65K
          (.length dot))
     (info "Skipping plot of" (.length dot) "bytes")
     (case (:plot-format opts :svg)

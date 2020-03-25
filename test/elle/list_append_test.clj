@@ -738,6 +738,17 @@
                                    :type :G2-item}]}}
            (c {:consistency-models [:repeatable-read]} h)))))
 
+(deftest ^:perf huge-scc-test
+  (let [r (cf {} "histories/huge-scc.edn")]
+    ; There's a full explanation here but... it's long, and all we care about
+    ; is that we can fall back to saying SOMETHING about this enormous SCC.
+    ;
+    ; TODO: might be worth modifying graph/fallback-cycle so it tries to follow
+    ; minimal edges first. Might help generate worse anomalies.
+    (is (not (:valid? r)))
+    (is (= #{:strict-serializable} (:not r)))
+    (is (= [:G2-item-realtime :cycle-search-timeout] (:anomaly-types r)))))
+
 (deftest G-nonadjacent-test
   ; For G-nonadjacent, we need two rw edges (just one would be G-single), and
   ; they can't be adjacent, so that's four edges altogether.

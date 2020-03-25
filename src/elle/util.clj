@@ -1,6 +1,7 @@
 (ns elle.util
   "Kitchen sink"
-  (:require [clojure.core.reducers :as r])
+  (:require [clojure.core.reducers :as r]
+            [clojure.tools.logging :refer [info warn]])
   (:import (java.util.concurrent ExecutionException)))
 
 (defn nanos->secs [nanos] (/ nanos 1e9))

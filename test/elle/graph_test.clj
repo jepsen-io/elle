@@ -135,6 +135,14 @@
       (is (= [0 1 3 0]
              (find-cycle-starting-with initial remaining #{0 1 2 3}))))))
 
+(deftest fallback-cycle-test
+  (is (= [2 3 4 2] (fallback-cycle
+                     (map->bdigraph {1 [2]
+                                     2 [3]
+                                     3 [4]
+                                     4 [2]})
+                     [1 2 3 4]))))
+
 (deftest find-cycle-satisfying-test
   ; This transition function considers every path legal.
   (let [trivial (fn trivial
