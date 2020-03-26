@@ -27,9 +27,11 @@ formalization of its soundness proof. A nowhere-near-complete formal
 [proof](proof/) sketch is written in the
 [Isabelle/HOL](https://isabelle.in.tum.de/) proof language.
 
+If you want to check a database using Elle, see [https://jepsen.io](Jepsen); Elle comes built-in. If you want to use Elle to check your own histories without using Jepsen, you can add Elle as a dependency to any JVM project, and invoke its checker functions directly. If you're working in a non-JVM language, you can write your history to a file or stream, and call a small wrapper program to produce output.
+
 Elle is still under active development, and we're not 100% confident in its
 inference rules yet. Jepsen recommends checking reported anomalies by hand to
-make sure they're valid.
+make sure they're valid. If you'd like to contribute, we'd especially welcome your help in the [formal proof](proof/), and in [rigorously defining consistency models](src/elle/consistency_model.clj).
 
 Questions? <b>[Read the paper](https://github.com/jepsen-io/elle/raw/master/paper/elle.pdf)!</b>
 
