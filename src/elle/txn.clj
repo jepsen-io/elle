@@ -242,7 +242,11 @@
 
 (def cycle-types
   "All types of cycles we can detect."
-  (set (keys cycle-anomaly-specs)))
+  (into (set (keys cycle-anomaly-specs))
+        ; We don't explicitly specify these, but the explainer will spit them
+        ; out. I don't know whether we should count them as REAL exactly, so...
+        #{:G-nonadjacent-process
+          :G-nonadjacent-realtime}))
 
 (def process-anomaly-types
   "Anomaly types involving process edges."
