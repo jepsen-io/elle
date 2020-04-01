@@ -67,17 +67,38 @@ primrec history :: "interp \<Rightarrow> history" where
 text \<open>We say f is a total bijection between a and b iff f is bijective and every a maps to a b.
 I feel like there should be something for this in Isabelle already but I'm not sure.\<close>
 
+text \<open>Giuliano: you can use the query panel to search for constants or theorems. 
+Here, look for a constant of the following type: "(_ \<Rightarrow> _) \<Rightarrow> _ set \<Rightarrow> _ set \<Rightarrow> bool", and it will find:\<close>
+thm Fun.bij_betw_def \<comment> \<open>That is probably what you wanted\<close>
+
 definition total_bij :: "('a \<Rightarrow> 'b) \<Rightarrow> 'a set \<Rightarrow> 'b set \<Rightarrow> bool" where
 "total_bij f as bs \<equiv> ((bij f) \<and> (\<forall>a. (a \<in> as) \<longrightarrow> ((f a) \<in> bs)))"
 
-(* I can't even show this? Really? *)
+(* I can't even show this? Really?  *)
+text \<open>Giuliano: it's because it does not hold :) You forgot to assume that @{term \<open>a \<in> as\<close>}. 
+It's often a good idea to run nitpick as a first sanity check. Here, it immediately finds a counter-example\<close>
 lemma "(total_bij f as bs \<and> (b = (f a))) \<longrightarrow> (b \<in> bs)"
+  nitpick
   apply (simp add:total_bij_def)
   apply auto
   oops
 
+lemma my_lemma:
+  assumes "total_bij f as bs" and "b = f a" and "a \<in> as" 
+  shows "(b \<in> bs)" \<comment> \<open>Note that this syntax is better becuase it produces a lemma in rule format, ready to be applied without transformation.\<close>
+  using assms total_bij_def by fastforce \<comment> \<open>found by sledgehammer in a few seconds\<close>
+
+lemma my_lemma_bad:
+  "total_bij f as bs \<and> b = f a \<and> a \<in> as \<longrightarrow> b \<in> bs"
+  using total_bij_def by fastforce
+
+text \<open>Now check what the lemmas looks like with @{command thm}\<close>
+thm my_lemma \<comment> \<open>In rule form\<close>
+thm my_lemma_bad \<comment> \<open>Not in rule form; cannot be applied directly by generic proof tools like auto\<close>
+
 (* Huh, would have thought this would be easy *)
-lemma total_bij_image1: "(total_bij f a b) \<Longrightarrow> ((f`a) = b)"
+lemma total_bij_image1: "(total_bij f a b) \<Longrightarrow> ((f`a) = b)" 
+  nitpick \<comment> \<open>Again, nitpick shows that it does not hold\<close>
   apply (simp add: total_bij_def)
 
   oops
