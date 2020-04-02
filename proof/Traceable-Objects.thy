@@ -1,5 +1,5 @@
 theory "Traceable-Objects"
-imports Main "HOL-Library.Monad_Syntax"
+imports Main
 begin
 
 section \<open>A few properties of foldl\<close>
