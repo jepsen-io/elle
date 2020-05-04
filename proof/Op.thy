@@ -4,9 +4,26 @@ begin
 
 section \<open>Keys, Versions, and Operations\<close>
 
-text \<open>Our database is conceptually modeled as a map of keys to values. We choose natural numbers
-for our keys as a convenient identifier--we just need to tell them apart.\<close>
-type_synonym "key" = "nat"
+text \<open>Our database is conceptually modeled as a map of keys to values. We don't demand anything of
+our keys, other than that they exist and have equality.\<close>
+
+typedecl key
+
+text \<open>We're going to define our databases in terms of versions, arguments, and return value types
+which are polymorphic. One option would be to have these as type parameters in... literally every
+single function, but that's going to be exhausting, and it also means we can't use typeclasses,
+because typeclasses can't return things with type variables. Another option is to define a version
+explicitly as, say, a list of nats, but discussions with Galois engineers suggests that this is
+counterproductive: we're forcing the solver to pull in a whole bunch of theorems that it doesn't
+actually need, which makes automated proof search harder.
+
+So... another option to try here might be to do this with *locales*, which... I honestly don't
+understand even 10% of. I *think* they allow us to prove a bunch of properties about structures
+involving type parameters without actually defining what those type parameters *are*, and... also
+making those structures sort of... an implicitly available argument to every function we define? But
+that leaves other questions, like... what if I have two arguments? Are locales meant to be more...
+about universal structures? The Digraph library doesn't think so, but I don't understand half of
+what it's doing. :(\<close>
 
 text \<open>It'd be nice to define our versions, arguments, and return values as polymorphic type
 parameters. However, owing to what I think is a limitation in Isabelle's typeclass system, we can't.

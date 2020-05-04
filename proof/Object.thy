@@ -209,7 +209,8 @@ definition smol_register :: "nat \<Rightarrow> key \<Rightarrow> object" where
                                   (0 # [])
                                   (\<lambda>ver arg. ((arg # []), []))
                                   k)"
-value "smol_register 2 2"
+
+value "smol_register 2 k"
 
 text \<open>It's easier to prove properties of infinitely defined registers.\<close>
 
@@ -221,7 +222,7 @@ definition register :: "key \<Rightarrow> object" where
 
 text \<open>We show that all finite registers can only reach values up to [n].\<close>
 
-lemma "(all_versions (smol_register n (0::nat))) = (set (map (\<lambda>x.[x]) (nats_up_to n)))"
+lemma "(all_versions (smol_register n k)) = (set (map (\<lambda>x.[x]) (nats_up_to n)))"
   apply (simp add:smol_register_def mapcat_def tack_on_nats_up_to_def
         nats_up_to_def smol_object_def)
   done
@@ -317,5 +318,34 @@ proof-
 lemma register_not_traceable: "~(is_traceable (register k))"
   oops
 *)
+
+subsection \<open>Next, we define a construct for a list-append object. The initial value is the empty
+list, and writes append an entry to the end of the list.\<close>
+
+definition list_append :: "key \<Rightarrow> object" where
+"list_append k \<equiv> (Object k [] \<lparr>verts = {l::(nat list). True},
+                               arcs  = {(AWrite k v a (v @ [a]) []) | v a. a \<in> Nats },
+                               tail  = apost_version,
+                               head  = apre_version\<rparr>)"
+
+text \<open>We wish to show that list append is traceable. We can show that a singleton list has a trace
+if we feed that trace to the checker...\<close>
+
+lemma list_append_singleton_list_has_trace_definite:
+  "is_trace_of (list_append k) [(AWrite k [] x1 [x1] [])] [x1]"
+  apply (simp add:is_trace_of_def list_append_def)
+  done
+
+text \<open>But... weirdly I can't figure out how to convince Isabelle that a trace DOES exist, even 
+though we just showed one exists. God, I wish I knew how to do proof by construction in Isabelle.\<close>
+
+lemma list_append_singleton_list_has_trace: "\<exists>p. is_trace_of (list_append k) p [x1]"
+  apply (simp add:is_trace_of_def list_append_def)
+  oops
+
+text \<open>And this is... right out.\<close>
+
+lemma list_append_traceable: "is_traceable (list_append k)"
+  oops
 
 end
