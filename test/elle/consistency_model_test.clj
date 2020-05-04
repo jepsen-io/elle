@@ -66,7 +66,13 @@
                :cyclic-versions
                :duplicate-elements
                :incompatible-order}
-             (as [:read-committed]))))))
+             (as [:read-committed]))))
+
+  (testing "unknown anomaly"
+    (is (thrown-with-msg? IllegalArgumentException #"Unknown consistency model"
+                          (anomalies-prohibited-by
+                            [:stricct-snappshot-isolation]))))))
+
 
 (let [as #(into (sorted-set)
                 (map friendly-model-name (anomalies->impossible-models %)))]

@@ -502,8 +502,8 @@
    :anomalies     {:g1c [...] ...}
    :impossible-models #{:snapshot-isolation ...}}"
   [opts anomalies]
-  ; (prn :anomalies anomalies)
-  ; (prn :reportable-anomalies (reportable-anomaly-types opts))
+  ;(info :anomalies anomalies)
+  ;(info :reportable-anomaly-types (reportable-anomaly-types opts))
   (let [bad         (select-keys anomalies (prohibited-anomaly-types opts))
         reportable  (select-keys anomalies (reportable-anomaly-types opts))]
     (if (empty? reportable)

@@ -35,6 +35,8 @@
   (:require [elle [graph :as g]
                   [util :as util :refer [map-vals]]]
             [clojure [set :as set]]
+            [clojure.tools.logging :refer [info warn]]
+            [dom-top.core :refer [assert+]]
             [rhizome [dot :refer [graph->dot]]
                       [viz :as rv]])
   (:import (java.util.function Function)
@@ -239,17 +241,34 @@
        (g/map->bdigraph)
        (g/map-vertices canonical-model-name)))
 
+(def all-models
+  "A set of all models."
+  (into (sorted-set)
+        (concat (g/vertices models)
+                (keys canonical-model-names)
+                (vals canonical-model-names))))
+
+(defn validate-models
+  "Takes a collection of models and returns it, unless some of those models
+  aren't known, in which case, throws an IllegalArgumentException."
+  [ms]
+  (let [unknown (remove all-models ms)]
+    (assert+ (empty? unknown)
+             (str "Unknown consistency model " (pr-str unknown)
+                  "; known models are:\n" all-models))
+    ms))
+
 (defn all-implied-models
   "Takes a set of models, and expands it, using `models`, to a set of all
   models which are implied by any of those models."
   [ms]
-  (g/bfs (partial g/out models) ms))
+  (g/bfs (partial g/out models) (validate-models ms)))
 
 (defn all-impossible-models
   "Takes a set of models which are impossible, and expands it, using `models`,
   to a set of all models which are also impossible."
   [impossible]
-  (g/bfs (partial g/in models) impossible))
+  (g/bfs (partial g/in models) (validate-models impossible)))
 
 (defn most-models
   "Given a set of models, and a direction function (g/in or g/out), gives a
