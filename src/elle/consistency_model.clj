@@ -25,6 +25,8 @@
 
   - Zuikeviciute, Pedone, 'Correctness Criteria for Database Replication' (https://www.researchgate.net/profile/Fernando_Pedone/publication/225706071_Correctness_Criteria_for_Database_Replication_Theoretical_and_Practical_Aspects/links/00b7d53274a4c89278000000/Correctness-Criteria-for-Database-Replication-Theoretical-and-Practical-Aspects.pdf)
 
+  - Liu, Ölveczky, et al, 'ROLA: A New Distributed Transaction Protocol and Its Formal Analysis'
+
   ## Choices
 
   -  When we say 'serializability', we follow Bernstein et al in meaning
@@ -200,6 +202,7 @@
         :read-committed         [:read-uncommitted]           ; SQL
         :repeatable-read        [:cursor-stability            ; Adya
                                  :monotonic-atomic-view]      ; Bailis
+        :ROLA                   [:read-atomic]                ; ROLA
         :serializable           [:repeatable-read             ; SQL
                                  :snapshot-isolation          ; Bailis, Cerone
                                  :view-serializable]          ; Bernstein
@@ -346,6 +349,9 @@
         :read-atomic               [:internal          ; Cerone (incomplete)
                                     :G1a]              ; Cerone (incomplete)
         :repeatable-read           [:G1 :G2-item]      ; Adya
+        ; TODO: we don't have any way to detect lost update directly right now,
+        ; so this does nothing.
+        :ROLA                      [:lost-update]      ; ROLA
         :strict-serializable       [:G1                ; Adya
                                     :G1c-realtime      ; Adya
                                     :G2-realtime]      ; Adya
