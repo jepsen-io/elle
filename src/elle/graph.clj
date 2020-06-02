@@ -210,7 +210,6 @@
     (recur (unlink g (first xs) y) (next xs) y)
     g))
 
-
 (defn keep-edge-values
   "Transforms a graph by applying a function (f edge-value) to each edge in the
   graph. Where the function returns `nil`, removes that edge altogether."
@@ -531,7 +530,6 @@
   remaining graph, which is used for later steps."
   [^IGraph initial-graph ^IGraph remaining-graph scc]
   (let [scc   (->bset scc)
-        ig    (.select initial-graph scc)
         rg    (.select remaining-graph scc)
         ; Think about the structure of these two graphs
         ;
@@ -557,10 +555,12 @@
         ; cycle. We therefore know that the first two vertices must be elements
         ; of both I *and* R. To encode this, we restrict I to only vertices
         ; present in R.
-        ig (.select initial-graph (.vertices rg))]
+        ig  (.select initial-graph (.vertices rg))]
+    ;(info :start-search)
     ; Start with a vertex in the initial graph
     (->> (.vertices ig)
          (keep (fn [start]
+                 ;(info :vertex start)
                  ; Expand this vertex out one step using the initial graph
                  (->> (grow-paths ig [[start]])
                       ; Then expand those paths into surrounding shells

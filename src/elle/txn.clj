@@ -10,10 +10,13 @@
                   [util :as util]
                   [viz :as viz]]
             [jepsen.txn :as txn :refer [reduce-mops]]
-						[knossos.op :as op])
+						[knossos.op :as op]
+            [unilog.config :refer [start-logging!]])
   (:import (io.lacuna.bifurcan LinearMap
                                Map)))
 
+
+(start-logging! {:console "%p [%d] %t - %c %m%n"})
 
 (defn op-mops
   "A lazy sequence of all [op mop] pairs from a history."
@@ -308,9 +311,33 @@
 
 (defn filtered-graphs
   "Takes a graph g. Returns a function that takes a set of relationships, and
-  yields g filtered to just those relationships. Memoized."
+  yields g filtered to just those relationships. Memoized.
+
+  This means keeping around a fair bit of redundant materialized
+  information; I can forsee this causing memory pressure later. It might be
+  worthwhile to materialize just one or two of these graphs, do a search for a
+  particular kind of cycle across ALL SCCs, then move on to the next graph,
+  etc, so we can keep only the graphs we need in memory. On the other hand,
+  that might waste more time doing SCC-specific precomputation. Not sure."
   [graph]
   (memoize (fn [rels] (g/filter-relationships rels graph))))
+
+(defn warm-filtered-graphs!
+  "I thought memoizing this and making it lazy was a good idea, and it might be
+  later, but it also pushes a BIG chunk of work into initial cycle search---the
+  timeout fires and kills a whole bunch of searches because the graph isn't
+  computed yet, and that's silly. So instead, we explicitly precompute these.
+
+  Returns fg, but as a side effect, with all the relevant filtered graphs for
+  our search precomputed."
+  [fg]
+  (->> (vals cycle-anomaly-specs)
+       (mapcat (juxt :rels :first-rels :rest-rels))
+       (remove nil?)
+       set
+       (pmap fg)
+       dorun)
+  fg)
 
 (def cycle-search-timeout
   "How long, in milliseconds, to look for a certain cycle in any given SCC."
@@ -325,6 +352,8 @@
       ; If we time out...
       (do (info "Timing out search for" @current-type "in SCC of" (count scc)
                 "transactions")
+          ;(info :scc
+          ;      (with-out-str (pprint scc)))
           ; We generate two types of anomalies. First, we want to record that
           ; we failed to find an anomaly, which helps us signal to the user that
           ; we haven't fully checked this SCC.
@@ -373,8 +402,10 @@
       ; check for special-case anomalies before general ones, and only check for
       ; the general ones if we can't find special-case ones. e.g. if we find a
       ; g-single, there's no need to look for g-nonadjacent.
+      ;(info "Checking scc of size" (count scc))
       (->> (for [[type spec] cycle-anomaly-specs]
              (do
+               ;(info "Checking for" type)
                ; For timeout reporting, we keep track of what type of anomaly
                ; we're looking for.
                (reset! current-type type)
@@ -384,9 +415,11 @@
                      ; _      (prn :spec type spec)
                      ; Restrict the graph to certain relationships, if necessary.
                      g     (if-let [rels (:rels spec)]
-                             (fg rels)
+                             (do ;(info "getting restricted graph")
+                                 (fg rels))
                              g)
                      ; Now, we have three cycle-finding strategies...
+                     ;_     (info "Finding cycle")
                      cycle (cond (:with spec)
                                  (g/find-cycle-with (:with spec)
                                                     (:filter-path-state spec)
@@ -400,10 +433,13 @@
                                    (fg (:first-rels spec))
                                    (fg (:rest-rels spec))
                                    scc))]
+                 ;_ (info "Done with cycle search")
                  (when cycle
+                   ; (info "Explaining cycle")
                    ; Explain the cycle
                    (let [ex (elle/explain-cycle cycle-explainer pair-explainer
                                                 cycle)]
+                     ; (info "Filtering explanation")
                      ;(prn :explanation ex)
                      ; Make sure it passes the filter, if we have one.
                      (if-let [p (:filter-ex spec)]
@@ -432,7 +468,8 @@
   :G0-realtime        G0, but with realtime edges
   ..."
   [graph pair-explainer sccs]
-  (let [fg (filtered-graphs graph)]
+  (let [fg (-> (filtered-graphs graph)
+               warm-filtered-graphs!)]
     (->> sccs
          (mapcat (partial cycle-cases-in-scc graph fg pair-explainer))
          ; And group them by type

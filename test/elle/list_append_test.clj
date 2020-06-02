@@ -811,3 +811,8 @@
     (is (= [1 2 3] (merge-orders [1 2 2 3] [])))
     (is (= [1 2 3 5] (merge-orders [1 2 3 2]
                                    [1 2 3 2 5])))))
+
+(deftest ^:perf scc-search-perf-test
+  ; A case where even small SCCs caused the cycle search to time out
+  (cf {:consistency-models [:strong-snapshot-isolation]}
+      "histories/small-slow-scc.edn"))

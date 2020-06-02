@@ -104,6 +104,7 @@
                :monotonic-atomic-view
                :snapshot-isolation
                :repeatable-read
+               :ROLA
                :serializable
                :strict-serializable
                :update-serializable
@@ -127,6 +128,7 @@
                :parallel-snapshot-isolation
                :prefix
                :read-atomic
+               :ROLA
                :serializable
                :snapshot-isolation
                :strict-serializable
@@ -172,6 +174,7 @@
             :also-not #{:causal-cerone
                         :parallel-snapshot-isolation
                         :prefix
+                        :ROLA
                         :serializable
                         :snapshot-isolation
                         :strict-serializable
@@ -182,7 +185,7 @@
 
   (testing "G1a"
     (is (= {:not      #{:read-atomic :read-committed}
-            :also-not #{:causal-cerone :consistent-view :cursor-stability
+            :also-not #{:ROLA :causal-cerone :consistent-view :cursor-stability
                         :forward-consistent-view :monotonic-atomic-view
                         :monotonic-snapshot-read :monotonic-view
                         :parallel-snapshot-isolation :prefix :repeatable-read
@@ -208,7 +211,7 @@
 
   (testing "internal and G2"
     (is (= {:not #{:read-atomic}
-            :also-not #{:causal-cerone
+            :also-not #{:ROLA :causal-cerone
                         :parallel-snapshot-isolation
                         :prefix
                         :serializable
