@@ -1,47 +1,45 @@
 digraph proof {
   // concentrate=true
 
+
   subgraph cluster0 {
     label = "Versions"
-    node [shape="diamond"]
-    v0 [label="[]"]
-    v1 [label="[1]",style="filled"]
-    v2 [label="[2]"]
-    v3 [label="[3]"]
-    v1 [label="[1,2]"]
-    v2 [label="[2,1]"]
-    v3 [label="[1,3]"]
+    node [shape="oval"]
+    v    [label="[]"]
+    v1   [label="[1]",style="dashed"]
+    v12  [label="[1,2]"]
+    v123 [label="[1,2,3]"]
 
     // Version trace
-    edge [label="tr",color="royalblue2",fontcolor="royalblue2"]
-    v3 -> v2
-    v2 -> v1
-    v1 -> v0
+    edge [label="tr",color="cyan4",fontcolor="cyan4"]
+    v123 -> v12
+    v12  -> v1
+    v1   -> v
 
     // Version order
-    edge [label="≪",color="palegreen4",fontcolor="palegreen4"]
-    v3 -> v2
-    v2 -> v0
+    edge [label="≪",color="chartreuse4",fontcolor="chartreuse4"]
+    v123 -> v12
+    v12  -> v
 
     // Inferred version order
-    edge [label="<",color="mediumturquoise",fontcolor="mediumturquoise"]
-    v2 -> v0
+    edge [label="<",color="darkgreen",fontcolor="darkgreen"]
+    v12 -> v
   }
 
   subgraph cluster1 {
     label = "Observed Transactions"
     node [shape=record,height="0.3"]
-    ot1 [label="<op0> r0|<op1> r2|<op2> c"]
-    ot2 [label="<op0> w1|<op1> w2"]
-    ot3 [label="<op0> r_|<op1> w3"]
+    ot1 [label="<op0> r([])|<op1> r([1,2])|<op2> c"]
+    ot2 [label="<op0> w(_, 1)|<op1> w(_, 2)"]
+    ot3 [label="<op0> r(_)|<op1> w(_, 3)"]
   }
 
   subgraph cluster2 {
-    label = "Ayda Transactions"
+    label = "Adya Transactions"
     node [shape=record,height="0.3"]
-    at1 [label="<op0> r0|<op1> r2|<op2> c"]
-    at2 [label="<op0> w1|<op1> w2|<op2> c"]
-    at3 [label="<op0> r0|<op1> w3|<op2> c"]
+    at1 [label="<op0> r([])|<op1>r([1,2])|<op2> c"]
+    at2 [label="<op0> w([], 1)|<op1> w([1], 2)|<op2> c"]
+    at3 [label="<op0> r []|<op1> w([1,2], 3)|<op2> c"]
   }
 
   // Actual dependencies
@@ -50,6 +48,7 @@ digraph proof {
   at2:op1 -> at1:op1 [label="wr"]
   at2:op1 -> at3:op1 [label="ww"]
   at3:op0 -> at2:op1 [label="rw"]
+  at1:op1 -> at3:op1 [label="rw"]
 
   // Inferred dependencies
   ot1:op0 -> ot2:op1 [label="rw"]
@@ -57,26 +56,33 @@ digraph proof {
 
   // Reads
   edge [label="read",dir="both",color="maroon3",fontcolor="maroon3"]
-  v0 -> ot1:op0
-  v2 -> ot1:op1
+  v   -> ot1:op0
+  v12 -> ot1:op1
 
   // Recoverability
   edge [dir="forward",label="rec",color="orangered2",fontcolor="orangered2"]
   v1 -> ot2:op0
-  v2 -> ot2:op1
+  v12 -> ot2:op1
 
   // Compatibility
-  edge [dir="forward",label="R",dir="both",color="slategray",fontcolor="slategray"]
+  edge [label="R",dir="both",color="slategray",fontcolor="slategray"]
   ot1 -> at1
   ot2 -> at2
   ot3 -> at3
 
   // Adya version/txn relationshiops
-  //edge [dir="none",color="thistle3",style="dashed",label=""]
-  //at1:op0 -> v0
-  //at1:op1 -> v2
+  edge [dir="none",color="thistle3",style="dashed",label=""]
+  //at1:op0 -> v
+  //at1:op1 -> v12
   //at2:op0 -> v1
-  //at2:op1 -> v2
-  //at3:op0 -> v0
-  //at3:op1 -> v3
+  //at2:op1 -> v12
+  //at3:op0 -> v
+  //at3:op1 -> v123
+
+  // Purely for appearances
+  ot2 -> ot3 [style=invis]
+  at2 -> ot2 [style=invis]
+  at3 -> ot3 [style=invis]
+  // I'd love to put adya and observed transactions at the same rank but this
+  // horribly breaks, complaining about lost edges. Sigh.
 }
