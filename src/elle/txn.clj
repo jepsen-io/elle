@@ -582,7 +582,7 @@
   ([opts]
    (let [key-dist  (:key-dist  opts :exponential)
          key-count (:key-count opts (case key-dist
-                                      :exponential 3
+                                      :exponential 10
                                       :uniform     3))]
      (wr-txns (assoc opts
                      :key-dist  key-dist
