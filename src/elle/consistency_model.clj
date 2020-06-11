@@ -27,6 +27,8 @@
 
   - Liu, Ölveczky, et al, 'ROLA: A New Distributed Transaction Protocol and Its Formal Analysis'
 
+  - Cahill, 'Serializable Isolation for Snapshot Databases' (http://hdl.handle.net/2123/5353)
+
   ## Choices
 
   -  When we say 'serializability', we follow Bernstein et al in meaning
@@ -344,7 +346,14 @@
                                     ; SI. I feel like this is *very* close to
                                     ; sugesting G-nonadjacent is forbidden by
                                     ; SI, but I'm not quite sure.
-                                    ; :G-nonadjacent
+                                    ;
+                                    ; Cahill jumps right in and claims that SI
+                                    ; prohibits G-nonadjacent, but I'm not
+                                    ; entirely sure whether he means
+                                    ; *generalized* SI, or some variant like
+                                    ; strong-session SI. Leaving this commented
+                                    ; out for now.
+                                    ;:G-nonadjacent
                                     ]
         :read-atomic               [:internal          ; Cerone (incomplete)
                                     :G1a]              ; Cerone (incomplete)
