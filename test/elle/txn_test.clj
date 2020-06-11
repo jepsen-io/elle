@@ -1,5 +1,6 @@
 (ns elle.txn-test
-  (:require [clojure.test :refer :all]
+  (:require [clojure [pprint :refer [pprint]]
+                     [test :refer :all]]
             [elle.txn :refer :all]))
 
 (defn valid-mop?
@@ -11,7 +12,7 @@
        (is (integer? v))))
 
 (deftest wr-txns-test
-  (let [txns (take 100 (wr-txns {}))
+  (let [txns (take 100 (wr-txns {:key-count 3}))
         mops (mapcat identity txns)
         ks   (map second mops)
         key-dist (frequencies ks)]
