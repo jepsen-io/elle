@@ -1,4 +1,5 @@
 (ns elle.graph-test
+  (:refer-clojure :exclude [remove])
   (:require [elle.graph :refer :all]
             [jepsen.txn :as txn]
             [knossos [history :as history]

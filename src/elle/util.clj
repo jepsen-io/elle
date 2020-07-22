@@ -36,3 +36,19 @@
   [f m]
   (map-kv (fn [[k v]] [k (f v)]) m))
 
+(defn map-compose
+  "Given a map of a->b and b->c, returns a map of a->c."
+  [ab bc]
+  (map-vals bc ab))
+
+(defn keyed-map-compose
+  "Sort of a weird function. You've got two maps: a->b, and b->c. You want the
+  composition of these maps: a->c. Now, lift that to maps of *keys* to maps of
+  as to bs: k->a->b and k->b->c, returning a map of k->a->c."
+  [kab kbc]
+  (reduce (fn [kac [k ab]]
+            (assoc kac k
+                   (when-let [bc (get kbc k)]
+                     (map-compose ab bc))))
+          {}
+          kab))

@@ -178,7 +178,7 @@
              (g rxay1 ryax1 rx1ry1)))
       (is (= {:valid? false
               :scc-count 1
-              :cycles ["Let:\n  T1 = {:type :ok, :value [[:r :x nil] [:append :y 1]]}\n  T2 = {:type :ok, :value [[:r :y nil] [:append :x 1]]}\n\nThen:\n  - T1 < T2, because T1 observed the initial (nil) state of :x, which T2 created by appending 1.\n  - However, T2 < T1, because T2 observed the initial (nil) state of :y, which T1 created by appending 1: a contradiction!"]}
+              :cycles ["Let:\n  T1 = {:type :ok, :value [[:r :y nil] [:append :x 1]]}\n  T2 = {:type :ok, :value [[:r :x nil] [:append :y 1]]}\n\nThen:\n  - T1 < T2, because T1 observed the initial (nil) state of :y, which T2 created by appending 1.\n  - However, T2 < T1, because T2 observed the initial (nil) state of :x, which T1 created by appending 1: a contradiction!"]}
              (elle/check {:analyzer graph} [rxay1 ryax1 rx1ry1]))))
 
     ; We can't infer anything about an info's nil reads: an :ok read of nil

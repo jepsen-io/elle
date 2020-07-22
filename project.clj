@@ -9,12 +9,14 @@
                   :exclusions [org.slf4j/slf4j-log4j12]]
                  [org.clojure/tools.logging "0.6.0"]
                  [rhizome "0.2.9"]
-                 [jepsen.txn "0.1.2"]
-                 [io.lacuna/bifurcan "0.1.0"]]
+                 [jepsen.txn "0.1.3-SNAPSHOT"]
+                 [io.lacuna/bifurcan "0.2.0-alpha4"]]
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.10.1"]
-                                  [spootnik/unilog "0.7.24"]]}}
+                                  [spootnik/unilog "0.7.24"]
+                                  [org.clojure/test.check "1.0.0"]]}}
   :jvm-opts ["-server"
-             "-XX:+PrintGC"]
+             ;"-XX:+PrintGC"
+             ]
   :repl-options {:init-ns elle.core}
   :test-selectors {:default (fn [m] (not (or (:perf m)
                                              (:interactive m)
