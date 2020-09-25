@@ -69,6 +69,8 @@
 ; are Bifurcan DirectedGraphs. Explainers have a protocol, because we're going
 ; to pack some cached state into them.
 
+(set! *warn-on-reflection* true)
+
 (defprotocol Anomalies
   "There are several points in an analysis where we want to construct some
   intermediate data, like a version graph, for later. However, it might be that

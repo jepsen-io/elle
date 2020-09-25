@@ -3,6 +3,8 @@
   including identifying keys, known-committed, and known-aborted operations."
   (:require [knossos [op :as op]]))
 
+(set! *warn-on-reflection* true)
+
 (defn known-committed
   "Returns a sequence of operations which are known to be
   committed."

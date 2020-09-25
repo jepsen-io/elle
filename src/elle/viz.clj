@@ -7,6 +7,8 @@
             [rhizome [dot :as dot]
                      [viz :as rv]]))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private escapable-characters "\\|{}\"")
 
 (defn escape-string

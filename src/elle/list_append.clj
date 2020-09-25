@@ -25,6 +25,8 @@
                                Set
                                SortedMap)))
 
+(set! *warn-on-reflection* true)
+
 (defn verify-mop-types
   "Takes a history where operation values are transactions. Verifies that the
   history contains only reads [:r k v] and appends [:append k v]. Returns nil
@@ -564,8 +566,8 @@
                           :key      k
                           :value    prev-v
                           :value'   v
-                          :a-mop-index (.indexOf (:value a) [:append k prev-v])
-                          :b-mop-index (.indexOf (:value b) b-mop)}))))))
+                          :a-mop-index (.indexOf ^clojure.lang.PersistentVector (:value a) [:append k prev-v])
+                          :b-mop-index (.indexOf ^clojure.lang.PersistentVector (:value b) b-mop)}))))))
          first))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
@@ -603,8 +605,8 @@
                        {:type  :wr
                         :key   k
                         :value (peek v)
-                        :a-mop-index (.indexOf (:value a) [:append k (peek v)])
-                        :b-mop-index (.indexOf (:value b) mop)})))))
+                        :a-mop-index (.indexOf ^clojure.lang.PersistentVector (:value a) [:append k (peek v)])
+                        :b-mop-index (.indexOf ^clojure.lang.PersistentVector (:value b) mop)})))))
          first))
 
   (render-explanation [_ {:keys [key value]} a-name b-name]

@@ -4,6 +4,8 @@
             [clojure.tools.logging :refer [info warn]])
   (:import (java.util.concurrent ExecutionException)))
 
+(set! *warn-on-reflection* true)
+
 (defn nanos->secs [nanos] (/ nanos 1e9))
 
 (defn maybe-interrupt

@@ -16,6 +16,7 @@
   (:import (io.lacuna.bifurcan LinearMap
                                Map)))
 
+(set! *warn-on-reflection* true)
 
 (start-logging! {:console "%p [%d] %t - %c %m%n"})
 

@@ -13,6 +13,8 @@
             [knossos.op :as op])
   (:import (io.lacuna.bifurcan IntSet)))
 
+(set! *warn-on-reflection* true)
+
 ; When deriving a subset graph, we're going to do a bunch of subset
 ; comparisons, hashing, and equality checking. To speed this up, we map raw
 ; Clojure sets into compact, optimized data structures which support fast
