@@ -1,5 +1,5 @@
 (ns elle.rw-register
-  "A test which looks for cycles in write/read transactionss over registers.
+  "A test which looks for cycles in write/read transactions over registers.
   Writes are assumed to be unique, but this is the only constraint.
 
   Operations are of two forms:
@@ -460,7 +460,10 @@
     (reduce (fn [cases [k version-graph]]
               (let [sccs (g/strongly-connected-components version-graph)]
                 (->> sccs
-                     (sort-by (partial reduce min))
+                     (sort-by (partial reduce (fn option-compare [a b]
+                                                (cond (nil? a) b
+                                                      (nil? b) a
+                                                      true     (min a b)))))
                      (map (fn [scc]
                             {:key k
                              :scc scc}))

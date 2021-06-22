@@ -124,10 +124,17 @@
     (apply [_ a b]
       (set/union a b))))
 
-(defn ^IEdge edge
+(defn edge
   "Returns the edge between two vertices."
   [^IGraph g a b]
   (.edge g a b))
+
+(defn maybe-edge
+  "Returns the edge between two vertices, or nil if one does not exist."
+  [^IGraph g a b]
+  (let [o (out g a)]
+    (when (and o (.contains o b))
+      (.edge g a b))))
 
 (defn edges
   "A lazy seq of all edges."
@@ -694,3 +701,43 @@
           ; Keep exploring
           (let [v (first (c/remove seen vs))]
             (recur (conj path v) (assoc seen v (count path)))))))))
+
+(defn total-order?
+  "Returns truthy iff this graph is a total order: every vertex has at most one
+  outbound edge and one inbound edge, exactly one vertex has no inbound edge,
+  and exactly one different vertex has no outbound edge.
+
+  If this graph is a total order, returns {:min min, :max max}, where min and
+  max are the vertices with no inbound and no outbound edges, respectively."
+  [g]
+  (let [res (reduce (fn [[min max :as bounds] v]
+                      (let [in-count (.size (in g v))
+                            out-count (.size (out g v))]
+                        (cond ; Normal vertex
+                              (and (= 1 in-count) (= 1 out-count))
+                              bounds
+
+                              ; Too many edges!
+                              (or (< 1 in-count) (< 1 out-count))
+                              (reduced false)
+
+                              ; Too few edges!
+                              (and (= 0 in-count) (= 0 out-count))
+                              (reduced false)
+
+                              ; This node is a minimum
+                              (= 0 in-count)
+                              (if min
+                                (reduced false) ; Duplicate minimum!
+                                [v max])        ; We found our minimum
+
+                              (= 0 out-count)
+                              (if max
+                                (reduced false)
+                                [min v]))))
+                    [nil nil]
+                    (vertices g))]
+    (if res
+      {:min (first res)
+       :max (second res)}
+      false)))

@@ -50,12 +50,13 @@
   and [op mop] is the operation, and micro-op in that operation, which wrote
   that argument."
   [write? history]
-  (reduce-mops (fn [m op [f k v :as mop]]
-                 (if (write? f)
-                   (assoc-in m [k v] [op mop])
-                   m))
-               {}
-               history))
+  (->> history
+       (remove op/invoke?)
+       (reduce-mops (fn [m op [f k v :as mop]]
+                      (if (write? f)
+                        (assoc-in m [k v] [op mop])
+                        m))
+                    {})))
 
 (defn ReadRecovery
   "Takes a history and returns a ReadRecovery object mapping read mops to their

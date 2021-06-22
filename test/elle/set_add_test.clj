@@ -6,8 +6,52 @@
             [clojure.test.check [clojure-test :refer [defspec]]
                                 [generators :as gen]
                                 [properties :as prop]]
-            [elle [graph :as g]
-                  [set-add :refer :all]]))
+            [elle [explanation :as expl]
+                  [graph :as g]
+                  [recovery :as rec]
+                  [set-add :refer :all]
+                  [txn-graph :as tg]
+                  [version-graph :as vg]]
+            [knossos.history :as history]))
+
+(defn op
+  "Generates an operation from a string language like so:
+
+  ax1       append 1 to x
+  ry12      read y = [1 2]
+  ax1ax2    append 1 to x, append 2 to x"
+  ([string]
+  (let [[txn mop] (reduce (fn [[txn [f k v :as mop]] c]
+                            (case c
+                              \a [(conj txn mop) [:add]]
+                              \r [(conj txn mop) [:r]]
+                              \x [txn (conj mop :x)]
+                              \y [txn (conj mop :y)]
+                              \z [txn (conj mop :z)]
+                              (let [e (Long/parseLong (str c))]
+                                [txn [f k (case f
+                                            :add e
+                                            :r   (conj (or v #{}) e))]])))
+                          [[] nil]
+                          string)
+        txn (-> txn
+                (subvec 1)
+                (conj mop))]
+    {:type :ok, :value txn}))
+  ([process type string]
+   (assoc (op string) :process process :type type)))
+
+(defn pair
+  "Takes a completed op and returns an [invocation, completion] pair."
+  [completion]
+  [(-> completion
+       (assoc :type :invoke)
+       (update :value (partial map (fn [[f k v :as mop]]
+                                        (if (= :r f)
+                                          [f k nil]
+                                          mop)))))
+   completion])
+
 
 (defn naive-version-graph-for-key
   "A simple implementation which finds the version graph for a key by
@@ -128,5 +172,68 @@
                     (prn))
                   tc?)))
 
+(deftest empty-test
+  (let [r (check {} [])]
+    (is (= [] (:history r)))
+    (is (= (g/digraph) (tg/graph (:txn-graph r))))))
 
+(deftest single-write-read-test
+  (let [[t1 t1'] (pair (op "ax1"))
+        [t2 t2'] (pair (op "rx1"))
+        h (history/index [t1 t1' t2 t2'])
+        [t1 t1' t2 t2'] h
+        r (check {} h)
+        rec (:recovery r)
+        vg (:version-graph r)
+        tg (:txn-graph r)]
+    (pprint vg)
+    ; We can show that ax1 produced the set #{1}
+    (is (= #{1} (rec/write->version rec (first (:value t1')))))
+    ; And that #{1} was produced by ax1
+    (is (= [t1' (first (:value t1'))] (rec/version->write rec :x #{1})))
 
+    ; We know #{1} came after #{}
+    (is (= {#{} #{#{1}}
+            #{1} #{}}
+           (g/->clj (vg/graph vg :x))))
+
+    ; And we can infer a write-read dependency here
+    (is (= {t1' #{t2'}
+            t2' #{}}
+           (g/->clj (tg/graph tg))))))
+
+(deftest ambiguous-writes-both-read-test
+  (let [[t1 t1'] (pair (op "ax1"))
+        [t2 t2'] (pair (op "ax2"))
+        [t3 t3'] (pair (op "rx12"))
+        h (history/index [t1 t1' t2 t2' t3 t3'])
+        [t1 t1' t2 t2' t3 t3'] h
+        r (check {} h)
+        rec (:recovery r)]
+    ; We can't show what write generated {1 2}, or whether {1} or {2} even
+    ; existed.
+    (is (nil? (rec/version->write rec :x #{1})))
+    (is (nil? (rec/version->write rec :x #{2})))
+    (is (nil? (rec/version->write rec :x #{1 2})))
+    (is (nil? (rec/write->version rec (first (:value t1')))))
+    (is (nil? (rec/write->version rec (first (:value t2')))))
+
+    ; But we CAN infer version relationships here. We know #{} (indirectly)
+    ; precedes #{1 2}, because #{} is the initial state.
+    (is (= {#{} #{#{1 2}}
+            #{1 2} #{}}
+           (g/->clj (vg/graph (:version-graph r) :x))))
+
+    ; We can't actually infer any relationships from this graph *directly*,
+    ; because we don't have recoverability for the writes. However, our
+    ; indirect wr and rw inference CAN identify these edges, which gives us the
+    ; following > shaped graph.
+    (is (= {t1' #{t3'}
+            t2' #{t3'}
+            t3' #{}}
+           (g/->clj (tg/graph (:txn-graph r)))))
+
+    (is (= {:type :indirect-wr
+            :write [:add :x 1]
+            :read  [:r :x #{1 2}]}
+           (expl/->data (tg/explain (:txn-graph r) t1' t3'))))))

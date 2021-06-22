@@ -4,12 +4,16 @@
   structures or text.")
 
 (defprotocol Explanation
-  (->data [ex] "Converts the explanation to a data structure.")
-  (->text [ex] "Converts the explanation to plain text."))
+  (->data [ex]
+          "Converts the explanation to a data structure.")
+  (->text [ex context]
+          "Converts the explanation to plain text. An optional context map
+          provides extra information used in rendering--for instance, short
+          names for transactions."))
 
 (def trivial
   "A trivial explanation which doesn't explain anything. Helpful for stubbing
   out methods."
   (reify Explanation
-    (->data [ex] :just-cuz)
-    (->text [ex] "just cuz")))
+    (->data [ex]      :just-cuz)
+    (->text [ex ctx]  "just cuz")))
