@@ -298,27 +298,6 @@
                         :duplicates dups})))))
        seq))
 
-(defn op-mismatch
-  "Given a history, find mismatches of mop invocations to its completion.
-  They should match exactly except for [:r k nil], which can match any
-  [:r k v]."
-  [history]
-  (->> history
-       pair-index
-       ; Only take invoke/complete pairs
-       (filter (fn [[invoke complete]] (= (:type invoke) :invoke)))
-       ; map to vector of mops pairs: (([pair pair]), (pairs), ...)
-       (map (fn [[invoke complete]] (map vector (:value invoke) (:value complete))))
-       ; -> [([pair pair]), (pairs), ...]
-       (into [])
-       (map (partial filter (fn [[invoke complete]]
-                              (not
-                                (if (and (= (first invoke) :r) (= (last invoke) nil))
-                                  (and (= (first complete) :r) (= (second invoke) (second complete)))
-                                  (= invoke complete))))))
-       (keep seq)
-       seq))
-
 (defn merge-orders
   "Takes two potentially incompatible read orders (sequences of elements), and
   computes a total order which is consistent with both of them: where there are
@@ -779,7 +758,6 @@
    (check {} history))
   ([opts history]
    (let [history      (remove (comp #{:nemesis} :process) history)
-         op-mismatch  (op-mismatch history)
          g1a          (g1a-cases history)
          g1b          (g1b-cases history)
          internal     (internal-cases history)
@@ -800,7 +778,6 @@
 
          ; And merge in our own anomalies
          anomalies (cond-> cycles
-                     op-mismatch    (assoc :op-mismatch op-mismatch)
                      dups           (assoc :duplicate-elements dups)
                      incmp-order    (assoc :incompatible-order incmp-order)
                      internal       (assoc :internal internal)
