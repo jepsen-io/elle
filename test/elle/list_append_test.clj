@@ -197,9 +197,12 @@
     ; infer the version order for that key, even if we never observe it in a
     ; read: it has to go from nil -> [x].
     (testing "single appends without reads"
-      (is (= {rx [ax1] ax1 []} (g rx ax1)))
-      ; But with two appends, we can't infer any more
-      (is (= {} (g rx ax1 ax2))))
+      (is (= {rx [ax1] ax1 []} (g rx ax1))))
+
+    (testing "multiple appends without reads"
+      ; With two appends, we can't infer a precise order, but we still know ax1
+      ; and ax2 both had to come after rx!
+      (is (= {rx [ax1 ax2] ax1 [] ax2 []} (g rx ax1 ax2))))
 
     (testing "duplicate inserts attempts"
       (let [ax1ry  {:index 0, :type :invoke, :value [[:append :x 1] [:r :y nil]]}
@@ -414,6 +417,9 @@
           [t1 t1'] (pair (op "ax1ax2"))
           [t2 t2'] (pair (op "rx1"))
           [t1 t1' t2 t2' :as h] (history/index [t1 t1' t2 t2'])]
+      ; This is not only G1b, since it has an intermediate read, but also
+      ; G-single, since rx1 observes ax1 but does not observe ax2!
+
       ; G0 checker won't catch this
       (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G0]} h)))
       ; G1 will
@@ -425,18 +431,43 @@
                                  :mop     [:r :x [1]]
                                  :element 1}]}}
              (c {:consistency-models nil, :anomalies [:G1]} h)))
-      ; G2 won't: even though the graph covers G1c, we don't do the specific
-      ; G1a/b checks unless asked.
-      (is (= {:valid? true}
-             (c {:consistency-models nil, :anomalies [:G2]} h)))
+      ; G2 catches G-single but won't actually report G1b: even though the
+      ; graph covers G1c, we filter out the G1b anomaly since we weren't asked
+      ; for it. Still report that it's not read-committed, which is... maybe
+      ; questionable. Might change this later?
+      (is (= {:valid? false
+              :not #{:read-committed}
+              :anomaly-types [:G-single]}
+             (-> (c {:consistency-models nil, :anomalies [:G2]} h)
+                 (select-keys [:valid? :not :anomaly-types]))))
       ; But, say, strict-1SR will
       (is (= {:valid? false
-              :anomaly-types  [:G1b]
+              :anomaly-types  [:G-single :G1b]
               :not            #{:read-committed}
               :anomalies {:G1b [{:op      t2'
                                  :writer  t1'
                                  :mop     [:r :x [1]]
-                                 :element 1}]}}
+                                 :element 1}]
+                          :G-single
+                          [{:cycle
+                            [{:type :ok, :value [[:r :x [1]]], :index 3}
+                             {:type :ok,
+                              :value [[:append :x 1] [:append :x 2]],
+                              :index 1}
+                             {:type :ok, :value [[:r :x [1]]], :index 3}],
+                            :steps
+                            [{:type :rw,
+                              :key :x,
+                              :value 1,
+                              :value' 2,
+                              :a-mop-index 0,
+                              :b-mop-index 1}
+                             {:type :wr,
+                              :key :x,
+                              :value 1,
+                              :a-mop-index 0,
+                              :b-mop-index 0}],
+                            :type :G-single}]}}
              (c {:consistency-models [:strict-serializable]} h)))))
 
   (testing "G1c"
@@ -707,6 +738,87 @@
                                            :expected '[... 3]}]}}
              ; There's a G0 here too, but we don't care.
              (c {:consistency-models nil, :anomalies [:internal]} h))))))
+
+(deftest unobserved-write-test
+  ; When we see [:r :x [1 2]], and 1 was written by t1, 2 written by t2, and 3
+  ; written by t3, we can infer a dependency not only from the transaction 1 ->
+  ; 2 but *also* from 2 -> 3: transactions which are not observed in the
+  ; longest read must fall after the transaction which generated that value!
+  ;
+  ; To test this, we perform writes of 1, 2, and 3 to both x and y, but let y
+  ; fail to observe 1.
+  (let [[w1 w1'] (pair (op "ax1ay1"))
+        [w2 w2'] (pair (op "ax2ay2"))
+        [w3 w3'] (pair (op "ax3ay3"))
+        [rx rx'] (pair (op "rx12"))
+        [ry ry'] (pair (op "ry2"))
+        h        (history/index [w1 w2 w3 rx ry w1' w2' w3' rx' ry'])]
+    ; w1 -ww-> w2, by rx12
+    ; w2 -ww-> w1, by ry2
+    ; ry -rw-> w1, since y fails to observe w1
+    ; w3 is a red herring; just there to create multiple final edges
+    (is (= {:valid?         false
+            :anomaly-types  [:G-single :G0]
+            :anomalies
+            ; We know this is G-single because ry -rw-> w1 -ww-> w2 -wr-> ry
+            {:G-single
+             [{:cycle
+               [{:type :ok, :value [[:r :y [2]]], :index 9}
+                {:type :ok,
+                 :value [[:append :x 1] [:append :y 1]],
+                 :index 5}
+                {:type :ok,
+                 :value [[:append :x 2] [:append :y 2]],
+                 :index 6}
+                {:type :ok, :value [[:r :y [2]]], :index 9}],
+               :steps
+               [{:type :rw,
+                 :key :y,
+                 :value 2,
+                 :value' 1,
+                 :a-mop-index 0,
+                 :b-mop-index 1}
+                {:type :ww,
+                 :key :x,
+                 :value 1,
+                 :value' 2,
+                 :a-mop-index 0,
+                 :b-mop-index 0}
+                {:type :wr,
+                 :key :y,
+                 :value 2,
+                 :a-mop-index 1,
+                 :b-mop-index 0}],
+               :type :G-single}],
+             ; But worse, it's G0 because w2 -ww-> w1 -ww->w2
+             :G0
+             [{:cycle
+               [{:type :ok,
+                 :value [[:append :x 2] [:append :y 2]],
+                 :index 6}
+                {:type :ok,
+                 :value [[:append :x 1] [:append :y 1]],
+                 :index 5}
+                {:type :ok,
+                 :value [[:append :x 2] [:append :y 2]],
+                 :index 6}],
+               :steps
+               [{:type :ww,
+                 :key :y,
+                 :value 2,
+                 :value' 1,
+                 :a-mop-index 1,
+                 :b-mop-index 1}
+                {:type :ww,
+                 :key :x,
+                 :value 1,
+                 :value' 2,
+                 :a-mop-index 0,
+                 :b-mop-index 0}],
+               :type :G0}]},
+            :not #{:read-uncommitted}}
+           (-> (c {:consistency-models [:serializable]} h)
+               (dissoc :also-not))))))
 
 (deftest repeatable-read-test
   ; This is a long fork, which is also G2-item, by virtue of its only cycle

@@ -465,15 +465,23 @@
 
 (defn previously-appended-element
   "Given an append mop, finds the element that was appended immediately prior
-  to this append. Returns ::init if this was the first append."
+  to this append. If we don't know precisely which element was appended
+  immediately prior (e.g. we never read this append), we still know it came
+  after the highest observed element, so we return that instead.
+
+  Returns ::init if this was, or can only be shown to come after, the first
+  append."
   [append-index write-index op [f k v]]
-  ; We may not know what version this append was--for instance, if we never
-  ; read a state reflecting this append.
-  (when-let [index (get-in append-index [k :indices v])]
+  (if-let [index (get-in append-index [k :indices v])]
     ; What value was appended immediately before us in version order?
     (if (pos? index)
       (get-in append-index [k :values (dec index)])
-      ::init)))
+      ::init)
+    ; We don't know what version this append was exactly, because we never
+    ; observed it. That still tells us that it came *after* the highest
+    ; observed element. If we never observed any appends, it must have come
+    ; after the initial state.
+    (-> append-index (get k) :values peek (or ::init))))
 
 (defn ww-mop-dep
   "What (other) operation wrote the value just before this write mop?"
