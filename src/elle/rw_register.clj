@@ -746,6 +746,9 @@
                             which should be merged with our own dependency
                             graph.
 
+    :cycle-search-timeout   How many milliseconds are we willing to search a
+                            single SCC for a cycle?
+
     :sequential-keys?       Assume that each key is independently sequentially
                             consistent, and use each processes' transaction
                             order to derive a version order.
@@ -759,7 +762,11 @@
 
     :directory              Where to output files, if desired. (default nil)
 
-    :plot-format            Either :png or :svg (default :svg)"
+    :plot-format            Either :png or :svg (default :svg)
+
+    :max-plot-bytes         Maximum size of a cycle graph (in bytes of DOT)
+                            which we're willing to try and render.
+"
   ([history]
    (check {}))
   ([opts history]

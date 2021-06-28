@@ -346,10 +346,10 @@
 
 (defn cycle-cases-in-scc
   "Searches a single SCC for cycle anomalies. See cycle-cases."
-  [g fg pair-explainer scc]
+  [opts g fg pair-explainer scc]
   (let [current-type (atom nil)]
     (util/timeout
-      cycle-search-timeout
+      (:cycle-search-timeout opts cycle-search-timeout)
       ; If we time out...
       (do (info "Timing out search for" @current-type "in SCC of" (count scc)
                 "transactions")
@@ -468,11 +468,11 @@
 
   :G0-realtime        G0, but with realtime edges
   ..."
-  [graph pair-explainer sccs]
+  [opts graph pair-explainer sccs]
   (let [fg (-> (filtered-graphs graph)
                warm-filtered-graphs!)]
     (->> sccs
-         (mapcat (partial cycle-cases-in-scc graph fg pair-explainer))
+         (mapcat (partial cycle-cases-in-scc opts graph fg pair-explainer))
          ; And group them by type
          (group-by :type))))
 
@@ -487,7 +487,7 @@
         (elle/check- analyzer history)
 
         ; Find anomalies
-        anomalies (cycle-cases graph explainer sccs)]
+        anomalies (cycle-cases opts graph explainer sccs)]
     ;(prn :cycles)
     ;(pprint anomalies)
     ; Merge our cases into the existing anomalies map.

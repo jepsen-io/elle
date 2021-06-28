@@ -759,9 +759,16 @@
     :additional-graphs      A collection of graph analyzers (e.g. realtime)
                             which should be merged with our own dependencies.
 
+    :cycle-search-timeout   How many milliseconds are we willing to search a
+                            single SCC for a cycle?
+
     :directory              Where to output files, if desired. (default nil)
 
-    :plot-format            Either :png or :svg (default :svg)"
+    :plot-format            Either :png or :svg (default :svg)
+
+    :max-plot-bytes         Maximum size of a cycle graph (in bytes of DOT)
+                            which we're willing to try and render.
+  "
   ([history]
    (check {} history))
   ([opts history]
