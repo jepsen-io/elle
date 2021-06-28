@@ -1,4 +1,4 @@
-(defproject elle "0.1.2"
+(defproject elle "0.1.3-SNAPSHOT"
   :description "Black-box transactional consistency checker, based on cycle detection"
   :url "https://github.com/jepsen-io/elle"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
@@ -14,7 +14,8 @@
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.10.1"]
                                   [spootnik/unilog "0.7.24"]]}}
   :jvm-opts ["-server"
-             "-XX:+PrintGC"]
+             ;"-XX:+PrintGC"
+             ]
   :repl-options {:init-ns elle.core}
   :test-selectors {:default (fn [m] (not (or (:perf m)
                                              (:interactive m)
