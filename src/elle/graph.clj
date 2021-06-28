@@ -657,7 +657,7 @@
 (defn fallback-cycle
   "A DFS algorithm which finds ANY cycle in an SCC. We use this as a
   fallback when BFS is too slow."
-  [graph scc]
+  [^IGraph graph scc]
   (let [g     (.select graph (->bset scc))
         start (first scc)]
     (loop [path [start]

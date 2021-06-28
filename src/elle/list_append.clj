@@ -5,7 +5,7 @@
   (:require [elle [core :as elle]
                   [graph :as g]
                   [txn :as ct]
-                  [util :as util]]
+                  [util :as util :refer [index-of]]]
             [jepsen [txn :as txn :refer [reduce-mops]]]
             [jepsen.txn.micro-op :as mop]
             [knossos [op :as op]
@@ -572,8 +572,8 @@
                           :key      k
                           :value    prev-v
                           :value'   v
-                          :a-mop-index (.indexOf (:value a) [:append k prev-v])
-                          :b-mop-index (.indexOf (:value b) b-mop)}))))))
+                          :a-mop-index (index-of (:value a) [:append k prev-v])
+                          :b-mop-index (index-of (:value b) b-mop)}))))))
          first))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
@@ -611,8 +611,8 @@
                        {:type  :wr
                         :key   k
                         :value (peek v)
-                        :a-mop-index (.indexOf (:value a) [:append k (peek v)])
-                        :b-mop-index (.indexOf (:value b) mop)})))))
+                        :a-mop-index (index-of (:value a) [:append k (peek v)])
+                        :b-mop-index (index-of (:value b) mop)})))))
          first))
 
   (render-explanation [_ {:keys [key value]} a-name b-name]

@@ -41,7 +41,7 @@
             [elle [core :as elle]
                   [txn :as ct]
                   [graph :as g]
-                  [util :as util :refer [map-vals]]]
+                  [util :as util :refer [map-vals index-of]]]
             [jepsen [txn :as txn :refer [reduce-mops]]]
 						[jepsen.txn.micro-op :as mop]
 						[knossos.op :as op])
@@ -587,8 +587,8 @@
                  version-graphs txn/ext-writes a txn/ext-writes b)]
       (assoc e
              :type :ww
-             :a-mop-index (.indexOf (:value a) [:w key value])
-             :b-mop-index (.indexOf (:value b) [:w key value']))))
+             :a-mop-index (index-of (:value a) [:w key value])
+             :b-mop-index (index-of (:value b) [:w key value']))))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
     (str a-name " set key " (pr-str key) " to " (pr-str value) ", and "
@@ -603,8 +603,8 @@
                                 txn/ext-reads a txn/ext-writes b)]
       (assoc e
              :type :rw
-             :a-mop-index (.indexOf (:value a) [:r key value])
-             :b-mop-index (.indexOf (:value b) [:w key value']))))
+             :a-mop-index (index-of (:value a) [:r key value])
+             :b-mop-index (index-of (:value b) [:w key value']))))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
     (str a-name " read key " (pr-str key) " = " (pr-str value) ", and "
@@ -644,8 +644,8 @@
                     {:type  :wr
                      :key   k
                      :value v
-                     :a-mop-index (.indexOf (:value a) [:w k v])
-                     :b-mop-index (.indexOf (:value b) [:r k v])})))
+                     :a-mop-index (index-of (:value a) [:w k v])
+                     :b-mop-index (index-of (:value b) [:r k v])})))
               nil
               writes)))
 

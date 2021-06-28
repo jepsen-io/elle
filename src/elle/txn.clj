@@ -12,7 +12,8 @@
             [jepsen.txn :as txn :refer [reduce-mops]]
 						[knossos.op :as op]
             [unilog.config :refer [start-logging!]])
-  (:import (io.lacuna.bifurcan LinearMap
+  (:import (io.lacuna.bifurcan IGraph
+                               LinearMap
                                Map)))
 
 
@@ -376,7 +377,7 @@
 
                        ; Try the graph which has just those relationships and
                        ; that particular SCC
-                       (if-let [sub-scc (-> (fg (first rels))
+                       (if-let [sub-scc (-> ^IGraph (fg (first rels))
                                             (.select (g/->bset scc))
                                             (g/strongly-connected-components)
                                             first)]

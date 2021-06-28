@@ -36,3 +36,7 @@
   [f m]
   (map-kv (fn [[k v]] [k (f v)]) m))
 
+(defn index-of
+  "Type-hinted .indexOf"
+  [^java.util.List coll element]
+  (.indexOf coll element))
