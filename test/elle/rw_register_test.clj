@@ -294,6 +294,26 @@
               ; for humans
               (dissoc :also-not)))]
 	(deftest checker-test
+    (testing "Read doesn't return what was just been written"
+      (let [[t1 t1'] (pair (op "wx1"))
+            [t2 t2'] (pair (op "rx2"))]
+        (is (= {:valid? true}
+               (c {:consistency-models [:strict-serializable]
+                   :linearizable-keys? true } [t1 t1' t2 t2'])))))
+    (testing "Read read returns what was just been written"
+      (let [[t1 t1'] (pair (op "wx1"))
+            [t2 t2'] (pair (op "rx2"))
+            [t3 t3'] (pair (op "rx1"))]
+        (is (= {:valid? false
+                :anomaly-types '(:cyclic-versions)
+                :anomalies
+               {:cyclic-versions
+                [{:key :x,
+                  :scc #{1 2},
+                  :sources [:initial-state :linearizable-keys]}]},
+               :not #{:read-uncommitted}}
+               (c {:consistency-models [:strict-serializable]
+                   :linearizable-keys? true } [t1 t1' t2 t2' t3 t3'])))))
     (testing "G0"
       ; What (could be) a pure write cycle: T1 < T2 on x, T2 < T1 on y.
       (let [[t1 t1'] (pair (op 0 :ok "wx1wy2"))
