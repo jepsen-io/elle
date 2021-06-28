@@ -54,6 +54,8 @@
                                Map
                                Set)))
 
+(set! *warn-on-reflection* true)
+
 (defn op-internal-case
   "Given an op, returns a map describing internal consistency violations, or
   nil otherwise. Our maps are:
@@ -590,8 +592,8 @@
                  version-graphs txn/ext-writes a txn/ext-writes b)]
       (assoc e
              :type :ww
-             :a-mop-index (.indexOf (:value a) [:w key value])
-             :b-mop-index (.indexOf (:value b) [:w key value']))))
+             :a-mop-index (.indexOf ^clojure.lang.PersistentVector (:value a) [:w key value])
+             :b-mop-index (.indexOf ^clojure.lang.PersistentVector (:value b) [:w key value']))))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
     (str a-name " set key " (pr-str key) " to " (pr-str value) ", and "
@@ -606,8 +608,8 @@
                                 txn/ext-reads a txn/ext-writes b)]
       (assoc e
              :type :rw
-             :a-mop-index (.indexOf (:value a) [:r key value])
-             :b-mop-index (.indexOf (:value b) [:w key value']))))
+             :a-mop-index (.indexOf ^clojure.lang.PersistentVector (:value a) [:r key value])
+             :b-mop-index (.indexOf ^clojure.lang.PersistentVector (:value b) [:w key value']))))
 
   (render-explanation [_ {:keys [key value value'] :as m} a-name b-name]
     (str a-name " read key " (pr-str key) " = " (pr-str value) ", and "
@@ -647,8 +649,8 @@
                     {:type  :wr
                      :key   k
                      :value v
-                     :a-mop-index (.indexOf (:value a) [:w k v])
-                     :b-mop-index (.indexOf (:value b) [:r k v])})))
+                     :a-mop-index (.indexOf ^clojure.lang.PersistentVector (:value a) [:w k v])
+                     :b-mop-index (.indexOf ^clojure.lang.PersistentVector (:value b) [:r k v])})))
               nil
               writes)))
 

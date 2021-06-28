@@ -46,6 +46,8 @@
   (:import (java.util.function Function)
            (io.lacuna.bifurcan Graphs)))
 
+(set! *warn-on-reflection* true)
+
 (def implied-anomalies
   "We have lots of different types of anomalies. Some of them imply others--for
   example, when we detect an :internal anomaly, that's *also* a sign of G1a:

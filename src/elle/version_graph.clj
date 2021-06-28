@@ -29,6 +29,8 @@
 
   That transaction graph, can, in turn, expand the version graph.")
 
+(set! *warn-on-reflection* true)
+
 (defprotocol VersionGraph
   "This protocol identifies the relationships between versions, and can justify
   those relationships."

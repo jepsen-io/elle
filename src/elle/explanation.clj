@@ -3,6 +3,8 @@
   protocol supports constructing inferences which can be rendered as data
   structures or text.")
 
+(set! *warn-on-reflection* true)
+
 (defprotocol Explanation
   (->data [ex]
           "Converts the explanation to a data structure.")

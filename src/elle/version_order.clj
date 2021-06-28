@@ -10,6 +10,8 @@
                   [recovery :as rec]
                   [version-graph :as vg]]))
 
+(set! *warn-on-reflection* true)
+
 (defprotocol VersionOrder
   (all-keys [_]
             "Returns the set of all keys in this version order.")

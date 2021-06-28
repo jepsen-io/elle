@@ -27,6 +27,8 @@
             [jepsen [txn :as txn]]
             [knossos [op :as op]]))
 
+(set! *warn-on-reflection* true)
+
 (defprotocol WriteRecovery
   "Maps between writes and versions."
   (write->version [r mop]
