@@ -297,9 +297,11 @@
     (testing "Read doesn't return what was just been written"
       (let [[t1 t1'] (pair (op "wx1"))
             [t2 t2'] (pair (op "rx2"))]
+        ; TODO: this represents a bug! We should detect this as invalid.
         (is (= {:valid? true}
                (c {:consistency-models [:strict-serializable]
                    :linearizable-keys? true } [t1 t1' t2 t2'])))))
+
     (testing "Read read returns what was just been written"
       (let [[t1 t1'] (pair (op "wx1"))
             [t2 t2'] (pair (op "rx2"))
