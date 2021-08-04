@@ -870,14 +870,7 @@
         [t4 t4'] (pair (op "ry1rx"))
         h (history/index [t1 t1' t2 t2' t3 t3' t4 t4'])]
     (is (= {:valid?         false
-            ; Cerone et al describe nonadjacency vis strict session SI, but,
-            ; like... there's nothing realtime about this graph, and we don't
-            ; have any concept of a session here. Can we just call it SI? TODO:
-            ; investigate.
-            :not            #{:strong-session-snapshot-isolation
-                              ; cuz strict-session-SI is incomparable to
-                              ; serializability.
-                              :serializable}
+            :not            #{:snapshot-isolation}
             :anomaly-types  [:G-nonadjacent]
             :anomalies      {:G-nonadjacent
                              [{:cycle [(h 1) (h 3) (h 5) (h 7) (h 1)]

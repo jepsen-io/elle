@@ -347,13 +347,11 @@
                                     ; sugesting G-nonadjacent is forbidden by
                                     ; SI, but I'm not quite sure.
                                     ;
-                                    ; Cahill jumps right in and claims that SI
-                                    ; prohibits G-nonadjacent, but I'm not
-                                    ; entirely sure whether he means
-                                    ; *generalized* SI, or some variant like
-                                    ; strong-session SI. Leaving this commented
-                                    ; out for now.
-                                    ;:G-nonadjacent
+                                    ; Chatting with Alexey Gotsman about this
+                                    ; confirms my suspicion: generalized SI
+                                    ; forbids *any* nonadjacent rw edges, not
+                                    ; just G-single.
+                                    :G-nonadjacent
                                     ]
         :read-atomic               [:internal          ; Cerone (incomplete)
                                     :G1a]              ; Cerone (incomplete)
