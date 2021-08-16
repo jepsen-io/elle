@@ -3,7 +3,8 @@
             [clojure.java.io :as io]
             [clojure.tools.logging :refer [info warn]]
             [elle [core :as elle]
-                  [graph :as g]]
+                  [graph :as g]
+                  [util :as util]]
             [rhizome [dot :as dot]
                      [viz :as rv]]))
 
@@ -194,7 +195,9 @@
 
     :plot-format      Either :png or :svg
     :max-plot-bytes   Maximum number of bytes of DOT-formatted graph to feed
-                      to graphviz. Big SCCs can make graphviz choke!"
+                      to graphviz. Big SCCs can make graphviz choke!
+    :plot-timeout     Timeout, in milliseconds, to render an SCC
+  "
   ([analysis directory]
    (plot-analysis! analysis directory {}))
   ([analysis directory opts]
@@ -203,10 +206,13 @@
    (->> (:sccs analysis)
         (map-indexed vector)
         (pmap (fn [[i scc]]
-                (-> analysis
-                    (scc->ast scc)
-                    dot
-                    (save-dot! directory opts i))))
+                (util/timeout (:plot-timeout opts 5000)
+                  (info "Timing out visualization of SCC no." i "containing"
+                        (count scc) "transactions")
+                  (-> analysis
+                      (scc->ast scc)
+                      dot
+                      (save-dot! directory opts i)))))
         dorun)
    analysis))
 

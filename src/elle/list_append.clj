@@ -766,6 +766,9 @@
 
     :plot-format            Either :png or :svg (default :svg)
 
+    :plot-timeout           How many milliseconds will we wait to render a SCC
+                            plot?
+
     :max-plot-bytes         Maximum size of a cycle graph (in bytes of DOT)
                             which we're willing to try and render.
   "
