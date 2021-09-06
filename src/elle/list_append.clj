@@ -2,19 +2,22 @@
   "Detects cycles in histories where operations are transactions over named
   lists lists, and operations are either appends or reads."
   (:refer-clojure :exclude [test])
-  (:require [elle [core :as elle]
+  (:require [clojure [pprint :refer [pprint]]
+                     [set :as set]
+                     [string :as str]]
+            [clojure.core.reducers :as r]
+            [clojure.java.io :as io]
+            [clojure.tools.logging :refer [info error warn]]
+            [elle [core :as elle]
                   [graph :as g]
                   [txn :as ct]
-                  [util :as util :refer [index-of]]]
+                  [util :as util :refer [index-of
+                                         nanos->secs]]]
+            [hiccup.core :as h]
             [jepsen [txn :as txn :refer [reduce-mops]]]
             [jepsen.txn.micro-op :as mop]
             [knossos [op :as op]
                      [history :refer [pair-index]]]
-            [clojure.tools.logging :refer [info error warn]]
-            [clojure.core.reducers :as r]
-            [clojure [pprint :refer [pprint]]
-                     [set :as set]
-                     [string :as str]]
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
@@ -744,6 +747,110 @@
   [history]
   ((elle/combine ww-graph wr-graph rw-graph) history))
 
+(defn rand-bg-color
+  "Hashes anything and assigns a lightish hex color to it--helpful for
+  highlighting different values differently."
+  [x]
+  (let [h (hash x)
+        ; Break up hash into 3 8-bit chunks
+        r (bit-and 255 h)
+        g (-> h (bit-and 65280)    (bit-shift-right 8))
+        b (-> h (bit-and 16711680) (bit-shift-right 16))
+        ; Squeeze these values into the range 130-250, so they're not too dark
+        ; to read, but not pure white (which would disappear).
+        ceil     250
+        floor    130
+        range    (- ceil floor)
+        compress (fn compress [x]
+                   (-> x (/ 255) (* range) (+ floor) short))
+        r (compress r)
+        g (compress g)
+        b (compress b)]
+    (str "#"
+         (format "%02x" r)
+         (format "%02x" g)
+         (format "%02x" b))))
+
+(defn incompatible-order-viz
+  "Takes a key, a vector of the longest value of that key, and a seq of ok
+  operations which interacted with that key. Constructs a Hiccup structure with
+  a visualization for that key."
+  [key longest ops]
+  [:html
+   [:head
+    [:style "th { text-align: left; }"]]
+   [:body
+    [:h1 (str "All Reads of " key)]
+    [:table
+     [:thead
+      [:tr
+       [:th "Index"]
+       [:th "Time (s)"]
+       [:th "Process"]
+       [:th "Fun"]
+       [:th {:colspan 32} "Value"]]]
+     [:tbody
+      (for [{:keys [index time process f value]} ops
+            [f k v] value
+            :when (and (= k key) (= f :r))]
+        [:tr
+         (concat [[:td index]
+                  [:td (when time
+                         (format "%.2f" (nanos->secs time)))]
+                  [:td process]
+                  [:td (name f)]]
+                 (->> v
+                      ; Stitch together values with indexes so we can compare
+                      ; for compatibility
+                      (map-indexed vector)
+                      (keep (fn [[i elem]]
+                              (let [compat? (= elem (nth longest i))
+                                    attrs (if compat?
+                                            {}
+                                            {:style (str "background: "
+                                                         (rand-bg-color elem))})]
+                                [:td attrs elem])))))])]]]])
+
+(defn render-incompatible-orders!
+  "Takes a directory, history, a sorted-values map, and a map of keys to
+  incompatible orders. For each incompatible-order anomaly, renders an HTML
+  file in elle/incompatible-orders/ showing all the reads of that key, and
+  where they were incompatible with the longest value."
+  [directory history sorted-values incompatible-orders]
+  (let [; What keys are we interested in?
+        ks (->> incompatible-orders
+                (map :key)
+                set)
+        ; Find ops that might be relevant, and group them by key.
+        ops (reduce (fn [by-k {:keys [type value] :as op}]
+                      (if (= type :ok)
+                        ; Find what keys we intersected with
+                        (->> value
+                             (filter (comp #{:r} first))
+                             (map second)
+                             set
+                             (set/intersection ks)
+                             ; And add this op to the list of ops for each
+                             ; relevant key
+                             (reduce (fn add-to-ks [by-k k]
+                                       (let [ops (get by-k k [])]
+                                         (assoc by-k k (conj ops op))))
+                                     by-k))
+                        ; Not an OK op
+                        by-k))
+                    {}
+                    history)]
+    (doseq [k ks]
+      (let [; What's our longest version of k?
+            longest (->> (get sorted-values k)
+                         last)
+            ; Where are we writing?
+            path (io/file directory "incompatible-order" (str (pr-str k)
+                                                              ".html"))
+            _ (io/make-parents path)]
+        (spit path
+              (h/html (incompatible-order-viz k longest (get ops k))))))))
+
 (defn check
   "Full checker for append and read histories. Options are:
 
@@ -788,6 +895,8 @@
          dups          (duplicates history+)
          sorted-values (sorted-values history+)
          incmp-order   (incompatible-orders sorted-values)
+         _             (render-incompatible-orders!
+                         (:directory opts) history+ sorted-values incmp-order)
 
          ; Great, now construct a graph analyzer...
          analyzers     (into [graph] (ct/additional-graphs opts))

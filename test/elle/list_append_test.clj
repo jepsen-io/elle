@@ -649,7 +649,10 @@
                         :a-mop-index 0,
                         :b-mop-index 0}]
                       :type :G1c}]}}
-             (c {:consistency-models nil, :anomalies [:G1]} h)))))
+             (c {:consistency-models nil
+                 :anomalies [:G1]
+                 :directory "test-output"}
+                h)))))
 
   (testing "dirty update"
     (testing "none"
