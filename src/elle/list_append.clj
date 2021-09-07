@@ -791,14 +791,14 @@
        [:th {:colspan 32} "Value"]]]
      [:tbody
       (for [{:keys [index time process f value]} ops
-            [f k v] value
-            :when (and (= k key) (= f :r))]
+            [mop-f k v] value
+            :when (and (= k key) (= mop-f :r))]
         [:tr
          (concat [[:td index]
                   [:td (when time
                          (format "%.2f" (nanos->secs time)))]
                   [:td process]
-                  [:td (name f)]]
+                  [:td (when f (name f))]]
                  (->> v
                       ; Stitch together values with indexes so we can compare
                       ; for compatibility
