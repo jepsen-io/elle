@@ -699,12 +699,6 @@
                            history))
      :explainer (RWExplainer. append-index write-index read-index)}))
 
-(defn g1c-graph
-  "Per Adya, Liskov, & O'Neil, phenomenon G1C encompasses any cycle made up of
-  direct dependency edges (but does not include anti-dependencies)."
-  [history]
-  ((elle/combine ww-graph wr-graph) history))
-
 (defn graph
   "Some parts of a transaction's dependency graph--for instance,
   anti-dependency cycles--involve the *version order* of states for a key.

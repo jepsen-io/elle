@@ -33,11 +33,6 @@
        (keep f)
        seq))
 
-(defn all-keys
-  "A sequence of all unique keys in the given history."
-  [history]
-  (->> history op-mops (map (comp second second)) distinct))
-
 (def integer-types
   #{Byte Short Integer Long})
 
