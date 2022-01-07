@@ -257,3 +257,8 @@ Elle is copyright 2019--2020 Jepsen, LLC and Peter Alvaro. The Elle library is a
 ## Thanks
 
 Elle was inspired by conversations with Asha Karim, and Kit Patella (@mkcp) wrote the first prototype of the Elle checker.
+
+## See Also
+
+- [elle-cli](https://github.com/ligurio/elle-cli), a standalone command-line
+  frontend to Elle (and other checkers)
