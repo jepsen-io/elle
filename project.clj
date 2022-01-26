@@ -4,16 +4,16 @@
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[slingshot "0.12.2"]
-                 [dom-top "1.0.5"]
+                 [dom-top "1.0.7"]
                  [hiccup "1.0.5"]
-                 [knossos "0.3.7"
+                 [knossos "0.3.8"
                   :exclusions [org.slf4j/slf4j-log4j12]]
-                 [org.clojure/tools.logging "1.1.0"]
+                 [org.clojure/tools.logging "1.2.4"]
                  [rhizome "0.2.9"]
                  [jepsen.txn "0.1.2"]
                  [io.lacuna/bifurcan "0.1.0"]]
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.10.3"]
-                                  [spootnik/unilog "0.7.28"]]}}
+                                  [spootnik/unilog "0.7.29"]]}}
   :jvm-opts ["-server"
              ;"-XX:-OmitStackTraceInFastThrow"
              ;"-XX:+PrintGC"
