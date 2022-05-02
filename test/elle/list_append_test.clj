@@ -582,7 +582,7 @@
       (is (= err (c {:consistency-models [:repeatable-read]} h)))
       )))
 
-  (testing "Strict-1SR violation"
+  (testing "Strong SI violation"
     (let [; T1 anti-depends on T2, but T1 happens first in wall-clock order.
           t0  {:index 0, :type :invoke, :value [[:append :x 1]]}
           t0' {:index 1, :type :ok,     :value [[:append :x 1]]}
@@ -602,7 +602,7 @@
       ; But it will if we ask for strict-serializable.
       (is (= {:valid?         false
               :anomaly-types  [:G-single-realtime]
-              :not            #{:strict-serializable}
+              :not            #{:strong-snapshot-isolation}
               :anomalies
               {:G-single-realtime
                [{:cycle [t2' t1' t2']

@@ -218,6 +218,10 @@
                                  :serializable                ; Bailis
                                  :linearizable                ; Bailis
                                  :snapshot-isolation          ; Adya
+                                 ; It's hard to imagine how this could *not* be
+                                 ; the case, but I don't have a citation here
+                                 ; either.
+                                 :strong-snapshot-isolation
                                  :strong-session-serializable]; Daudjee???
         ; TODO: does strong mean PL-SS?
         ; TODO: What about strict-1SR? Zuikeviciute's informal definitions
@@ -347,6 +351,9 @@
                                     ; sugesting G-nonadjacent is forbidden by
                                     ; SI, but I'm not quite sure.
                                     ;
+                                    ; Cerone-SI also states *strong session* SI
+                                    ; forbids nonadjacent rw edges.
+                                    ;
                                     ; Chatting with Alexey Gotsman about this
                                     ; confirms my suspicion: generalized SI
                                     ; forbids *any* nonadjacent rw edges, not
@@ -362,10 +369,16 @@
         :strict-serializable       [:G1                ; Adya
                                     :G1c-realtime      ; Adya
                                     :G2-realtime]      ; Adya
-        ; TODO: right now, G-nonadjacent just uses ww/rw/wr edges, and we're
-        ; not taking into account realtime/process order. Should we do those
-        ; too? Are there analogues for plain old (generalized) SI?
-        :strong-session-snapshot-isolation [:G-nonadjacent] ; Cerone-SI
+        ; I *don't* have a source for these officially, because the use of
+        ; G-nonadjacent isn't well canonicalized in the literature, but it
+        ; seems obvious that strong session SI should prevent you from failing
+        ; to read your own *previous* writes (G-single-process), and strong SI
+        ; should prevent you from failing to read *any* completed writes
+        ; (G-single-realtime), and since we actually formalize this in SI as
+        ; G-nonadjacent rather than just G-single, I'm going to include
+        ; G-nonadjacent's realtime and process variants here too.
+        :strong-session-snapshot-isolation [:G-nonadjacent-process]
+        :strong-snapshot-isolation         [:G-nonadjacent-realtime]
         :strong-session-serializable [:G1c-process     ; Daudjee
                                       :G2-process]     ; Daudjee
         :update-serializable       [:G1 :G-update]     ; Adya
