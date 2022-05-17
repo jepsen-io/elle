@@ -37,8 +37,8 @@
       (is (= #{} (s []))))
 
     (testing "simple"
-      (is (= #{:strict-serializable}
-             (s [:serializable :strict-serializable]))))
+      (is (= #{:strong-serializable}
+             (s [:serializable :strong-serializable :strict-serializable]))))
 
     (testing "independent"
       (is (= #{:repeatable-read
@@ -81,7 +81,7 @@
     (testing "G-single"
       (is (= #{:consistent-view
                :forward-consistent-view
-               :strict-serializable
+               :strong-serializable
                :serializable
                :snapshot-isolation
                :strong-session-serializable
@@ -93,7 +93,7 @@
     (testing "G-SI"
       (is (= #{:snapshot-isolation
                :serializable
-               :strict-serializable
+               :strong-serializable
                :strong-session-serializable
                :strong-session-snapshot-isolation
                :strong-snapshot-isolation}
@@ -106,7 +106,7 @@
                :repeatable-read
                :ROLA
                :serializable
-               :strict-serializable
+               :strong-serializable
                :update-serializable
                :cursor-stability
                :forward-consistent-view
@@ -131,7 +131,7 @@
                :ROLA
                :serializable
                :snapshot-isolation
-               :strict-serializable
+               :strong-serializable
                :strong-session-serializable
                :strong-session-snapshot-isolation
                :strong-snapshot-isolation
@@ -156,7 +156,7 @@
                         ; :parallel-snapshot-isolation
                         :repeatable-read
                         :serializable
-                        :strict-serializable
+                        :strong-serializable
                         :consistent-view
                         :cursor-stability
                         :monotonic-atomic-view
@@ -177,7 +177,7 @@
                         :ROLA
                         :serializable
                         :snapshot-isolation
-                        :strict-serializable
+                        :strong-serializable
                         :strong-session-serializable
                         :strong-session-snapshot-isolation
                         :strong-snapshot-isolation}}
@@ -190,7 +190,7 @@
                         :monotonic-snapshot-read :monotonic-view
                         :parallel-snapshot-isolation :prefix :repeatable-read
                         :serializable :snapshot-isolation
-                        :strict-serializable
+                        :strong-serializable
                         :strong-session-serializable
                         :strong-session-snapshot-isolation
                         :strong-snapshot-isolation
@@ -201,7 +201,7 @@
     (is (= {:not #{:consistent-view}
             :also-not #{:snapshot-isolation
                         :serializable
-                        :strict-serializable
+                        :strong-serializable
                         :strong-session-snapshot-isolation
                         :strong-snapshot-isolation
                         :strong-session-serializable
@@ -216,7 +216,7 @@
                         :prefix
                         :serializable
                         :snapshot-isolation
-                        :strict-serializable
+                        :strong-serializable
                         :strong-session-serializable
                         :strong-session-snapshot-isolation
                         :strong-snapshot-isolation}}

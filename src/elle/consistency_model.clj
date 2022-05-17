@@ -23,6 +23,8 @@
 
   - Bernstein, Hazilacos, Goodman, 'Concurrency Control and Recovery in Database Systems' (https://www.microsoft.com/en-us/research/people/philbe/)
 
+  - Hermitage: Kleppmann, 'Hermitage' (https://github.com/ept/hermitage)
+
   - Zuikeviciute, Pedone, 'Correctness Criteria for Database Replication' (https://www.researchgate.net/profile/Fernando_Pedone/publication/225706071_Correctness_Criteria_for_Database_Replication_Theoretical_and_Practical_Aspects/links/00b7d53274a4c89278000000/Correctness-Criteria-for-Database-Replication-Theoretical-and-Practical-Aspects.pdf)
 
   - Liu, Ölveczky, et al, 'ROLA: A New Distributed Transaction Protocol and Its Formal Analysis'
@@ -61,7 +63,7 @@
      :G1a [:G1]
      :G1b [:G1]
      :G1c [:G1]
-     :G1c-process  [:G1-process :G1c-realtime]
+     :G1c-process  [:G1c-realtime]
 
      ; G-single is a special case of G-nonadjacent
      :G-single          [:G-nonadjacent
@@ -107,7 +109,14 @@
      ; like a dirty read, except it affects writes as well. We say it implies a
      ; G1a anomaly, because it's likely that any model which prohibits G1a
      ; would want to prohibit dirty updates as well.
-     :dirty-update [:G1a]}))
+     :dirty-update [:G1a]
+
+     ; Lost update is a special case of write skew, per Bailis, and since it
+     ; involves a single record by primary key, rather than a predicate, it is
+     ; also G2-item.
+     :lost-update [:write-skew :G2-item]
+     ; And write skew is a special case of G2, per Hermitage
+     :write-skew  [:G2]}))
 
 (defn all-anomalies-implying
   "Takes a collection of anomalies, and yields a set of anomalies which would
@@ -152,6 +161,8 @@
    ; weaker than 1SR. Is there an implication here? Is it visible to users?
    ; :strict-1SR               :serializable
    :strict-serializable      :PL-SS    ; Adya
+   ; Right, I'm calling this: strong and strict serializable are the same thing.
+   :strong-serializable      :PL-SS
    :update-serializable      :PL-3U    ; Adya
    })
 
@@ -182,7 +193,8 @@
        {
         ; Might merge this into normal causal later? I'm not sure
         ; how to unify them exactly.
-        :causal-cerone          [:read-atomic]                ; Cerone
+        :causal-cerone          [:ROLA                        ; ROLA
+                                 :read-atomic]                ; Cerone
         :consistent-view        [:cursor-stability            ; Adya
                                  :monotonic-view]             ; Adya
         :conflict-serializable  [:view-serializable]
@@ -199,7 +211,7 @@
         :monotonic-atomic-view  [:read-committed]             ; Bailis
         :monotonic-view         [:PL-2]                       ; Adya
         :monotonic-snapshot-read [:PL-2]                      ; Adya
-        :parallel-snapshot-isolation [:causal-cerone]         ; Cerone
+        :parallel-snapshot-isolation [:causal-cerone]         ; Cerone, ROLA
         :prefix                 [:causal-cerone]              ; Cerone
         :read-committed         [:read-uncommitted]           ; SQL
         :repeatable-read        [:cursor-stability            ; Adya
@@ -320,7 +332,8 @@
   `anomaly-graph`."
   (->> {
         :causal-cerone             [:internal :G1a]    ; Cerone (incomplete)
-        :cursor-stability          [:G1 :G-cursor]     ; Adya
+        :cursor-stability          [:G1 :G-cursor      ; Adya
+                                    :lost-update]      ; Bailis
         :monotonic-view            [:G1 :G-monotonic]  ; Adya
         :monotonic-snapshot-read   [:G1 :G-MSR]        ; Adya
         :consistent-view           [:G1 :G-single]     ; Adya
@@ -362,9 +375,8 @@
                                     ]
         :read-atomic               [:internal          ; Cerone (incomplete)
                                     :G1a]              ; Cerone (incomplete)
-        :repeatable-read           [:G1 :G2-item]      ; Adya
-        ; TODO: we don't have any way to detect lost update directly right now,
-        ; so this does nothing.
+        :repeatable-read           [:G1 :G2-item       ; Adya
+                                    :lost-update]      ; Bailis
         :ROLA                      [:lost-update]      ; ROLA
         :strict-serializable       [:G1                ; Adya
                                     :G1c-realtime      ; Adya
