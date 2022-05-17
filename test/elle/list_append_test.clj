@@ -944,7 +944,16 @@
                                         :a-mop-index 0,
                                         :b-mop-index 1}],
                                :type :G2-item}]}}
-           (c {} h)))))
+           (c {} h))))
+
+  ; It's not illegal for a single txn to write over a read twice though
+  (testing "one txn, double write"
+    (let [[t0 t0'] (pair (op "rxax1ax2"))
+          ; Just to avoid empty txn graphs
+          [t1 t1'] (pair (op "rx12"))
+          h        (history/index [t0 t0' t1 t1'])]
+      (is (= {:valid? true}
+             (c {} h))))))
 
 ; Example of checking a file, for later
 ;(deftest dirty-update-1-test

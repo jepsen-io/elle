@@ -165,27 +165,32 @@
            (if (not= :ok (:type op))
              txns
              (loopr [; A map of keys to the first value read
-                     reads (transient {})
-                     txns  txns]
+                     reads  (transient {})
+                     ; And a set of keys we've written, so we don't
+                     ; double-count
+                     writes (transient #{})
+                     txns   txns]
                     [[f k v] (:value op)]
                     (let [read-value (get reads k ::not-found)]
-                      (if (write? f)
-                        ; We wrote k
+                      (if (and (write? f) (not (contains? writes k)))
+                        ; We wrote k for the first time
                         (if (= read-value ::not-found)
                           ; Didn't read k; don't care
-                          (recur reads txns)
+                          (recur reads writes txns)
                           ; We read and wrote k; this is relevant to our search
                           (let [txns-k    (get txns k (transient {}))
                                 txns-k-v  (get txns-k read-value (transient []))
                                 txns-k-v' (conj! txns-k-v op)
                                 txns-k'   (assoc! txns-k read-value txns-k-v')]
-                            (recur reads (assoc! txns k txns-k'))))
+                            (recur reads
+                                   (conj! writes k)
+                                   (assoc! txns k txns-k'))))
                         ; We read k
                         (if (= read-value ::not-found)
                           ; And this is our first (i.e. external) read of k
-                          (recur (assoc! reads k v) txns)
+                          (recur (assoc! reads k v) writes txns)
                           ; We already read k
-                          (recur reads txns))))
+                          (recur reads writes txns))))
                     ; Return txns and move to next op
                     txns)))
          ; Now search for collisions
