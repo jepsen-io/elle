@@ -773,17 +773,19 @@
   ([history]
    (check {}))
   ([opts history]
-   (let [history  (remove (comp #{:nemesis} :process) history)
-         _        (ct/assert-type-sanity history)
-         g1a      (g1a-cases history)
-         g1b      (g1b-cases history)
-         internal (internal-cases history)
+   (let [history      (remove (comp #{:nemesis} :process) history)
+         _            (ct/assert-type-sanity history)
+         g1a          (g1a-cases history)
+         g1b          (g1b-cases history)
+         internal     (internal-cases history)
+         lost-update  (ct/lost-update-cases #{:w} history)
          cycles   (:anomalies (ct/cycles! opts (partial graph opts) history))
          ; Build up anomaly map
          anomalies (cond-> cycles
-                     internal (assoc :internal internal)
-                     g1a      (assoc :G1a g1a)
-                     g1b      (assoc :G1b g1b))]
+                     internal     (assoc :internal internal)
+                     g1a          (assoc :G1a g1a)
+                     g1b          (assoc :G1b g1b)
+                     lost-update  (assoc :lost-update lost-update))]
      (ct/result-map opts anomalies))))
 
 (defn gen

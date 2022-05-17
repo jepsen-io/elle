@@ -641,6 +641,22 @@
                              [{:value [[:r :x (short 1)]]}
                               {:value [[:r :x (long 1)]]}]))))
 
+
+  (deftest lost-update-test
+    ; For a lost update, we need two transactions which read the same value of
+    ; some key and both write to it.
+    (let [[t1 t1'] (pair (op 0 :ok "rx0wx1"))
+          [t2 t2'] (pair (op 1 :ok "rx0wx2"))
+          [t1 t1' t2 t2' :as h] (history/index [t1 t1' t2 t2'])]
+      (is (= {:valid? false
+              :not    #{:ROLA :cursor-stability}
+              :anomaly-types [:lost-update]
+              :anomalies {:lost-update
+                          [{:key :x
+                            :value 0
+                            :txns [t1' t2']}]}}
+             (c {} h)))))
+
 	)
 
 ; This is here for pasting in experimental histories when we hit checker bugs.

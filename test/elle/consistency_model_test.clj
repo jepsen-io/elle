@@ -220,7 +220,11 @@
                         :strong-session-serializable
                         :strong-session-snapshot-isolation
                         :strong-snapshot-isolation}}
-           (friendly-boundary [:G2 :internal])))))
+           (friendly-boundary [:G2 :internal]))))
+
+  (testing "lost update"
+    (is (= #{:ROLA :cursor-stability}
+           (:not (friendly-boundary [:lost-update]))))))
 
 ; This is more for building plots than anything else; it's not actually testing
 ; anything.

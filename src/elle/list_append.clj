@@ -891,6 +891,7 @@
          incmp-order   (incompatible-orders sorted-values)
          _             (render-incompatible-orders!
                          (:directory opts) history+ sorted-values incmp-order)
+         lost-update   (ct/lost-update-cases #{:append} history+)
 
          ; Great, now construct a graph analyzer...
          analyzers     (into [graph] (ct/additional-graphs opts))
@@ -904,7 +905,8 @@
                      internal       (assoc :internal internal)
                      dirty-update   (assoc :dirty-update dirty-update)
                      (seq g1a)      (assoc :G1a g1a)
-                     (seq g1b)      (assoc :G1b g1b))]
+                     (seq g1b)      (assoc :G1b g1b)
+                     lost-update    (assoc :lost-update lost-update))]
      (ct/result-map opts anomalies))))
 
 (defn append-txns

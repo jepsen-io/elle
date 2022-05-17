@@ -4,6 +4,7 @@
                       [set :as set]]
             [clojure.tools.logging :refer [info warn]]
             [clojure.java.io :as io]
+            [dom-top.core :refer [loopr]]
             [elle [core :as elle]
                   [consistency-model :as cm]
                   [graph :as g]
@@ -97,6 +98,109 @@
                       (:value op))))
           {}
           history))
+
+(defn lost-update-cases
+  "Takes a function write? which returns true iff an operation is a write, and
+  a history. Returns a seq of error maps describing any lost updates found.
+  Assumes writes are unique. Each map is of the form:
+
+    {:key   The key in common
+     :value The value read by all transactions
+     :txns  A collection of completion ops for transactions which collided on
+            this key and value.}
+
+  Lost Update is a bit of a weird beast. I don't actually *have* a general
+  definition of it: even in Adya, it's defined as 'Histories which look like
+  H_lu', where H_lu is:
+
+    w0(x0)
+           r1(x0, 10)                          w1(x1, 14) c1
+                      r2(x0, 10) w2(x2, 15) c2
+
+    [x0 << x2 << x1]
+
+  It stands to reason that the version order x2 << x1 and the precise order of
+  T1 and T2 isn't necessary here: the essential problem is that T1 and T2 both
+  read x0 and wrote different values of x, presumably based on x0. If this ever
+  happens it could lead to the loss of the logical update T1 or T2 is
+  performing.
+
+  In cyclic terms, this must manifest as write-read edges from some transaction
+  T0 to both T1 and T2 on the same key, (since both must read T0's write of x).
+
+    +--wr--> T1
+    |
+    T0
+    |
+    +--wr--> T2
+
+  WLOG, let x1 << x2. If we have the complete version order for x, we must also
+  have a write-write edge from T1 -> T2 since both wrote x. However, since T2
+  observed the state x0 which was overwritten by T1, we also have an rw edge
+  from T2->T1. This forms a G2-item cycle:
+
+    +--wr--> T1 <-+
+    |        |    |
+    T0       ww   rw
+    |        V    |
+    +--wr--> T2 --+
+
+  We can already detect G2-item. However, we may not detect some instances of
+  lost update because we may be missing some of these edges. Our version order
+  inference is conservative, and especially for rw-registers may fail to
+  capture many edges between versions. Even for list-append, if one of the
+  writes is never read that version won't show up in the version order at all.
+
+  What actually *matters* here is that two transactions read the same x0 and
+  both wrote x, and committed. The precise order of writes to x doesn't matter.
+  We can detect this directly, in linear time and space, by scanning the set of
+  committed transactions and looking for any pair which both read some x=x0 and
+  write x."
+  [write? history]
+  (loopr [; A map of keys to values to txns which read that key and value and
+          ; wrote that key.
+          txns (transient {})]
+         [op history]
+         (recur
+           (if (not= :ok (:type op))
+             txns
+             (loopr [; A map of keys to the first value read
+                     reads (transient {})
+                     txns  txns]
+                    [[f k v] (:value op)]
+                    (let [read-value (get reads k ::not-found)]
+                      (if (write? f)
+                        ; We wrote k
+                        (if (= read-value ::not-found)
+                          ; Didn't read k; don't care
+                          (recur reads txns)
+                          ; We read and wrote k; this is relevant to our search
+                          (let [txns-k    (get txns k (transient {}))
+                                txns-k-v  (get txns-k read-value (transient []))
+                                txns-k-v' (conj! txns-k-v op)
+                                txns-k'   (assoc! txns-k read-value txns-k-v')]
+                            (recur reads (assoc! txns k txns-k'))))
+                        ; We read k
+                        (if (= read-value ::not-found)
+                          ; And this is our first (i.e. external) read of k
+                          (recur (assoc! reads k v) txns)
+                          ; We already read k
+                          (recur reads txns))))
+                    ; Return txns and move to next op
+                    txns)))
+         ; Now search for collisions
+         (loopr [cases (transient [])]
+                [[k v->txns]  (persistent! txns)
+                 [v txns]     (persistent! v->txns)]
+                (let [txns (persistent! txns)]
+                  (recur
+                    (if (<= 2 (count txns))
+                      (conj! cases {:key   k
+                                    :value v
+                                    :txns  txns})
+                      cases)))
+                (let [cases (persistent! cases)]
+                  (when (seq cases) cases)))))
 
 (def cycle-explainer
   "This cycle explainer wraps elle.core's cycle explainer, and categorizes

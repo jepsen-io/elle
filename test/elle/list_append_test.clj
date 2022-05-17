@@ -861,8 +861,9 @@
     ; TODO: might be worth modifying graph/fallback-cycle so it tries to follow
     ; minimal edges first. Might help generate worse anomalies.
     (is (not (:valid? r)))
-    (is (= #{:strict-serializable} (:not r)))
-    (is (= [:G2-item-realtime :cycle-search-timeout] (:anomaly-types r)))))
+    (is (= #{:ROLA :cursor-stability} (:not r)))
+    (is (= [:G2-item-realtime :cycle-search-timeout :lost-update]
+           (:anomaly-types r)))))
 
 (deftest G-nonadjacent-test
   ; For G-nonadjacent, we need two rw edges (just one would be G-single), and
@@ -901,6 +902,49 @@
                                         :b-mop-index 0}],
                                :type :G-nonadjacent}]}}
                              (c {} h)))))
+
+(deftest lost-update-test
+  ; For a lost update, we need two transactions which read the same value (e.g.
+  ; 0) of some key (e.g. x) and both append to x.
+  (let [[t0 t0'] (pair (op "ax0"))
+        [t1 t1'] (pair (op "rx0ax1"))
+        [t2 t2'] (pair (op "rx0ax2"))
+        [t0 t0' t1 t1' t2 t2' :as h] (history/index [t0 t0' t1 t1' t2 t2'])]
+    (is (= {:valid?         false
+            :not            #{:ROLA :cursor-stability}
+            :anomaly-types  [:G2-item :lost-update]
+            :anomalies      {:lost-update
+                             [{:key   :x
+                               :value [0]
+                               :txns  [t1' t2']}]
+                             ; We're also clever enough to infer a rw-rw cycle
+                             ; here because neither t1 nor t2 saw each other's
+                             ; effects, making this G2-item
+                             :G2-item
+                             [{:cycle
+                               [{:type :ok,
+                                 :value [[:r :x [0]] [:append :x 1]],
+                                 :index 3}
+                                {:type :ok,
+                                 :value [[:r :x [0]] [:append :x 2]],
+                                 :index 5}
+                                {:type :ok,
+                                 :value [[:r :x [0]] [:append :x 1]],
+                                 :index 3}],
+                               :steps [{:type :rw,
+                                        :key :x,
+                                        :value 0,
+                                        :value' 2,
+                                        :a-mop-index 0,
+                                        :b-mop-index 1}
+                                       {:type :rw,
+                                        :key :x,
+                                        :value 0,
+                                        :value' 1,
+                                        :a-mop-index 0,
+                                        :b-mop-index 1}],
+                               :type :G2-item}]}}
+           (c {} h)))))
 
 ; Example of checking a file, for later
 ;(deftest dirty-update-1-test
