@@ -224,7 +224,12 @@
 
   (testing "lost update"
     (is (= #{:ROLA :cursor-stability}
-           (:not (friendly-boundary [:lost-update]))))))
+           (:not (friendly-boundary [:lost-update])))))
+
+  (testing "G-single-realtime"
+    (is (= {:not #{:strong-snapshot-isolation}
+            :also-not #{:strong-serializable}}
+           (friendly-boundary [:G-single-realtime])))))
 
 ; This is more for building plots than anything else; it's not actually testing
 ; anything.
