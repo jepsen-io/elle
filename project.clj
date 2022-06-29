@@ -12,8 +12,8 @@
                  [rhizome "0.2.9"]
                  [jepsen.txn "0.1.2"]
                  [io.lacuna/bifurcan "0.1.0"]]
-  :profiles {:dev {:dependencies [[org.clojure/clojure "1.10.3"]
-                                  [spootnik/unilog "0.7.29"]]}}
+  :profiles {:dev {:dependencies [[org.clojure/clojure "1.11.1"]
+                                  [spootnik/unilog "0.7.30"]]}}
   :jvm-opts ["-server"
              ;"-XX:-OmitStackTraceInFastThrow"
              ;"-XX:+PrintGC"
