@@ -865,8 +865,9 @@
     (is (= [:G2-item-realtime :cycle-search-timeout]
            (:anomaly-types r)))
     (let [cst (-> r :anomalies :cycle-search-timeout first)]
+      ; This might change if we get faster or adjust timeouts
       (is (= []     (:does-not-contain cst)))
-      (is (keyword? (:anomaly-spec-type cst)))
+      (is (= :G0    (:anomaly-spec-type cst)))
       (is (number?  (:scc-size cst))))))
 
 (deftest G-nonadjacent-test

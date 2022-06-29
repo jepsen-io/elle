@@ -513,25 +513,27 @@
         ; happens, we want to preserve as many of the cycles that we found as
         ; possible, and offer an informative error message. These two variables
         ; help us do that.
-        types  (atom nil) ; What kind of anomalies have we searched for?
+        types  (atom []) ; What kind of anomalies have we searched for?
         cycles (atom [])] ; What anomalies did we find?
     (util/timeout
       (:cycle-search-timeout opts cycle-search-timeout)
       ; If we time out...
-      (do (info "Timing out search for" (peek @types) "in SCC of" (count scc)
-                "transactions")
-          ;(info :scc
-          ;      (with-out-str (pprint scc)))
-          ; We generate two types of anomalies no matter what. First, an
-          ; anomaly that lets us know we failed to complete the search. Second,
-          ; a fallback cycle so there's SOMETHING from this SCC.
-          (concat [{:type               :cycle-search-timeout
-                    :anomaly-spec-type  (peek @types)
-                    :does-not-contain   (drop-last @types)
-                    :scc-size           (count scc)}
-                   (cycle-cases-in-scc-fallback g fg pair-explainer scc)]
-                  ; Then any cycles we already found.
-                 @cycles))
+      (let [types  @types
+            cycles @cycles]
+        (info "Timing out search for" (peek types) "in SCC of" (count scc)
+              "transactions (checked" types ")")
+        ;(info :scc
+        ;      (with-out-str (pprint scc)))
+        ; We generate two types of anomalies no matter what. First, an anomaly
+        ; that lets us know we failed to complete the search. Second, a
+        ; fallback cycle so there's SOMETHING from this SCC.
+        (concat [{:type               :cycle-search-timeout
+                  :anomaly-spec-type  (peek types)
+                  :does-not-contain   (drop-last types)
+                  :scc-size           (count scc)}
+                 (cycle-cases-in-scc-fallback g fg pair-explainer scc)]
+                ; Then any cycles we already found.
+                cycles))
       ; Now, try each type of cycle we can search for
       ;
       ; This is basically a miniature interpreter for the anomaly specification
