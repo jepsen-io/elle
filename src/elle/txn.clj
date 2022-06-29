@@ -269,6 +269,27 @@
        :elle.graph/invalid
        [(if rw? (inc n) n) rw?]))))
 
+(def cycle-type-priorities
+  "A map of cycle types to approximately how bad they are; low numbers are more
+  interesting/severe anomalies"
+  (->> [:G0
+        :G1c
+        :G-single
+        :G-nonadjacent
+        :G2-item
+        :G0-process
+        :G1c-process
+        :G-single-process
+        :G-nonadjacent-process
+        :G2-item-process
+        :G0-realtime
+        :G1c-realtime
+        :G-single-realtime
+        :G-nonadjacent-realtime
+        :G2-item-realtime]
+       (map-indexed (fn [i t] [t i]))
+       (into {})))
+
 (def cycle-anomaly-specs
   "We define a specification language for different anomaly types, and a small
    interpreter to search for them. An anomaly is specified by a map including:
@@ -287,71 +308,74 @@
 
      :filter-ex    A predicate over a cycle explanation. We use this
                    to restrict cycles to e.g. *just* G2 instead of G-single."
-  {:G0        {:rels #{:ww}}
-   ; We want at least one wr edge, so we specify that as first-rels.
-   :G1c       {:first-rels #{:wr}
-               :rest-rels  #{:ww :wr}}
-   ; Likewise, G-single starts with the anti-dependency edge. This anomaly is
-   ; read skew, and is proscribed by SI.
-   :G-single  {:first-rels  #{:rw}
-               :rest-rels   #{:ww :wr}}
+  (sorted-map-by
+    (fn [a b] (compare (cycle-type-priorities a 100)
+                       (cycle-type-priorities b 100)))
+    :G0        {:rels #{:ww}}
+    ; We want at least one wr edge, so we specify that as first-rels.
+    :G1c       {:first-rels #{:wr}
+                :rest-rels  #{:ww :wr}}
+    ; Likewise, G-single starts with the anti-dependency edge. This anomaly is
+    ; read skew, and is proscribed by SI.
+    :G-single  {:first-rels  #{:rw}
+                :rest-rels   #{:ww :wr}}
 
-   ; Per Cerone & Gotsman
-   ; (http://software.imdea.org/~gotsman/papers/si-podc16.pdf), strong session
-   ; SI is equivalent to allowing only cycles with 2+ adjacent rw edges.
-   ; G-single is a special case, where there is exactly one such edge. We
-   ; define a more general form of G-single, which we call G-nonadjacent: a
-   ; cycle which has rw edges, and no pair of rw edges are adjacent.
-   :G-nonadjacent {:rels              #{:ww :wr :rw}
-                   :with              nonadjacent-rw
-                   ; We need more than one rw edge for this to count; otherwise
-                   ; it's G-single.
-                   :filter-path-state (fn [ps] (< 1 (first (:state ps))))}
+    ; Per Cerone & Gotsman
+    ; (http://software.imdea.org/~gotsman/papers/si-podc16.pdf), strong session
+    ; SI is equivalent to allowing only cycles with 2+ adjacent rw edges.
+    ; G-single is a special case, where there is exactly one such edge. We
+    ; define a more general form of G-single, which we call G-nonadjacent: a
+    ; cycle which has rw edges, and no pair of rw edges are adjacent.
+    :G-nonadjacent {:rels              #{:ww :wr :rw}
+                    :with              nonadjacent-rw
+                    ; We need more than one rw edge for this to count;
+                    ; otherwise it's G-single.
+                    :filter-path-state (fn [ps] (< 1 (first (:state ps))))}
 
-   ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
-   ; insists on being G2, rather than G-single. Not bulletproof, but G-single
-   ; is worse, so I'm OK with it.
-   ;
-   ; Note that right now we have no model for predicate dependencies, so
-   ; *everything* we find is G2-item.
-   :G2-item   {:first-rels  #{:rw}
-               :rest-rels   #{:ww :wr :rw}
-               :filter-ex   (comp #{:G2-item} :type)}
+    ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
+    ; insists on being G2, rather than G-single. Not bulletproof, but G-single
+    ; is worse, so I'm OK with it.
+    ;
+    ; Note that right now we have no model for predicate dependencies, so
+    ; *everything* we find is G2-item.
+    :G2-item   {:first-rels  #{:rw}
+                :rest-rels   #{:ww :wr :rw}
+                :filter-ex   (comp #{:G2-item} :type)}
 
-   ; A process G0 can use any number of process and ww edges--process is
-   ; acyclic, so there's got to be at least one ww edge. We also demand the
-   ; resulting cycle be G0-process, to filter out plain old G0s.
-   :G0-process        {:rels        #{:ww :process}
-                       :filter-ex   (comp #{:G0-process} :type)}
-   ; G1c-process needs at least one wr-edge to distinguish itself from
-   ; G0-process.
-   :G1c-process       {:first-rels  #{:wr}
-                       :rest-rels   #{:ww :wr :process}
-                       :filter-ex   (comp #{:G1c-process} :type)}
-   ; G-single-process starts with an anti-dep edge and can use processes from
-   ; there.
-   :G-single-process  {:first-rels  #{:rw}
-                       :rest-rels   #{:ww :wr :process}
-                       :filter-ex   (comp #{:G-single-process} :type)}
-   ; G2-process starts with an anti-dep edge, and allows anything from there.
-   ; Plus it's gotta be G2-process, so we don't report G2s or G-single-process
-   ; etc.
-   :G2-item-process   {:first-rels  #{:rw}
-                       :rest-rels   #{:ww :wr :rw :process}
-                       :filter-ex   (comp #{:G2-item-process} :type)}
+    ; A process G0 can use any number of process and ww edges--process is
+    ; acyclic, so there's got to be at least one ww edge. We also demand the
+    ; resulting cycle be G0-process, to filter out plain old G0s.
+    :G0-process        {:rels        #{:ww :process}
+                        :filter-ex   (comp #{:G0-process} :type)}
+    ; G1c-process needs at least one wr-edge to distinguish itself from
+    ; G0-process.
+    :G1c-process       {:first-rels  #{:wr}
+                        :rest-rels   #{:ww :wr :process}
+                        :filter-ex   (comp #{:G1c-process} :type)}
+    ; G-single-process starts with an anti-dep edge and can use processes from
+    ; there.
+    :G-single-process  {:first-rels  #{:rw}
+                        :rest-rels   #{:ww :wr :process}
+                        :filter-ex   (comp #{:G-single-process} :type)}
+    ; G2-process starts with an anti-dep edge, and allows anything from there.
+    ; Plus it's gotta be G2-process, so we don't report G2s or G-single-process
+    ; etc.
+    :G2-item-process   {:first-rels  #{:rw}
+                        :rest-rels   #{:ww :wr :rw :process}
+                        :filter-ex   (comp #{:G2-item-process} :type)}
 
-   ; Ditto for realtime
-   :G0-realtime        {:rels        #{:ww :realtime}
-                        :filter-ex   (comp #{:G0-realtime} :type)}
-   :G1c-realtime       {:first-rels  #{:wr}
-                        :rest-rels   #{:ww :wr :realtime}
-                        :filter-ex   (comp #{:G1c-realtime} :type)}
-   :G-single-realtime  {:first-rels  #{:rw}
-                        :rest-rels   #{:ww :wr :realtime}
-                        :filter-ex   (comp #{:G-single-realtime} :type)}
-   :G2-item-realtime   {:first-rels  #{:rw}
-                        :rest-rels   #{:ww :wr :rw :realtime}
-                        :filter-ex   (comp #{:G2-item-realtime} :type)}})
+    ; Ditto for realtime
+    :G0-realtime        {:rels        #{:ww :realtime}
+                         :filter-ex   (comp #{:G0-realtime} :type)}
+    :G1c-realtime       {:first-rels  #{:wr}
+                         :rest-rels   #{:ww :wr :realtime}
+                         :filter-ex   (comp #{:G1c-realtime} :type)}
+    :G-single-realtime  {:first-rels  #{:rw}
+                         :rest-rels   #{:ww :wr :realtime}
+                         :filter-ex   (comp #{:G-single-realtime} :type)}
+    :G2-item-realtime   {:first-rels  #{:rw}
+                         :rest-rels   #{:ww :wr :rw :realtime}
+                         :filter-ex   (comp #{:G2-item-realtime} :type)}))
 
 (def cycle-types
   "All types of cycles we can detect."
