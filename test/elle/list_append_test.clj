@@ -861,9 +861,13 @@
     ; TODO: might be worth modifying graph/fallback-cycle so it tries to follow
     ; minimal edges first. Might help generate worse anomalies.
     (is (not (:valid? r)))
-    (is (= #{:ROLA :cursor-stability} (:not r)))
-    (is (= [:G2-item-realtime :cycle-search-timeout :lost-update]
-           (:anomaly-types r)))))
+    (is (= #{:strong-serializable} (:not r)))
+    (is (= [:G2-item-realtime :cycle-search-timeout]
+           (:anomaly-types r)))
+    (let [cst (-> r :anomalies :cycle-search-timeout first)]
+      (is (= []     (:does-not-contain cst)))
+      (is (keyword? (:anomaly-spec-type cst)))
+      (is (number?  (:scc-size cst))))))
 
 (deftest G-nonadjacent-test
   ; For G-nonadjacent, we need two rw edges (just one would be G-single), and

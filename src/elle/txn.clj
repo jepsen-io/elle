@@ -453,51 +453,61 @@
   "How long, in milliseconds, to look for a certain cycle in any given SCC."
   1000)
 
+(defn cycle-cases-in-scc-fallback
+  "This finds SOME cycle via DFS in an SCC as a fallback, in case our BFS gets
+  stuck. We invoke this if our search times out."
+  [g fg pair-explainer scc]
+  (let [c (loop [rels [#{:ww}
+                       #{:ww :realtime :process}
+                       #{:ww :wr}
+                       #{:ww :wr :realtime :process}
+                       #{:ww :wr :rw}
+                       #{:ww :wr :rw :realtime :process}]]
+            (if-not (seq rels)
+              ; Out of projections; fall back to the total scc, which
+              ; MUST have a cycle.
+              (g/fallback-cycle g scc)
+
+              ; Try the graph which has just those relationships and
+              ; that particular SCC
+              (if-let [sub-scc (-> ^IGraph (fg (first rels))
+                                   (.select (g/->bset scc))
+                                   (g/strongly-connected-components)
+                                   first)]
+                ; Hey, we've got a smaller SCC to focus on!
+                (g/fallback-cycle g sub-scc)
+                ; No dice
+                (recur (next rels)))))]
+    (elle/explain-cycle cycle-explainer
+                        pair-explainer
+                        c)))
+
 (defn cycle-cases-in-scc
   "Searches a single SCC for cycle anomalies. See cycle-cases."
   [opts g fg pair-explainer scc]
-  (let [current-type (atom nil)]
+  (let [; We're going to do a partial search which can time out. If that
+        ; happens, we want to preserve as many of the cycles that we found as
+        ; possible, and offer an informative error message. These two variables
+        ; help us do that.
+        types  (atom nil) ; What kind of anomalies have we searched for?
+        cycles (atom [])] ; What anomalies did we find?
     (util/timeout
       (:cycle-search-timeout opts cycle-search-timeout)
       ; If we time out...
-      (do (info "Timing out search for" @current-type "in SCC of" (count scc)
+      (do (info "Timing out search for" (peek @types) "in SCC of" (count scc)
                 "transactions")
           ;(info :scc
           ;      (with-out-str (pprint scc)))
-          ; We generate two types of anomalies. First, we want to record that
-          ; we failed to find an anomaly, which helps us signal to the user that
-          ; we haven't fully checked this SCC.
-          [{:type               :cycle-search-timeout
-            :anomaly-spec-type  @current-type
-            :scc-size           (count scc)}
-           ; Second, we generate SOME kind of cycle, as a fallback. Maybe we'll
-           ; get lucky and find a violation the user cares about--even if we
-           ; can't be exhaustive, it'll suggest where things went wrong.
-           (let [c (loop [rels [#{:ww}
-                                #{:ww :realtime :process}
-                                #{:ww :wr}
-                                #{:ww :wr :realtime :process}
-                                #{:ww :wr :rw}
-                                #{:ww :wr :rw :realtime :process}]]
-                     (if-not (seq rels)
-                       ; Out of projections; fall back to the total scc, which
-                       ; MUST have a cycle.
-                       (g/fallback-cycle g scc)
-
-                       ; Try the graph which has just those relationships and
-                       ; that particular SCC
-                       (if-let [sub-scc (-> ^IGraph (fg (first rels))
-                                            (.select (g/->bset scc))
-                                            (g/strongly-connected-components)
-                                            first)]
-                         ; Hey, we've got a smaller SCC to focus on!
-                         (g/fallback-cycle g sub-scc)
-                         ; No dice
-                         (recur (next rels)))))]
-             (elle/explain-cycle cycle-explainer
-                                 pair-explainer
-                                 c))])
-
+          ; We generate two types of anomalies no matter what. First, an
+          ; anomaly that lets us know we failed to complete the search. Second,
+          ; a fallback cycle so there's SOMETHING from this SCC.
+          (concat [{:type               :cycle-search-timeout
+                    :anomaly-spec-type  (peek @types)
+                    :does-not-contain   (drop-last @types)
+                    :scc-size           (count scc)}
+                   (cycle-cases-in-scc-fallback g fg pair-explainer scc)]
+                  ; Then any cycles we already found.
+                 @cycles))
       ; Now, try each type of cycle we can search for
       ;
       ; This is basically a miniature interpreter for the anomaly specification
@@ -513,52 +523,50 @@
       ; the general ones if we can't find special-case ones. e.g. if we find a
       ; g-single, there's no need to look for g-nonadjacent.
       ;(info "Checking scc of size" (count scc))
-      (->> (for [[type spec] cycle-anomaly-specs]
-             (do
-               ;(info "Checking for" type)
-               ; For timeout reporting, we keep track of what type of anomaly
-               ; we're looking for.
-               (reset! current-type type)
+      (doseq [[type spec] cycle-anomaly-specs]
+        ; (info "Checking for" type)
+        ; For timeout reporting, we keep track of what type of anomaly
+        ; we're looking for.
+        (swap! types conj type)
 
-               ; First, find a cycle using the spec.
-               (let [;_      (prn)
-                     ; _      (prn :spec type spec)
-                     ; Restrict the graph to certain relationships, if necessary.
-                     g     (if-let [rels (:rels spec)]
-                             (do ;(info "getting restricted graph")
-                                 (fg rels))
-                             g)
-                     ; Now, we have three cycle-finding strategies...
-                     ;_     (info "Finding cycle")
-                     cycle (cond (:with spec)
-                                 (g/find-cycle-with (:with spec)
-                                                    (:filter-path-state spec)
-                                                    g scc)
+        ; First, find a cycle using the spec.
+        (let [;_      (prn)
+              ; _      (prn :spec type spec)
+              ; Restrict the graph to certain relationships, if necessary.
+              g     (if-let [rels (:rels spec)]
+                      (do ;(info "getting restricted graph")
+                          (fg rels))
+                      g)
+              ; Now, we have three cycle-finding strategies...
+              ;_     (info "Finding cycle")
+              cycle (cond (:with spec)
+                          (g/find-cycle-with (:with spec)
+                                             (:filter-path-state spec)
+                                             g scc)
 
-                                 (:rels spec)
-                                 (g/find-cycle g scc)
+                          (:rels spec)
+                          (g/find-cycle g scc)
 
-                                 true
-                                 (g/find-cycle-starting-with
-                                   (fg (:first-rels spec))
-                                   (fg (:rest-rels spec))
-                                   scc))]
-                 ;_ (info "Done with cycle search")
-                 (when cycle
-                   ; (info "Explaining cycle")
-                   ; Explain the cycle
-                   (let [ex (elle/explain-cycle cycle-explainer pair-explainer
-                                                cycle)]
-                     ; (info "Filtering explanation")
-                     ;(prn :explanation ex)
-                     ; Make sure it passes the filter, if we have one.
-                     (if-let [p (:filter-ex spec)]
+                          true
+                          (g/find-cycle-starting-with
+                            (fg (:first-rels spec))
+                            (fg (:rest-rels spec))
+                            scc))]
+          ;_ (info "Done with cycle search")
+          (when cycle
+            ; (info "Explaining cycle")
+            ; Explain the cycle
+            (let [ex (elle/explain-cycle cycle-explainer pair-explainer
+                                         cycle)
+                  ; _ (info "Filtering explanation")
+                  ; _ (prn :explanation ex)
+                  ; Make sure it passes the filter, if we have one.
+                  ex (if-let [p (:filter-ex spec)]
                        (when (p ex) ex)
-                       ex))))))
-           ; Strip out missing cycles, or explanations that didn't pass muster
-           (remove nil?)
-           ; We want to force realization *here*, so it'll time out properly.
-           doall))))
+                       ex)]
+              ; And record that we found it
+              (swap! cycles conj ex)))))
+      @cycles)))
 
 (defn cycle-cases
   "We take the unified graph, a pair explainer that can justify relationships
