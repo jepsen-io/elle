@@ -264,7 +264,7 @@
   ([[n last-was-rw?] path rel v']
    ; It's fine to follow *non* rw links, but if you've only
    ; got rw, and we just did one, this path is invalid.
-   (let [rw? (= #{:rw} rel)]
+   (let [rw? (= (g/bset :rw) rel)]
      (if (and last-was-rw? rw?)
        :elle.graph/invalid
        [(if rw? (inc n) n) rw?]))))
@@ -311,7 +311,7 @@
   (sorted-map-by
     (fn [a b] (compare (cycle-type-priorities a 100)
                        (cycle-type-priorities b 100)))
-    :G0        {:rels #{:ww}}
+    :G0        {:rels (g/bset :ww)}
     ; We want at least one wr edge, so we specify that as first-rels.
     :G1c       {:first-rels #{:wr}
                 :rest-rels  #{:ww :wr}}

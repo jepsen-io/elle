@@ -161,7 +161,7 @@
                       ([last-was-rw? path rel v']
                        ; It's fine to follow *non* rw links, but if you've only
                        ; got rw, and we just did one, this path is invalid.
-                       (let [rw? (= #{:rw} rel)]
+                       (let [rw? (= (bset :rw) rel)]
                          (if (and last-was-rw? rw?)
                            :elle.graph/invalid
                            rw?))))
@@ -241,7 +241,7 @@
   (let [g (-> (digraph)
               (link 1 2 :foo)
               (link 1 2 :bar))]
-    (is (= #{:foo :bar} (edge g 1 2)))))
+    (is (= #{:foo :bar} (->clj (edge g 1 2))))))
 
 (deftest project+remove-relationship-test
   (let [g (-> (digraph)

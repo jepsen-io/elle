@@ -7,11 +7,10 @@
   pretty-printing, etc."
   (:require [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
-            [clojure.set :as set]
+            [dom-top.core :refer [loopr]]
             [elle.util :refer [map-vals maybe-interrupt]])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
-                               Graphs$Edge
                                ICollection
                                IEdge
                                IEntry
@@ -37,7 +36,7 @@
   (->clj [e]
     {:from  (.from e)
      :to    (.to e)
-     :value (.value e)})
+     :value (->clj (.value e))})
 
   IMap
   (->clj [s]
@@ -117,10 +116,12 @@
        (catch IllegalArgumentException e)))
 
 (def ^BinaryOperator union-edge
-  "A binary operator performing set union on the values of edges."
+  "A binary operator performing bifurcan set union on the values of edges."
   (reify BinaryOperator
     (apply [_ a b]
-      (set/union a b))))
+      (cond (nil? a) b
+            (nil? b) a
+            true    (.union ^ISet a ^ISet b)))))
 
 (defn ^IEdge edge
   "Returns the edge between two vertices."
@@ -130,15 +131,27 @@
 (defn edges
   "A lazy seq of all edges."
   [^IGraph g]
-  ; We work around a bug in bifurcan which returns edges backwards!
-  (map (fn [^IEdge e]
-         (Graphs$Edge. (.value e) (.to e) (.from e)))
-       (.edges g)))
+  (.edges g))
 
 (defn add
   "Add a node to a graph."
   [^DirectedGraph graph node]
   (.add graph node))
+
+(defn ^Set bset
+  "Constructs a new Bifurcan Set, either empty or containing the given object."
+  ([]
+   Set/EMPTY)
+  ([x]
+   (.. Set/EMPTY linear (add x) forked)))
+
+(defn ^Set ->bset
+  "Turns any reducible into a Bifurcan Set."
+  [xs]
+  (loopr [^ISet s (.linear Set/EMPTY)]
+         [x xs]
+         (recur (.add s x))
+         (.forked s)))
 
 (defn set-add
   "Add an element to a set."
@@ -156,7 +169,7 @@
   ([^DirectedGraph graph node succ relationship]
    (do ;(assert (not (nil? node)))
        ;(assert (not (nil? succ)))
-       (.link graph node succ #{relationship} union-edge))))
+       (.link graph node succ (bset relationship) union-edge))))
 
 (defn link-to-all
   "Given a graph g, links x to all ys."
@@ -231,9 +244,9 @@
 (defn remove-relationship
   "Filters a graph, removing the given relationship from it."
   [g rel]
-  (keep-edge-values (fn [rs]
-                      (let [rs' (disj rs rel)]
-                        (when (seq rs')
+  (keep-edge-values (fn [^ISet rs]
+                      (let [rs' (.remove rs rel)]
+                        (when-not (= 0 (.size rs'))
                           rs')))
                     g))
 
@@ -241,19 +254,22 @@
   "Filters a graph to just those edges with the given relationship."
   [g rel]
   ; Might as well re-use this, we're gonna build it a lot.
-  (let [rs' #{rel}]
-    (keep-edge-values (fn [rs] (when (contains? rs rel) rs'))
+  (let [rs' (bset rel)]
+    (keep-edge-values (fn [^Set rs] (when (.contains rs rel) rs'))
                       g)))
 
 (defn filter-relationships
   "Filters a graph g to just those edges which intersect with the given set of
   relationships."
   [target-rels g]
-  (keep-edge-values (fn [rs]
-                      (let [rs' (set/intersection target-rels rs)]
-                        (when-not (empty? rs')
-                          rs')))
-                    g))
+  (let [^Set target-rels (if (instance? ISet target-rels)
+                           target-rels
+                           (->bset target-rels))]
+    (keep-edge-values (fn [^ISet rels]
+                        (let [rels' (.intersection target-rels rels)]
+                          (when-not (= 0 (.size rels'))
+                            rels')))
+                      g)))
 
 (defn ^DirectedGraph remove-self-edges
   "There are times when it's just way simpler to use link-all-to-all between
@@ -349,15 +365,6 @@
           (.linear (DirectedGraph.))
           m))
 
-(defn ^Set ->bset
-  "Turns any collection into a Bifurcan Set."
-  ([coll]
-   (->bset coll (.linear (Set.))))
-  ([coll ^Set s]
-   (if (seq coll)
-     (recur (next coll) (.add s (first coll)))
-     s)))
-
 (defn ^DirectedGraph digraph-union
   "Takes the union of n graphs, merging edges with union."
   ([] (DirectedGraph.))
@@ -378,7 +385,6 @@
   A iterative verison of Tarjan's Strongly Connected Components."
   [graph]
   (strongly-connected-components (map->bdigraph graph)))
-
 
 (defn map-vertices
   "Takes a function of vertices, and a graph, and returns graph with all
