@@ -13,11 +13,10 @@
                   [txn :as ct]
                   [util :as util :refer [index-of
                                          nanos->secs]]]
-            [hiccup.core :as h]
-            [jepsen [txn :as txn :refer [reduce-mops]]]
+            [hiccup.core :as hiccup]
+            [jepsen [history :as h]
+                    [txn :as txn :refer [reduce-mops]]]
             [jepsen.txn.micro-op :as mop]
-            [knossos [op :as op]
-                     [history :refer [pair-index]]]
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
@@ -45,7 +44,7 @@
   sure that every invoke appending a value to a key chose a unique value."
   [history]
   (reduce-mops (fn [written op [f k v]]
-                 (if (and (op/invoke? op) (= :append f))
+                 (if (and (h/invoke? op) (= :append f))
                    (let [writes-of-k (written k #{})]
                      (if (contains? writes-of-k v)
                        (throw+ {:valid?   :unknown
@@ -77,7 +76,7 @@
   (let [failed (ct/failed-writes #{:append} history)]
     ; Look for ok ops with a read mop of a failed append
     (->> history
-         (filter op/ok?)
+         h/oks
          ct/op-mops
          (mapcat (fn [[op [f k v :as mop]]]
                    (when (= :r f)
@@ -103,7 +102,7 @@
   (let [im (ct/intermediate-writes #{:append} history)]
     ; Look for ok ops with a read mop of an intermediate append
     (->> history
-         (filter op/ok?)
+         h/oks
          ct/op-mops
          (keep (fn [[op [f k v :as mop]]]
                  (when (= :r f)
@@ -843,7 +842,7 @@
                                                               ".html"))
             _ (io/make-parents path)]
         (spit path
-              (h/html (incompatible-order-viz k longest (get ops k))))))))
+              (hiccup/html (incompatible-order-viz k longest (get ops k))))))))
 
 (defn check
   "Full checker for append and read histories. Options are:
@@ -876,7 +875,7 @@
   ([history]
    (check {} history))
   ([opts history]
-   (let [history      (remove (comp #{:nemesis} :process) history)
+   (let [history      (h/client-ops history)
          g1a          (g1a-cases history)
          g1b          (g1b-cases history)
          internal     (internal-cases history)
@@ -885,7 +884,7 @@
 
          ; We don't want to detect duplicates or incompatible orders for
          ; aborted txns.
-         history+      (filter (comp #{:ok :info} :type) history)
+         history+      (h/possible history)
          dups          (duplicates history+)
          sorted-values (sorted-values history+)
          incmp-order   (incompatible-orders sorted-values)

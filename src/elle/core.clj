@@ -25,18 +25,18 @@
   checker runs that function, identifies strongly-connected components in the
   resulting graph, and decides whether the history is valid based on whether
   the graph has any strongly connected components--e.g. cycles."
-  (:require [elle [graph :as g]
-                  [util :as util]]
-            [clojure.tools.logging :refer [info error warn]]
+  (:require [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
             [clojure [pprint :refer [pprint]]
                      [set :as set]
                      [string :as str]]
+            [dom-top.core :refer [loopr]]
+            [elle [graph :as g]
+                  [util :as util]]
             [clojure.java.io :as io]
-            [jepsen.txn :as txn]
+            [jepsen [history :as h]
+                     [txn :as txn]]
             [jepsen.txn.micro-op :as mop]
-            [knossos [op :as op]
-                     [history :refer [pair-index+]]]
             [slingshot.slingshot :refer [try+ throw+]]))
 
 ; This is going to look a bit odd. Please bear with me.
@@ -245,7 +245,7 @@
   keys are monotonically increasing, and derives relationships between ops
   based on those values."
   [history]
-  (let [history (filter op/ok? history)
+  (let [history (h/oks history)
         graph (->> history
                    (mapcat (comp keys :value))
                    distinct
@@ -283,7 +283,7 @@
   process, such that every operation a process performs is ordered (but
   operations across different processes are not related)."
   [history]
-  (let [oks (filter op/ok? history) ; TODO: order infos?
+  (let [oks (h/oks history) ; TODO: order infos?
         graph (->> oks
                    (map :process)
                    distinct
@@ -294,10 +294,10 @@
 
 ; Realtime order
 
-(defrecord RealtimeExplainer [pairs]
+(defrecord RealtimeExplainer [history]
   DataExplainer
   (explain-pair-data [_ a' b']
-    (let [b (get pairs b')]
+    (let [b (h/invocation history b')]
       (when (< (:index a') (:index b))
         {:type :realtime
          :a'   a'
@@ -347,42 +347,38 @@
   ; link every buffered completion (a, b, c...) to x. When we see a new
   ; completion d, we look backwards in the graph to see whether any buffered
   ; completions point to d, and remove those from the buffer.
-  ;
-  ; OK, first up: we need this index to look forward from invokes to completes.
-  (let [pairs (pair-index+ history)]
-    (loop [history history
-           oks     #{}               ; Our buffer of completed ops
-           g       (g/digraph)] ; Our order graph
-      (if-let [op (first history)]
-        (case (:type op)
-          ; A new operation begins! Link every completed op to this one's
-          ; completion. Note that we generate edges here regardless of whether
-          ; this op will fail or crash--we might not actually NEED edges to
-          ; failures, but I don't think they'll hurt. We *do* need edges to
-          ; crashed ops, because they may complete later on.
-          :invoke (let [op' (get pairs op)
-                        g   (reduce (fn [g ok]
-                                      (g/link g ok op' :realtime))
-                                    g
-                                    oks)]
-                    (recur (next history) oks g))
-          ; An operation has completed. Add it to the oks buffer, and remove
-          ; oks that this ok implies must have completed.
-          :ok     (let [implied (g/->clj (g/in g op))
-                        oks     (-> oks
-                                    (set/difference implied)
-                                    (conj op))]
-                    (recur (next history) oks g))
-          ; An operation that failed doesn't affect anything--we don't generate
-          ; dependencies on failed transactions because they didn't happen. I
-          ; mean we COULD, but it doesn't seem useful.
-          :fail (recur (next history) oks g)
-          ; Crashed operations, likewise: nothing can follow a crashed op, so
-          ; we don't need to add them to the ok set.
-          :info (recur (next history) oks g))
-        ; All done!
-        {:graph     g
-         :explainer (RealtimeExplainer. pairs)}))))
+  (loopr [oks     #{}          ; Our buffer of completed ops
+          g       (g/digraph)] ; Our order graph
+         [op history]
+         (case (:type op)
+           ; A new operation begins! Link every completed op to this one's
+           ; completion. Note that we generate edges here regardless of whether
+           ; this op will fail or crash--we might not actually NEED edges to
+           ; failures, but I don't think they'll hurt. We *do* need edges to
+           ; crashed ops, because they may complete later on.
+           :invoke (let [op' (h/completion history op)
+                         g   (reduce (fn [g ok]
+                                       (g/link g ok op' :realtime))
+                                     g
+                                     oks)]
+                     (recur oks g))
+           ; An operation has completed. Add it to the oks buffer, and remove
+           ; oks that this ok implies must have completed.
+           :ok     (let [implied (g/->clj (g/in g op))
+                         oks     (-> oks
+                                     (set/difference implied)
+                                     (conj op))]
+                     (recur oks g))
+           ; An operation that failed doesn't affect anything--we don't generate
+           ; dependencies on failed transactions because they didn't happen. I
+           ; mean we COULD, but it doesn't seem useful.
+           :fail (recur oks g)
+           ; Crashed operations, likewise: nothing can follow a crashed op, so
+           ; we don't need to add them to the ok set.
+           :info (recur oks g))
+         ; All done!
+         {:graph     g
+          :explainer (RealtimeExplainer. history)}))
 
 (defn explain-binding
   "Takes a seq of [name op] pairs, and constructs a string naming each op."
@@ -476,7 +472,7 @@
        :sccs      A set of strongly connected components
        :anomalies Any anomalies we found during this analysis.}"
   [analyze-fn history]
-  (let [history           (remove (comp #{:nemesis} :process) history)
+  (let [history           (h/client-ops history)
         {:keys [anomalies explainer graph]} (analyze-fn history)
         sccs              (g/strongly-connected-components graph)
         cycles            (->> sccs

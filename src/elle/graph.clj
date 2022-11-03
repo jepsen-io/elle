@@ -8,7 +8,8 @@
   (:require [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
             [dom-top.core :refer [loopr]]
-            [elle.util :refer [map-vals maybe-interrupt]])
+            [elle.util :refer [map-vals maybe-interrupt]]
+            [jepsen.history :as h])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
                                ICollection
@@ -21,7 +22,8 @@
                                Set
                                SortedMap)
            (java.util.function BinaryOperator
-                               Function)))
+                               Function)
+           (jepsen.history Op)))
 
 ; Convert stuff back to Clojure data structures. Mostly used for testing.
 (defprotocol ToClj
@@ -66,6 +68,10 @@
   clojure.lang.IPersistentMap
   (->clj [m]
     (into {} (map (fn [[k v]] [(->clj k) (->clj v)]) m)))
+
+  jepsen.history.Op
+  (->clj [m]
+    (into m (map-vals ->clj m)))
 
   Object
   (->clj [x] x)

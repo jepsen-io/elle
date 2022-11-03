@@ -10,8 +10,8 @@
                   [graph :as g]
                   [util :as util]
                   [viz :as viz]]
-            [jepsen.txn :as txn :refer [reduce-mops]]
-						[knossos.op :as op]
+            [jepsen [history :as h]
+                    [txn :as txn :refer [reduce-mops]]]
             [unilog.config :refer [start-logging!]])
   (:import (io.lacuna.bifurcan IGraph
                                LinearMap
@@ -30,7 +30,7 @@
   to all ok operations. Returns nil iff every invocation of f is nil."
   [f history]
   (->> history
-       (filter op/ok?)
+       h/oks
        (keep f)
        seq))
 
@@ -67,7 +67,7 @@
   wrote them. Used for detecting aborted reads."
   [write? history]
   (reduce-mops (fn index [failed op [f k v :as mop]]
-                 (if (and (op/fail? op)
+                 (if (and (h/fail? op)
                           (write? f))
                    (assoc-in failed [k v] op)
                    failed))

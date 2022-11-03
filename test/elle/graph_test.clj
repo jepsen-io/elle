@@ -1,8 +1,6 @@
 (ns elle.graph-test
   (:require [elle.graph :refer :all]
             [jepsen.txn :as txn]
-            [knossos [history :as history]
-                     [op :as op]]
             [clojure.test :refer :all]
             [slingshot.slingshot :refer [try+ throw+]]))
 

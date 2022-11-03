@@ -8,7 +8,7 @@
                   [list-append-test :as lat :refer [pair]]
                   [rw-register :as r]
                   [rw-register-test :as rt]]
-            [knossos.history :as h]
+            [jepsen.history :as h]
             [clojure.test :refer :all]))
 
 (defn list-analysis
@@ -18,7 +18,7 @@
         [t3 t3'] (pair (lat/op 3 :ok "rx12rz1"))
         [t4 t4'] (pair (lat/op 4 :ok "az2ay1"))
         [t5 t5'] (pair (lat/op 5 :ok "rzax2"))
-        h (h/index  [t3 t3' t1 t1' t2 t2' t4 t4' t5 t5'])
+        h (h/history [t3 t3' t1 t1' t2 t2' t4 t4' t5 t5'])
 
         analyzer (elle/combine la/graph elle/realtime-graph)]
       (elle/check- analyzer h)))
@@ -36,11 +36,11 @@
         [t2 t2'] (pair (rt/op 1 :ok "wx2"))
         [t3 t3'] (pair (rt/op 2 :ok "rx2wy1"))
         [t4 t4'] (pair (rt/op 3 :ok "rx1"))
-        h (h/index  [t1 t1' t2 t2' t3 t3' t4 t4'])
+        h (h/history [t1 t1' t2 t2' t3 t3' t4 t4'])
 
         analyzer (partial r/graph {:additional-graphs [elle/process-graph]
                                    :sequential-keys? true})]
-      elle/check- analyzer h))
+      (elle/check- analyzer h)))
 
 (deftest ^:interactive view-r-scc-test
   (let [a (register-analysis)]

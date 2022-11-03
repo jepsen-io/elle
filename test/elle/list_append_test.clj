@@ -1,30 +1,26 @@
 (ns elle.list-append-test
   (:refer-clojure :exclude [test])
   (:require [clojure [pprint :refer [pprint]]
-                     [test :refer :all]]
+                     [test :refer :all]
+                     [walk :as walk]]
             [elle [core :as elle]
                   [core-test :refer [read-history]]
                   [list-append :refer :all]
                   [graph :as g]
                   [util :refer [map-vals]]]
-            [jepsen.txn :as txn]
-            [knossos [history :as history]
-                     [op :as op]]
+            [jepsen [history :as h]
+                    [txn :as txn]]
             [slingshot.slingshot :refer [try+ throw+]]))
 
 (defn just-graph
-  "Takes a history, indexes it, uses the given analyzer function to construct a
-  graph+explainer, extracts just the graph, converts it to Clojure, and removes
-  indices from the ops."
-  [analyzer history]
-  (->> history
-       history/index
+  "Takes ops, makes a history, uses the given analyzer function to construct a
+  graph+explainer, extracts just the graph, converts it to Clojure."
+  [analyzer ops]
+  (->> ops
+       h/history
        analyzer
        :graph
        g/->clj
-       (map (fn [[k vs]]
-              [(dissoc k :index)
-               (map #(dissoc % :index) vs)]))
        (into {})))
 
 (defn op
@@ -34,23 +30,23 @@
   ry12      read y = [1 2]
   ax1ax2    append 1 to x, append 2 to x"
   ([string]
-  (let [[txn mop] (reduce (fn [[txn [f k v :as mop]] c]
-                            (case c
-                              \a [(conj txn mop) [:append]]
-                              \r [(conj txn mop) [:r]]
-                              \x [txn (conj mop :x)]
-                              \y [txn (conj mop :y)]
-                              \z [txn (conj mop :z)]
-                              (let [e (Long/parseLong (str c))]
-                                [txn [f k (case f
-                                            :append e
-                                            :r      (conj (or v []) e))]])))
-                          [[] nil]
-                          string)
-        txn (-> txn
-                (subvec 1)
-                (conj mop))]
-    {:type :ok, :value txn}))
+   (let [[txn mop] (reduce (fn [[txn [f k v :as mop]] c]
+                             (case c
+                               \a [(conj txn mop) [:append]]
+                               \r [(conj txn mop) [:r]]
+                               \x [txn (conj mop :x)]
+                               \y [txn (conj mop :y)]
+                               \z [txn (conj mop :z)]
+                               (let [e (Long/parseLong (str c))]
+                                 [txn [f k (case f
+                                             :append e
+                                             :r      (conj (or v []) e))]])))
+                           [[] nil]
+                           string)
+         txn (-> txn
+                 (subvec 1)
+                 (conj mop))]
+     {:time 0, :process 0, :type :ok, :f :txn, :value txn}))
   ([process type string]
    (assoc (op string) :process process :type type)))
 
@@ -66,56 +62,60 @@
    completion])
 
 (deftest op-test
-  (is (= {:type :ok, :value [[:append :x 1] [:append :x 2]]}
+  (is (= {:time 0, :type :ok, :f :txn, :process 0,
+          :value [[:append :x 1] [:append :x 2]]}
          (op "ax1ax2"))))
 
 (deftest ww-graph-test
-  (let [g   (comp (partial just-graph ww-graph) vector)
-        t1  (op "ax1")
-        t2  (op "ax2")
-        t3  (op "rx12")]
+  (let [g (partial just-graph ww-graph)
+        [t1 t2 t3 :as h]
+        (h/history [(op "ax1")
+                    (op "ax2")
+                    (op "rx12")])]
     (testing "write-write"
       ; Notice that T3 doesn't depend on T2, because we don't detect wr edges!
-      (is (= {t1 [t2] t2 []}
-             (g t1 t2 t3))))))
+      (is (= {t1 #{t2} t2 #{}}
+             (g h))))))
 
 (deftest wr-graph-test
-  (let [g (comp (partial just-graph wr-graph) vector)]
+  (let [g (partial just-graph wr-graph)]
     (testing "basic read"
-      (let [t1 (op "ax1")
-            t2 (op "rx1")
-            t3 (op "ax2")
-            t4 (op "rx12")]
+      (let [[t1 t2 t3 t4 :as h]
+            (h/history [(op "ax1")
+                        (op "rx1")
+                        (op "ax2")
+                        (op "rx12")])]
         ; Note that t2 doesn't precede t3, because the wr graph doesn't encode
         ; anti-dependency edges, and t1 doesn't precede t3, because there are
         ; no ww edges here.
-        (is (= {t1 [t2], t2 [], t3 [t4], t4 []}
-               (g t1 t2 t3 t4)))))))
+        (is (= {t1 #{t2}, t2 #{}, t3 #{t4}, t4 #{}}
+               (g h)))))))
 
 (deftest graph-test
   (let [g (comp (partial just-graph graph) vector)
-        ax1       {:type :ok, :value [[:append :x 1]]}
-        ax2       {:type :ok, :value [[:append :x 2]]}
-        ax1ay1    {:type :ok, :value [[:append :x 1] [:append :y 1]]}
-        ax1ry1    {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-        ax2ay1    {:type :ok, :value [[:append :x 2] [:append :y 1]]}
-        ax2ay2    {:type :ok, :value [[:append :x 2] [:append :y 2]]}
-        az1ax1ay1 {:type :ok, :value [[:append :z 1]
-                                      [:append :x 1]
-                                      [:append :y 1]]}
-        rxay1     {:type :ok, :value [[:r :x nil] [:append :y 1]]}
-        ryax1     {:type :ok, :value [[:r :y nil] [:append :x 1]]}
-        rx121     {:type :ok, :value [[:r :x [1 2 1]]]}
-        rx1ry1    {:type :ok, :value [[:r :x [1]] [:r :y [1]]]}
-        rx1ay2    {:type :ok, :value [[:r :x [1]] [:append :y 2]]}
-        ry12az3   {:type :ok, :value [[:r :y [1 2]] [:append :z 3]]}
-        rz13      {:type :ok, :value [[:r :z [1 3]]]}
-        rx        {:type :ok, :value [[:r :x nil]]}
-        rx1       {:type :ok, :value [[:r :x [1]]]}
-        rx12      {:type :ok, :value [[:r :x [1 2]]]}
-        rx12ry1   {:type :ok, :value [[:r :x [1 2]] [:r :y [1]]]}
-        rx12ry21  {:type :ok, :value [[:r :x [1 2]] [:r :y [2 1]]]}
-        ]
+        [ax1 ax2 ax1ay1 ax1ry1 ax2ay1 ax2ay2 az1ax1ay1 rxay1 ryax1 rx121 rx1ry1 rx1ay2 ry12az3 rz13 rx rx1 rx12 rx12ry1 rx12ry21 :as h]
+        (h/history
+          [{:process 0, :type :ok, :value [[:append :x 1]]}
+           {:process 0, :type :ok, :value [[:append :x 2]]}
+           {:process 0, :type :ok, :value [[:append :x 1] [:append :y 1]]}
+           {:process 0, :type :ok, :value [[:append :x 1] [:r :y [1]]]}
+           {:process 0, :type :ok, :value [[:append :x 2] [:append :y 1]]}
+           {:process 0, :type :ok, :value [[:append :x 2] [:append :y 2]]}
+           {:process 0, :type :ok, :value [[:append :z 1]
+                                           [:append :x 1]
+                                           [:append :y 1]]}
+           {:process 0, :type :ok, :value [[:r :x nil] [:append :y 1]]}
+           {:process 0, :type :ok, :value [[:r :y nil] [:append :x 1]]}
+           {:process 0, :type :ok, :value [[:r :x [1 2 1]]]}
+           {:process 0, :type :ok, :value [[:r :x [1]] [:r :y [1]]]}
+           {:process 0, :type :ok, :value [[:r :x [1]] [:append :y 2]]}
+           {:process 0, :type :ok, :value [[:r :y [1 2]] [:append :z 3]]}
+           {:process 0, :type :ok, :value [[:r :z [1 3]]]}
+           {:process 0, :type :ok, :value [[:r :x nil]]}
+           {:process 0, :type :ok, :value [[:r :x [1]]]}
+           {:process 0, :type :ok, :value [[:r :x [1 2]]]}
+           {:process 0, :type :ok, :value [[:r :x [1 2]] [:r :y [1]]]}
+           {:process 0, :type :ok, :value [[:r :x [1 2]] [:r :y [2 1]]]}])]
     (testing "empty history"
       (is (= {} (g))))
 
@@ -126,25 +126,25 @@
       (is (= {} (g rx))))
 
     (testing "one append one read"
-      (is (= {ax1 [rx1], rx1 []}
+      (is (= {ax1 #{rx1}, rx1 #{}}
              (g ax1 rx1))))
 
     (testing "read empty, append, read"
       ; This verifies anti-dependencies.
       ; We need the third read in order to establish ax1's ordering
-      (is (= {rx [ax1] ax1 [rx1] rx1 []}
+      (is (= {rx #{ax1} ax1 #{rx1} rx1 #{}}
              (g rx ax1 rx1))))
 
     (testing "append, append, read"
       ; This verifies write dependencies
-      (is (= {ax1 [ax2], ax2 [rx12], rx12 []}
+      (is (= {ax1 #{ax2}, ax2 #{rx12}, rx12 #{}}
              (g ax2 ax1 rx12))))
 
     (testing "serializable figure 3 from Adya, Liskov, O'Neil"
-      (is (= {az1ax1ay1 [rx1ay2 ry12az3]
-              rx1ay2    [ry12az3]
-              ry12az3   [rz13]
-              rz13      []}
+      (is (= {az1ax1ay1 #{rx1ay2 ry12az3}
+              rx1ay2    #{ry12az3}
+              ry12az3   #{rz13}
+              rz13      #{}}
              (g az1ax1ay1 rx1ay2 ry12az3 rz13))))
 
     (testing "G0: write cycle"
@@ -153,7 +153,7 @@
             ; Establishes that the updates from t1 and t2 were applied in
             ; different orders
             t3 rx12ry21]
-        (is (= {t1 [t2 t3], t2 [t1 t3], t3 []}
+        (is (= {t1 #{t2 t3}, t2 #{t1 t3}, t3 #{}}
                (g t1 t2 t3)))))
 
     ; TODO: we should do internal consistency checks here as well--see G1a and
@@ -168,18 +168,18 @@
       (let [t1 ax1ry1
             t2 ax2ay1
             t3 rx12]
-        (is (= {t1 [t2], t2 [t3 t1], t3 []}
+        (is (= {t1 #{t2}, t2 #{t3 t1}, t3 #{}}
                (g t1 t2 t3)))))
 
     (testing "G2: anti-dependency cycle"
       ; Here, two transactions observe the empty state of a key that the other
       ; transaction will append to.
-      (is (= {rxay1 [ryax1 rx1ry1], ryax1 [rxay1 rx1ry1], rx1ry1 []}
+      (is (= {rxay1 #{ryax1 rx1ry1}, ryax1 #{rxay1 rx1ry1}, rx1ry1 #{}}
              (g rxay1 ryax1 rx1ry1)))
       (is (= {:valid? false
               :scc-count 1
-              :cycles ["Let:\n  T1 = {:type :ok, :value [[:r :y nil] [:append :x 1]]}\n  T2 = {:type :ok, :value [[:r :x nil] [:append :y 1]]}\n\nThen:\n  - T1 < T2, because T1 observed the initial (nil) state of :y, which T2 created by appending 1.\n  - However, T2 < T1, because T2 observed the initial (nil) state of :x, which T1 created by appending 1: a contradiction!"]}
-             (elle/check {:analyzer graph} [rxay1 ryax1 rx1ry1]))))
+              :cycles ["Let:\n  T1 = {:index 8, :time -1, :type :ok, :process 0, :f nil, :value [[:r :y nil] [:append :x 1]]}\n  T2 = {:index 7, :time -1, :type :ok, :process 0, :f nil, :value [[:r :x nil] [:append :y 1]]}\n\nThen:\n  - T1 < T2, because T1 observed the initial (nil) state of :y, which T2 created by appending 1.\n  - However, T2 < T1, because T2 observed the initial (nil) state of :x, which T1 created by appending 1: a contradiction!"]}
+             (elle/check {:analyzer graph} (h/history [rxay1 ryax1 rx1ry1])))))
 
     ; We can't infer anything about an info's nil reads: an :ok read of nil
     ; means we saw the initial state, but an :info read of nil means we don't
@@ -187,40 +187,42 @@
     (testing "info reads"
       ; T1 appends 2 to x after T2, so we can infer T2 < T1.
       ; However, T1's crashed read of y = nil does NOT mean T1 < T2.
-      (let [t1 {:type :info, :value [[:append :x 2] [:r :y nil]]}
-            t2 {:type :ok,   :value [[:append :x 1] [:append :y 1]]}
-            t3 {:type :ok,   :value [[:r :x [1 2]] [:r :y [1]]]}]
-        (is (= {t1 [t3], t2 [t3 t1], t3 []}
+      (let [[t1 t2 t3 :as h]
+            (h/history [{:type :info, :value [[:append :x 2] [:r :y nil]]}
+                        {:type :ok,   :value [[:append :x 1] [:append :y 1]]}
+                        {:type :ok,   :value [[:r :x [1 2]] [:r :y [1]]]}])]
+        (is (= {t1 #{t3}, t2 #{t3 t1}, t3 #{}}
                (g t1 t2 t3)))))
 
     ; Special case: when there's only one append for a key, we can trivially
     ; infer the version order for that key, even if we never observe it in a
     ; read: it has to go from nil -> [x].
     (testing "single appends without reads"
-      (is (= {rx [ax1] ax1 []} (g rx ax1))))
+      (is (= {rx #{ax1} ax1 #{}} (g rx ax1))))
 
     (testing "multiple appends without reads"
       ; With two appends, we can't infer a precise order, but we still know ax1
       ; and ax2 both had to come after rx!
-      (is (= {rx [ax1 ax2] ax1 [] ax2 []} (g rx ax1 ax2))))
+      (is (= {rx #{ax1 ax2} ax1 #{} ax2 #{}} (g rx ax1 ax2))))
 
     (testing "duplicate inserts attempts"
       (let [ax1ry  {:index 0, :type :invoke, :value [[:append :x 1] [:r :y nil]]}
-            ay2ax1 {:index 1, :type :invoke, :value [[:append :y 2] [:append :x 1]]}
+            ay2ax1 {:index 1, :type :invoke, :value [[:append :y 2] [:append :x 1]], :f nil, :time -1, :process nil}
             e (try+ (g ax1ry ay2ax1)
                     false
                     (catch [:type :duplicate-appends] e e))]
-        (is (= ay2ax1 (:op e)))
+        (is (= (h/op ay2ax1) (:op e)))
         (is (= :x (:key e)))
         (is (= 1 (:value e)))))))
 
 (deftest g1a-cases-test
   (testing "empty"
-    (is (= [] (g1a-cases []))))
+    (is (= [] (g1a-cases (h/history [])))))
   (testing "valid and invalid reads"
-    (let [t1 {:type :fail, :value [[:append :x 1]]}
-          t2 (op "rx1ax2")
-          t3 (op "rx12ry3")]
+    (let [[t2 t3 t1 :as h]
+          (h/history [(op "rx1ax2")
+                      (op "rx12ry3")
+                      {:process 0, :type :fail, :value [[:append :x 1]]}])]
       (is (= [{:op        t2
                :mop       [:r :x [1]]
                :writer    t1
@@ -229,52 +231,57 @@
                :mop       [:r :x [1 2]]
                :writer    t1
                :element   1}]
-             (g1a-cases [t2 t3 t1]))))))
+             (g1a-cases h))))))
 
 (deftest g1b-cases-test
   (testing "empty"
-    (is (= [] (g1b-cases []))))
+    (is (= [] (g1b-cases (h/history [])))))
 
   (testing "valid and invalid reads"
     ; t1 has an intermediate append of 1 which should never be visible alone.
-    (let [t1 (op "ax1ax2")
-          t2 (op "rx1")
-          t3 (op "rx12ry3")
-          t4 (op "rx123")]
+    (let [[t2 t3 t1 t4 :as h]
+          (h/history [(op "rx1")
+                      (op "rx12ry3")
+                      (op "ax1ax2")
+                      (op "rx123")])]
       (is (= [{:op        t2
                :mop       [:r :x [1]]
                :writer    t1
                :element   1}]
-             (g1b-cases [t2 t3 t1 t4])))))
+             (g1b-cases h)))))
 
   (testing "internal reads"
-    (let [t1 (op "ax1rx1ax2")]
-      (is (= [] (g1b-cases [t1]))))))
+    (let [[t1 :as h] (h/history [(op "ax1rx1ax2")])]
+      (is (= [] (g1b-cases h))))))
 
 (deftest internal-cases-test
   (testing "empty"
-    (is (= nil (internal-cases []))))
+    (is (= nil (internal-cases (h/history [])))))
 
   (testing "good"
-    (is (= nil (internal-cases [{:type :ok, :value [[:r :y [5 6]]
-                                                   [:append :x 3]
-                                                   [:r :x [1 2 3]]
-                                                   [:append :x 4]
-                                                   [:r :x [1 2 3 4]]]}]))))
+    (is (= nil (internal-cases (h/history
+                                 [{:process 0,
+                                   :type :ok,
+                                   :value [[:r :y [5 6]]
+                                           [:append :x 3]
+                                           [:r :x [1 2 3]]
+                                           [:append :x 4]
+                                           [:r :x [1 2 3 4]]]}])))))
 
   (testing "read-append-read"
-    (let [stale      {:type :ok, :value [[:r :x [1 2]]
-                                         [:append :x 3]
-                                         [:r :x [1 2]]]}
-          bad-prefix {:type :ok, :value [[:r :x [1 2]]
-                                         [:append :x 3]
-                                         [:r :x [0 2 3]]]}
-          extension  {:type :ok, :value [[:r :x [1 2]]
-                                         [:append :x 3]
-                                         [:r :x [1 2 3 4]]]}
-          short-read {:type :ok, :value [[:r :x [1 2]]
-                                         [:append :x 3]
-                                         [:r :x [1]]]}]
+    (let [[stale bad-prefix extension short-read :as h]
+          (h/history [{:process 0, :type :ok, :value [[:r :x [1 2]]
+                                                      [:append :x 3]
+                                                      [:r :x [1 2]]]}
+                      {:process 0, :type :ok, :value [[:r :x [1 2]]
+                                                      [:append :x 3]
+                                                      [:r :x [0 2 3]]]}
+                      {:process 0, :type :ok, :value [[:r :x [1 2]]
+                                                      [:append :x 3]
+                                                      [:r :x [1 2 3 4]]]}
+                      {:process 0, :type :ok, :value [[:r :x [1 2]]
+                                                      [:append :x 3]
+                                                      [:r :x [1]]]}])]
     (is (= [{:op stale
              :mop [:r :x [1 2]]
              :expected [1 2 3]}
@@ -287,34 +294,33 @@
             {:op short-read
              :mop [:r :x [1]]
              :expected [1 2 3]}]
-           (internal-cases [stale bad-prefix extension short-read])))))
+           (internal-cases h)))))
 
   (testing "append-read"
-    (let [disagreement {:type :ok, :value [[:append :x 3]
-                                         [:r :x [1 2 3 4]]]}
-          short-read {:type :ok, :value [[:append :x 3]
-                                         [:r :x []]]}]
+    (let [[disagreement short-read :as h]
+          (h/history [{:process 0, :type :ok, :value [[:append :x 3]
+                                                      [:r :x [1 2 3 4]]]}
+                      {:process 0, :type :ok, :value [[:append :x 3]
+                                                      [:r :x []]]}])]
     (is (= [{:op disagreement
              :mop [:r :x [1 2 3 4]]
              :expected ['... 3]}
             {:op short-read
              :mop [:r :x []]
              :expected ['... 3]}]
-           (internal-cases [disagreement short-read])))))
+           (internal-cases h)))))
 
   (testing "FaunaDB example"
-    (let [h [{:type :invoke, :f :txn, :value [[:append 0 6] [:r 0 nil]]
-              :process 1, :index 20}
+    (let [[t1 t2 :as h]
+          (h/history
+            [{:type :invoke, :f :txn, :value [[:append 0 6] [:r 0 nil]]
+              :process 1, :index 20, :time 1}
              {:type :ok, :f :txn, :value [[:append 0 6] [:r 0 nil]]
-              :process 1, :index 21}]]
+              :process 1, :index 21, :time 2}])]
       (is (= [{:expected '[... 6],
                :mop [:r 0 nil],
-               :op {:f :txn,
-                    :index 21,
-                    :process 1,
-                    :type :ok,
-                    :value [[:append 0 6] [:r 0 nil]]}}]
-              (internal-cases h))))))
+               :op t2}]
+             (internal-cases h))))))
 
 (defn c
   "Check a history."
@@ -331,14 +337,11 @@
 (deftest checker-test
   (testing "G0"
     (let [; A pure write cycle: x => t1, t2; but y => t2, t1
-          t1 (op "ax1ay1")
-          t2 (op "ax2ay2")
-          t3 (op "rx12ry21")
-          h [t1 t2 t3]
-          msg {:cycle
-               [{:type :ok, :value [[:append :x 2] [:append :y 2]]}
-                {:type :ok, :value [[:append :x 1] [:append :y 1]]}
-                {:type :ok, :value [[:append :x 2] [:append :y 2]]}],
+          [t1 t2 t3 :as h]
+          (h/history [(op "ax1ay1")
+                      (op "ax2ay2")
+                      (op "rx12ry21")])
+          msg {:cycle [t2 t1 t2]
                :steps
                [{:type :ww,
                  :key :y,
@@ -370,9 +373,9 @@
 
   (testing "G1a"
     (let [; T2 sees T1's failed write
-          t1 {:type :fail, :value [[:append :x 1]]}
+          t1 {:process 0, :type :fail, :value [[:append :x 1]]}
           t2 (op "rx1")
-          h  [t1 t2]]
+          [t1 t2 :as h] (h/history [t1 t2])]
       ; Read-uncommitted won't catch this
       (is (= {:valid?         :unknown
               :anomaly-types  [:empty-transaction-graph]
@@ -416,7 +419,7 @@
     (let [; T2 sees T1's intermediate write
           [t1 t1'] (pair (op "ax1ax2"))
           [t2 t2'] (pair (op "rx1"))
-          [t1 t1' t2 t2' :as h] (history/index [t1 t1' t2 t2'])]
+          [t1 t1' t2 t2' :as h] (h/history [t1 t1' t2 t2'])]
       ; This is not only G1b, since it has an intermediate read, but also
       ; G-single, since rx1 observes ax1 but does not observe ax2!
 
@@ -449,12 +452,7 @@
                                  :mop     [:r :x [1]]
                                  :element 1}]
                           :G-single
-                          [{:cycle
-                            [{:type :ok, :value [[:r :x [1]]], :index 3}
-                             {:type :ok,
-                              :value [[:append :x 1] [:append :x 2]],
-                              :index 1}
-                             {:type :ok, :value [[:r :x [1]]], :index 3}],
+                          [{:cycle [t2' t1' t2']
                             :steps
                             [{:type :rw,
                               :key :x,
@@ -472,14 +470,11 @@
 
   (testing "G1c"
     (let [; T2 writes x after T1, but T1 observes T2's write on y.
-          t1 (op "ax1ry1")
-          t2 (op "ax2ay1")
-          t3 (op "rx12ry1")
-          h  [t1 t2 t3]
-          msg {:cycle
-               [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
-                {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-                {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+          [t1 t2 t3 :as h]
+          (h/history [(op "ax1ry1")
+                      (op "ax2ay1")
+                      (op "rx12ry1")])
+          msg {:cycle [t2 t1 t2]
                :steps
                [{:type :wr,
                  :key :y,
@@ -506,13 +501,11 @@
              (c {:consistency-models nil, :anomalies [:G2]} h)))))
 
   (testing "G-single"
-    (let [t1  (op "ax1ay1")  ; T1 writes y after T1's read
-          t2  (op "ax2ry")   ; T2 writes x after T1
-          t3  (op "rx12")
-          h   [t1 t2 t3]
-          msg {:cycle [{:type :ok, :value [[:append :x 2] [:r :y]]}
-                       {:type :ok, :value [[:append :x 1] [:append :y 1]]}
-                       {:type :ok, :value [[:append :x 2] [:r :y]]}],
+    (let [[t1 t2 t3 :as h]
+          (h/history [(op "ax1ay1") ; T1 writes y after T1's read
+                      (op "ax2ry")  ; T2 writes x after T1
+                      (op "rx12")])
+          msg {:cycle [t2 t1 t2]
                :steps
                [{:type :rw,
                  :key :y,
@@ -544,9 +537,9 @@
 
   (testing "G2"
     (let [; A pure anti-dependency cycle
-          t1 (op "ax1ry")
-          t2 (op "ay1rx")
-          h  [t1 t2]]
+          [t1 t2 :as h]
+          (h/history [(op "ax1ry")
+                      (op "ay1rx")])]
       ; G0 and G1 won't catch this
       (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G0]} h)))
       (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G1]} h)))
@@ -557,23 +550,20 @@
                  :anomaly-types  [:G2-item]
                  :not            #{:repeatable-read}
                  :anomalies
-                 {:G2-item [{:cycle
-                             [{:type :ok, :value [[:append :x 1] [:r :y]]}
-                              {:type :ok, :value [[:append :y 1] [:r :x]]}
-                              {:type :ok, :value [[:append :x 1] [:r :y]]}],
+                 {:G2-item [{:cycle [t2 t1 t2]
                              :steps
                              [{:type :rw,
-                               :key :y,
+                               :key :x,
                                :value :elle.list-append/init,
                                :value' 1,
                                :a-mop-index 1,
                                :b-mop-index 0}
                               {:type :rw,
-                               :key :x,
+                               :key :y,
                                :value :elle.list-append/init,
                                :value' 1,
                                :a-mop-index 1,
-                               :b-mop-index 0}],
+                               :b-mop-index 0}]
                              :type :G2-item}]}}]
       (is (= err (c {:consistency-models nil, :anomalies [:G2]} h)))
       ; As will a serializable checker.
@@ -584,15 +574,16 @@
 
   (testing "Strong SI violation"
     (let [; T1 anti-depends on T2, but T1 happens first in wall-clock order.
-          t0  {:index 0, :type :invoke, :value [[:append :x 1]]}
-          t0' {:index 1, :type :ok,     :value [[:append :x 1]]}
-          t1  {:index 2, :type :invoke, :value [[:append :x 2]]}
-          t1' {:index 3, :type :ok,     :value [[:append :x 2]]}
-          t2  {:index 4, :type :invoke, :value [[:r :x nil]]}
-          t2' {:index 5, :type :ok,     :value [[:r :x [1]]]}
-          t3  {:index 6, :type :invoke, :value [[:r :x nil]]}
-          t3' {:index 7, :type :ok,     :value [[:r :x [1 2]]]}
-          h [t0 t0' t1 t1' t2 t2' t3 t3']]
+          t0  {:process 0, :index 0, :type :invoke, :value [[:append :x 1]]}
+          t0' {:process 0, :index 1, :type :ok,     :value [[:append :x 1]]}
+          t1  {:process 1, :index 2, :type :invoke, :value [[:append :x 2]]}
+          t1' {:process 1, :index 3, :type :ok,     :value [[:append :x 2]]}
+          t2  {:process 2, :index 4, :type :invoke, :value [[:r :x nil]]}
+          t2' {:process 2, :index 5, :type :ok,     :value [[:r :x [1]]]}
+          t3  {:process 3, :index 6, :type :invoke, :value [[:r :x nil]]}
+          t3' {:process 3, :index 7, :type :ok,     :value [[:r :x [1 2]]]}
+                     [t0 t0' t1 t1' t2 t2' t3 t3' :as h]
+          (h/history [t0 t0' t1 t1' t2 t2' t3 t3'])]
       ; G2 won't catch this by itself
       (is (= {:valid? true}
              (c {:consistency-models nil, :anomalies [:G2]} h)))
@@ -626,16 +617,14 @@
           t3 (op "ax3ay1")  ; append of x happens later
           t4 (op "rx13")
           t5 (op "rx123")
-          h [t1 t2 t3 t4 t5]]
+          [t1 t2 t3 t4 t5 :as h]
+          (h/history (h/strip-indices [t1 t2 t3 t4 t5]))]
       (is (= {:valid? false
               :anomaly-types [:G1c :incompatible-order]
               :not           #{:read-committed :read-atomic}
               :anomalies
               {:incompatible-order [{:key :x, :values [[1 3] [1 2 3]]}]
-               :G1c [{:cycle
-                      [{:type :ok, :value [[:append :x 3] [:append :y 1]]}
-                       {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-                       {:type :ok, :value [[:append :x 3] [:append :y 1]]}],
+               :G1c [{:cycle [t3 t1 t3]
                       :steps
                       [{:type :wr,
                         :key :y,
@@ -656,8 +645,7 @@
 
   (testing "dirty update"
     (testing "none"
-      (let [t1 (op 0 :fail "ax1")
-            h [t1]]
+      (let [[t1 :as h] (h/history [(op 0 :fail "ax1")])]
         (is (= {:valid?         :unknown
                 :anomaly-types  [:empty-transaction-graph]
                 :not            #{}
@@ -665,10 +653,9 @@
                (c {:consistency-models nil, :anomalies [:dirty-update]} h)))))
 
     (testing "direct"
-      (let [t1 (op 0 :fail "ax1")
-            t2 (op 1 :ok   "ax2")
-            t3 (op 2 :ok   "rx12")
-            h [t1 t2 t3]]
+      (let [[t1 t2 t3 :as h] (h/history [(op 0 :fail "ax1")
+                                         (op 1 :ok   "ax2")
+                                         (op 2 :ok   "rx12")])]
         (is (= {:valid? false
                 :anomaly-types [:dirty-update]
                 :not           #{:read-committed :read-atomic}
@@ -678,11 +665,11 @@
                (c {:consistency-models nil, :anomalies [:dirty-update]} h)))))
 
     (testing "indirect"
-      (let [t1 (op 0 :fail "ax1")
-            t2 (op 1 :info "ax2")
-            t3 (op 2 :ok   "ax3")
-            t4 (op 3 :ok   "rx123")
-            h [t1 t2 t3 t4]]
+      (let [[t1 t2 t3 t4 :as h]
+            (h/history [(op 0 :fail "ax1")
+                        (op 1 :info "ax2")
+                        (op 2 :ok   "ax3")
+                        (op 3 :ok   "rx123")])]
         (is (= {:valid? false
                 :anomaly-types [:dirty-update]
                 :not           #{:read-committed :read-atomic}
@@ -696,7 +683,7 @@
     (let [t1 (op "ax1ry1") ; read t2's write of y
           t2 (op "ax2ay1")
           t3 (op "rx121")
-          h  [t1 t2 t3]]
+          [t1 t2 t3 :as h] (h/history (h/strip-indices [t1 t2 t3]))]
       (is (= {:valid? false
               :anomaly-types [:G1c :duplicate-elements]
               :not           #{:read-uncommitted}
@@ -704,10 +691,7 @@
               {:duplicate-elements [{:op t3
                                      :mop [:r :x [1 2 1]]
                                      :duplicates {1 2}}]
-               :G1c [{:cycle
-                      [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
-                       {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-                       {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+               :G1c [{:cycle [t2 t1 t2],
                       :steps
                       [{:type :wr,
                         :key :y,
@@ -729,9 +713,8 @@
              (c {:consistency-models [:read-committed]} h)))))
 
   (testing "internal consistency violation"
-    (let [t1 (op "ax1ax2ax4")
-          t2 (op "ax3rx1234")
-          h  [t1 t2]]
+    (let [[t1 t2 :as h] (h/history [(op "ax1ax2ax4")
+                                    (op "ax3rx1234")])]
       (is (= {:valid?         false
               :anomaly-types  [:internal]
               ; Read-atomic ruled out by internal, read-uncommitted by the G0.
@@ -755,7 +738,8 @@
         [w3 w3'] (pair (op "ax3ay3"))
         [rx rx'] (pair (op "rx12"))
         [ry ry'] (pair (op "ry2"))
-        h        (history/index [w1 w2 w3 rx ry w1' w2' w3' rx' ry'])]
+                   [w1 w2 w3 rx ry w1' w2' w3' rx' ry' :as h]
+        (h/history [w1 w2 w3 rx ry w1' w2' w3' rx' ry'])]
     ; w1 -ww-> w2, by rx12
     ; w2 -ww-> w1, by ry2
     ; ry -rw-> w1, since y fails to observe w1
@@ -765,15 +749,7 @@
             :anomalies
             ; We know this is G-single because ry -rw-> w1 -ww-> w2 -wr-> ry
             {:G-single
-             [{:cycle
-               [{:type :ok, :value [[:r :y [2]]], :index 9}
-                {:type :ok,
-                 :value [[:append :x 1] [:append :y 1]],
-                 :index 5}
-                {:type :ok,
-                 :value [[:append :x 2] [:append :y 2]],
-                 :index 6}
-                {:type :ok, :value [[:r :y [2]]], :index 9}],
+             [{:cycle [ry' w1' w2' ry']
                :steps
                [{:type :rw,
                  :key :y,
@@ -795,29 +771,20 @@
                :type :G-single}],
              ; But worse, it's G0 because w2 -ww-> w1 -ww->w2
              :G0
-             [{:cycle
-               [{:type :ok,
-                 :value [[:append :x 1] [:append :y 1]],
-                 :index 5},
-                {:type :ok,
-                 :value [[:append :x 2] [:append :y 2]],
-                 :index 6}
-                {:type :ok,
-                 :value [[:append :x 1] [:append :y 1]],
-                 :index 5}]
+             [{:cycle [w2' w1' w2']
                :steps
                [{:type :ww,
-                 :key :x,
-                 :value 1,
-                 :value' 2,
-                 :a-mop-index 0,
-                 :b-mop-index 0},
-                {:type :ww,
                  :key :y,
                  :value 2,
                  :value' 1,
                  :a-mop-index 1,
-                 :b-mop-index 1}],
+                 :b-mop-index 1}
+                {:type :ww,
+                 :key :x,
+                 :value 1,
+                 :value' 2,
+                 :a-mop-index 0,
+                 :b-mop-index 0}]
                :type :G0}]},
             :not #{:read-uncommitted}}
            (-> (c {:consistency-models [:serializable]} h)
@@ -829,7 +796,7 @@
   ; read-committed, but repeatable-read should fail.
   (let [t1 (op "rxay1")
         t2 (op "ryax1")
-        h  [t1 t2]]
+        [t1 t2 :as h] (h/history [t1 t2])]
     (is (= {:valid? true}
            (c {:consistency-models [:read-committed]} h)))
     (is (= {:valid?         false
@@ -877,7 +844,7 @@
         [t2 t2'] (pair (op "rx1ry"))
         [t3 t3'] (pair (op "ay1"))
         [t4 t4'] (pair (op "ry1rx"))
-        h (history/index [t1 t1' t2 t2' t3 t3' t4 t4'])]
+        h (h/history [t1 t1' t2 t2' t3 t3' t4 t4'])]
     (is (= {:valid?         false
             :not            #{:snapshot-isolation}
             :anomaly-types  [:G-nonadjacent]
@@ -914,7 +881,7 @@
   (let [[t0 t0'] (pair (op "ax0"))
         [t1 t1'] (pair (op "rx0ax1"))
         [t2 t2'] (pair (op "rx0ax2"))
-        [t0 t0' t1 t1' t2 t2' :as h] (history/index [t0 t0' t1 t1' t2 t2'])]
+        [t0 t0' t1 t1' t2 t2' :as h] (h/history [t0 t0' t1 t1' t2 t2'])]
     (is (= {:valid?         false
             :not            #{:ROLA :cursor-stability}
             :anomaly-types  [:G2-item :lost-update]
@@ -926,16 +893,7 @@
                              ; here because neither t1 nor t2 saw each other's
                              ; effects, making this G2-item
                              :G2-item
-                             [{:cycle
-                               [{:type :ok,
-                                 :value [[:r :x [0]] [:append :x 1]],
-                                 :index 3}
-                                {:type :ok,
-                                 :value [[:r :x [0]] [:append :x 2]],
-                                 :index 5}
-                                {:type :ok,
-                                 :value [[:r :x [0]] [:append :x 1]],
-                                 :index 3}],
+                             [{:cycle [t1' t2' t1']
                                :steps [{:type :rw,
                                         :key :x,
                                         :value 0,
@@ -956,7 +914,7 @@
     (let [[t0 t0'] (pair (op "rxax1ax2"))
           ; Just to avoid empty txn graphs
           [t1 t1'] (pair (op "rx12"))
-          h        (history/index [t0 t0' t1 t1'])]
+          h        (h/history [t0 t0' t1 t1'])]
       (is (= {:valid? true}
              (c {} h))))))
 

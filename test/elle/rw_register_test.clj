@@ -6,9 +6,8 @@
                   [graph :as g]
                   [rw-register :refer :all]
                   [util :refer [map-vals]]]
-            [jepsen.txn :as txn]
-            [knossos [history :as history]
-                     [op :as op]]
+            [jepsen [history :as h]
+                    [txn :as txn]]
             [clojure.test :refer :all]
             [slingshot.slingshot :refer [try+ throw+]]))
 
@@ -35,7 +34,7 @@
          txn (-> txn
                  (subvec 1)
                  (conj mop))]
-     {:type :ok, :value txn}))
+     {:process 0, :type :ok, :value txn}))
   ([process type string]
    (assoc (op string) :process process :type type)))
 
@@ -56,65 +55,66 @@
    completion])
 
 (deftest op-test
-  (is (= {:type :ok, :value [[:w :x 1] [:r :x 2]]}
+  (is (= {:process 0, :type :ok, :value [[:w :x 1] [:r :x 2]]}
          (op "wx1rx2"))))
 
 (deftest ext-index-test
   (testing "empty"
-    (is (= {} (ext-index txn/ext-writes []))))
+    (is (= {} (ext-index txn/ext-writes (h/history [])))))
   (testing "writes"
-    (let [w1 {:type :ok, :value [[:w :x 1] [:w :y 3] [:w :x 2]]}
-          w2 {:type :ok, :value [[:w :y 3] [:w :x 4]]}]
+    (let [[w1 w2 :as h]
+          (h/history
+            [{:process 0, :type :ok, :value [[:w :x 1] [:w :y 3] [:w :x 2]]}
+             {:process 1, :type :ok, :value [[:w :y 3] [:w :x 4]]}])]
       (is (= {:x {2 [w1], 4 [w2]}
               :y {3 [w2 w1]}}
-             (ext-index txn/ext-writes [w1 w2]))))))
+             (ext-index txn/ext-writes h))))))
 
 (deftest internal-cases-test
   (testing "empty"
-    (is (= nil (internal-cases []))))
+    (is (= nil (internal-cases (h/history [])))))
 
   (testing "good"
-    (is (= nil (internal-cases [(op "ry2wx2rx2wx1rx1")]))))
+    (is (= nil (internal-cases (h/history [(op "ry2wx2rx2wx1rx1")])))))
 
   (testing "stale"
-    (let [stale (op "rx1wx2rx1")]
+    (let [[stale :as h] (h/history [(op "rx1wx2rx1")])]
       (is (= [{:op stale, :mop [:r :x 1], :expected 2}]
-             (internal-cases [stale]))))))
+             (internal-cases h))))))
 
 (deftest g1a-cases-test
   (testing "empty"
-    (is (= nil (g1a-cases []))))
+    (is (= nil (g1a-cases (h/history [])))))
 
   (testing "good"
-    (is (= nil (g1a-cases [(op "wx1")
-                           (op "rx1")]))))
+    (is (= nil (g1a-cases (h/history [(op "wx1")
+                                      (op "rx1")])))))
 
   (testing "bad"
-    (let [w (fail (op "wx2"))
-          r (op "rx2")]
+    (let [[r w :as h] (h/history [(op "rx2") (fail (op "wx2"))])]
       (is (= [{:op r, :writer, w :mop [:r :x 2]}]
-             (g1a-cases [r w]))))))
+             (g1a-cases h))))))
 
 (deftest g1b-cases-test
   (testing "empty"
-    (is (= nil (g1b-cases []))))
+    (is (= nil (g1b-cases (h/history [])))))
 
   (testing "good"
-    (is (= nil (g1b-cases [(op "wx1wx2")
-                           (op "rx_rx2")]))))
+    (is (= nil (g1b-cases (h/history [(op "wx1wx2")
+                                      (op "rx_rx2")])))))
 
   (testing "bad"
-    (let [w (op "wx2wx1")
-          r (op "rx2")]
+    (let [[r w :as h] (h/history [(op "rx2")
+                                  (op "wx2wx1")])]
       (is (= [{:op r, :writer, w :mop [:r :x 2]}]
-             (g1b-cases [r w]))))))
+             (g1b-cases h))))))
 
 (deftest wr-graph-test
   ; helper fns for constructing histories
-  (let [op (fn [txn] [{:type :invoke, :f :txn, :value txn}
-                      {:type :ok,     :f :txn, :value txn}])
+  (let [pair (fn [txn] [{:process 0, :type :invoke, :f :txn, :value txn}
+                        {:process 0, :type :ok,     :f :txn, :value txn}])
         check (fn [& txns]
-                (let [h (mapcat op txns)]
+                (let [h (h/history (mapcat pair txns))]
                   (elle/check {:analyzer wr-graph} h)))]
     (testing "empty history"
       (is (= {:valid? true, :scc-count 0, :cycles []}
@@ -130,7 +130,7 @@
       (is (false? (:valid? (check [[:r :x 0] [:w :y 1]]
                                   [[:r :y 1] [:w :x 0]])))))
     (testing "write skew"
-      ; this violates si, but doesn't introduce a w-r conflict, so it's legal
+      ; This violates SI, but doesn't introduce a w-r conflict, so it's legal
       ; as far as this order is concerned.
       (is (true? (:valid? (check [[:r :x 0] [:r :y 0] [:w :x 1]]
                                  [[:r :x 0] [:r :y 0] [:w :y 1]])))))))
@@ -249,14 +249,15 @@
   (testing "empty"
     (is (= {}
            (g/->clj (version-graphs->transaction-graph
-                      []
+                      (h/history [])
                       (g/digraph))))))
   (testing "rr"
     ; We don't generate rr edges, under the assumption they'll be covered by
     ; rw/wr/ww edges.
     (is (= {}
            (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
-                (version-graphs->transaction-graph [(op "rx1") (op "rx2")])
+                (version-graphs->transaction-graph
+                  (h/history [(op "rx1") (op "rx2")]))
                 g/->clj))))
 
   (testing "wr"
@@ -264,32 +265,33 @@
     ; later? Wouldn't be hard...
     (is (= {}
            (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
-                (version-graphs->transaction-graph [(op "wx1") (op "rx1")])
+                (version-graphs->transaction-graph
+                  (h/history [(op "wx1") (op "rx1")]))
                 g/->clj))))
 
   (testing "ww"
-    (is (= {(op "wx1") #{(op "wx2")}
-            (op "wx2") #{}}
-           (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
-                (version-graphs->transaction-graph [(op "wx1") (op "wx2")])
-                g/->clj))))
+    (let [[w1 w2 :as h] (h/history [(op "wx1") (op "wx2")])]
+      (is (= {w1 #{w2}, w2 #{}}
+             (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
+                  (version-graphs->transaction-graph h)
+                  g/->clj)))))
 
   (testing "rw"
-    (is (= {(op "rx1") #{(op "wx2")}
-            (op "wx2") #{}}
-           (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
-                (version-graphs->transaction-graph [(op "rx1") (op "wx2")])
-                g/->clj))))
+    (let [[r w :as h] (h/history [(op "rx1") (op "wx2")])]
+      (is (= {r #{w}, w #{}}
+             (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
+                  (version-graphs->transaction-graph h)
+                  g/->clj)))))
 
   (testing "ignores internal writes/reads"
     (is (= {}
            (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
-                (version-graphs->transaction-graph [(op "wx1wx2")
-                                                    (op "rx2rx3")])
+                (version-graphs->transaction-graph
+                  (h/history [(op "wx1wx2") (op "rx2rx3")]))
                 g/->clj)))))
 
 (let [c (fn [checker-opts history]
-					(-> (check checker-opts (history/index history))
+					(-> (check checker-opts (h/history history))
               ; We don't need to clutter up our test with these; they're just
               ; for humans
               (dissoc :also-not)))]
@@ -327,29 +329,19 @@
                 :anomalies      {:empty-transaction-graph true}
                 :not            #{}}
                (c {:consistency-models nil
-                   :anomalies          [:G0]} [t1 t2])))
+                   :anomalies          [:G0]} (h/history [t1 t2]))))
 
         ; But let's say we observe a read *after* both transactions which shows
         ; that the final value of x and y are both 2? We can infer this from
         ; sequential keys alone, as long as the version order aligns.
         (let [[t3 t3'] (pair (op 0 :ok "rx2"))
-              [t4 t4'] (pair (op 1 :ok "ry2"))]
+              [t4 t4'] (pair (op 1 :ok "ry2"))
+                         [t1 t1' t2 t2' t3 t3' t4 t4' :as h]
+              (h/history [t1 t1' t2 t2' t3 t3' t4 t4'])]
           (is (= {:valid?         false
                   :anomaly-types  [:G0]
                   :not            #{:read-uncommitted}
-                  :anomalies      {:G0 [{:cycle
-                                        [{:type :ok,
-                                          :value [[:w :x 1] [:w :y 2]],
-                                          :process 0,
-                                          :index 1}
-                                         {:type :ok,
-                                          :value [[:w :x 2] [:w :y 1]],
-                                          :process 1,
-                                          :index 3}
-                                         {:type :ok,
-                                          :value [[:w :x 1] [:w :y 2]],
-                                          :process 0,
-                                          :index 1}],
+                  :anomalies      {:G0 [{:cycle [t1' t2' t1']
                                         :steps
                                         [{:key :x,
                                           :value 1,
@@ -372,13 +364,14 @@
     (testing "G1a"
       (let [; T2 sees T1's failed write
             t1 (fail (op "wx1"))
-            t2 (op "rx1")]
+            t2 (op "rx1")
+            [t2 t1 :as h] (h/history [t2 t1])]
         (is (= {:valid? false
                 :anomaly-types [:G1a :empty-transaction-graph]
                 :not           #{:read-atomic :read-committed}
                 :anomalies {:empty-transaction-graph true
-                            :G1a [{:op      (assoc t2 :index 0)
-                                   :writer  (assoc t1 :index 1)
+                            :G1a [{:op      t2
+                                   :writer  t1
                                    :mop     [:r :x 1]}]}}
                (c {:consistency-models nil, :anomalies [:G1]} [t2 t1])))))
 
@@ -386,7 +379,7 @@
       (let [; T2 sees T1's intermediate write
             t1 (op "wx1wx2")
             t2 (op "rx1")
-            h  [t1 t2]]
+            [t1 t2 :as h] (h/history [t1 t2])]
         ; G0 checker won't catch this. The txn graph is empty though,
         ; because the read dep isn't external.
         (is (= {:valid?         :unknown
@@ -402,8 +395,8 @@
                 :anomaly-types [:G1b :empty-transaction-graph]
                 :not       #{:read-committed}
                 :anomalies {:empty-transaction-graph true
-                              :G1b [{:op      (assoc t2 :index 1)
-                                   :writer  (assoc t1 :index 0)
+                              :G1b [{:op    t2
+                                   :writer  t1
                                    :mop     [:r :x 1]}]}}
                (c {:consistency-models nil
                    :anomalies          [:G1]}
@@ -415,23 +408,20 @@
       (let [; T2 observes T1's write of x, and vice versa on y.
             t1 (op "wx1ry1")
             t2 (op "wy1rx1")
-            h  [t1 t2]
-            msg {:cycle
-                  [{:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}
-                   {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}
-                   {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}],
-                  :steps
-                  [{:type :wr,
-                    :key :y,
-                    :value 1,
-                    :a-mop-index 0,
-                    :b-mop-index 1}
-                   {:type :wr,
-                    :key :x,
-                    :value 1,
-                    :a-mop-index 0,
-                    :b-mop-index 1}],
-                  :type :G1c}]
+            [t1 t2 :as h] (h/history [t1 t2])
+            msg {:cycle [t1 t2 t1]
+                 :steps
+                 [{:type :wr,
+                   :key :x,
+                   :value 1,
+                   :a-mop-index 0,
+                   :b-mop-index 1}
+                  {:type :wr,
+                   :key :y,
+                   :value 1,
+                   :a-mop-index 0,
+                   :b-mop-index 1}],
+                 :type :G1c}]
         ; G0/read-uncommitted won't see this
         (is (= {:valid? true}
                (c {:consistency-models nil
@@ -462,9 +452,9 @@
         ; But a serializable checker will catch this, because serializability
         ; proscribes both G1 and G2.
         (is (= {:valid? false
-                   :not            #{:read-committed}
-                   :anomaly-types  [:G1c]
-                   :anomalies      {:G1c [msg]}}
+                :not            #{:read-committed}
+                :anomaly-types  [:G1c]
+                :anomalies      {:G1c [msg]}}
                (c {:consistency-models [:serializable]}
                   h)))))
 
@@ -472,8 +462,8 @@
       (let [; T2 observes T1's write of x, and vice versa on y.
             t1 (op "wx1ry1")
             t2 (op "wy1rx1")
-            h  [t1 t2]
-            msg "G1c #0\nLet:\n  T1 = {:type :ok, :value [[:w :y 1] [:r :x 1]], :index 1}\n  T2 = {:type :ok, :value [[:w :x 1] [:r :y 1]], :index 0}\n\nThen:\n  - T1 < T2, because T1 wrote :y = 1, which was read by T2.\n  - However, T2 < T1, because T2 wrote :x = 1, which was read by T1: a contradiction!"]
+            [t1 t2 :as h] (h/history [t1 t2])
+            msg "G1c #0\nLet:\n  T1 = {:index 0, :time -1, :type :ok, :process 0, :f nil, :value [[:w :x 1] [:r :y 1]]}\n  T2 = {:index 1, :time -1, :type :ok, :process 0, :f nil, :value [[:w :y 1] [:r :x 1]]}\n\nThen:\n  - T1 < T2, because T1 wrote :x = 1, which was read by T2.\n  - However, T2 < T1, because T2 wrote :y = 1, which was read by T1: a contradiction!"]
         ; Write out file and check for a cycle txt file
         (c {:consistency-models nil
             :anomalies [:G1]
@@ -532,11 +522,11 @@
 
     (testing "internal"
       (let [t1 (op "rx1rx2")
-            h  [t1]]
+            [t1 :as h] (h/history [t1])]
         (is (= {:valid? false
                 :anomaly-types [:empty-transaction-graph :internal]
                 :not       #{:read-atomic}
-                :anomalies {:internal [{:op       (assoc t1 :index 0)
+                :anomalies {:internal [{:op       t1
                                         :mop      [:r :x 2]
                                         :expected 1}]
                             :empty-transaction-graph true}}
@@ -544,26 +534,15 @@
 
     (testing "initial state"
       (let [[t1 t1'] (pair (op 0 :ok "rx_ry1"))
-            [t2 t2'] (pair (op 0 :ok "wy1wx2"))]
+            [t2 t2'] (pair (op 0 :ok "wy1wx2"))
+            [t1 t2 t2' t1'] (h/history [t1 t2 t2' t1'])]
         ; We can infer, on the basis that nil *must* precede every non-nil
         ; value, plus the direct wr dep, that this constitutes a G-single
         ; anomaly!
         (is (= {:valid? false
                 :anomaly-types [:G-single]
                 :not           #{:consistent-view}
-                :anomalies {:G-single [{:cycle
-                                        [{:type :ok,
-                                          :value [[:r :x nil] [:r :y 1]],
-                                          :process 0,
-                                          :index 3}
-                                         {:type :ok,
-                                          :value [[:w :y 1] [:w :x 2]],
-                                          :process 0,
-                                          :index 2}
-                                         {:type :ok,
-                                          :value [[:r :x nil] [:r :y 1]],
-                                          :process 0,
-                                          :index 3}],
+                :anomalies {:G-single [{:cycle [t1' t2' t1']
                                         :steps
                                         [{:key :x,
                                           :value nil,
@@ -581,30 +560,19 @@
 
     (testing "wfr"
       (let [t1 (op 0 :ok "ry1wx1wy2")  ; Establishes y: 1 -> 2
-            t2 (op 0 :ok "rx1ry1")]    ; t1 <wr t2, on x, but also t2 <rw t1, on y!
+            t2 (op 0 :ok "rx1ry1") ; t1 <wr t2, on x, but also t2 <rw t1, on y!
+            [t1 t2 :as h] (h/history [t1 t2])]
         ; We can't see this without knowing the version order on y
         (is (= {:valid? true}
                (c {:wfr-keys?           false
                    :consistency-models  [:serializable]}
-                  [t1 t2])))
+                  h)))
         ; But if we use WFR, we know 1 < 2, and can see the G-single
         (is (= {:valid? false
                 :anomaly-types [:G-single]
                 :not           #{:consistent-view}
                 :anomalies {:G-single
-                            [{:cycle
-                              [{:type :ok,
-                                :value [[:r :x 1] [:r :y 1]],
-                                :process 0,
-                                :index 1}
-                               {:type :ok,
-                                :value [[:r :y 1] [:w :x 1] [:w :y 2]],
-                                :process 0,
-                                :index 0}
-                               {:type :ok,
-                                :value [[:r :x 1] [:r :y 1]],
-                                :process 0,
-                                :index 1}],
+                            [{:cycle [t2 t1 t2]
                               :steps
                               [{:key :y,
                                 :value 1,
@@ -620,7 +588,7 @@
                               :type :G-single}]}}
                (c {:wfr-keys? true
                    :consistency-models [:serializable]}
-                  [t1 t2])))))
+                  h)))))
 
     (testing "cyclic version order"
       (let [[t1 t1'] (pair (op 0 :ok "wx1"))
@@ -638,8 +606,8 @@
   (deftest type-sanity
     (is (thrown-with-msg? java.lang.AssertionError #"a mix of integer types"
                           (c {}
-                             [{:value [[:r :x (short 1)]]}
-                              {:value [[:r :x (long 1)]]}]))))
+                             [{:process 0, :value [[:r :x (short 1)]]}
+                              {:process 0, :value [[:r :x (long 1)]]}]))))
 
 
   (deftest lost-update-test
@@ -647,7 +615,7 @@
     ; some key and both write to it.
     (let [[t1 t1'] (pair (op 0 :ok "rx0wx1"))
           [t2 t2'] (pair (op 1 :ok "rx0wx2"))
-          [t1 t1' t2 t2' :as h] (history/index [t1 t1' t2 t2'])]
+          [t1 t1' t2 t2' :as h] (h/history [t1 t1' t2 t2'])]
       (is (= {:valid? false
               :not    #{:ROLA :cursor-stability}
               :anomaly-types [:lost-update]
@@ -672,19 +640,20 @@
                                     :sequential-keys?   true
                                     :wfr-keys?          true})
                           nil
-                          (history/index h)
+                          (h/history h)
                           nil)))))
 )
 
 (comment
   (deftest g-single-misattribution-test
-    ; This captures a problem with the current design: it's not necessarily clear
-    ; what anomalies mean when there are extra edges in the dependency graph. For
-    ; instance, this history contains a G-single anomaly if you consider that it
-    ; only requires one rw edge (the other edge is a process edge) for the cycle.
-    ; However, the explainer prefers to use wr, ww, rw, and *then* additional
-    ; graphs, so it explains this "g-single" anomaly as if it were G2--using both
-    ; anti-dependency cycles, rather than process order.
+    ; This captures a problem with the current design: it's not necessarily
+    ; clear what anomalies mean when there are extra edges in the dependency
+    ; graph. For instance, this history contains a G-single anomaly if you
+    ; consider that it only requires one rw edge (the other edge is a process
+    ; edge) for the cycle. However, the explainer prefers to use wr, ww, rw,
+    ; and *then* additional graphs, so it explains this "g-single" anomaly as
+    ; if it were G2--using both anti-dependency cycles, rather than process
+    ; order.
     ;
     ; TODO: I don't know how to fix this yet, but I'm leaving it here for an
     ; enterprising individual (hi future Kyle!?) to address if it ever comes up
@@ -756,7 +725,7 @@
                         (swap! state assoc k x)
                         (swap! history conj {:type :ok, :process p, :value [[:w k x]]}))))
                     (range 5))
-        history (history/index @history)
+        history (h/history @history)
         graph   (:graph (elle/realtime-graph history))]
 		; (prn graph)
     ; (println (ext-key-graph graph))

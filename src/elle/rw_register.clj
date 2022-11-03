@@ -42,9 +42,9 @@
                   [txn :as ct]
                   [graph :as g]
                   [util :as util :refer [map-vals index-of]]]
-            [jepsen [txn :as txn :refer [reduce-mops]]]
-						[jepsen.txn.micro-op :as mop]
-						[knossos.op :as op])
+            [jepsen [history :as h]
+                    [txn :as txn :refer [reduce-mops]]]
+						[jepsen.txn.micro-op :as mop])
   (:import (io.lacuna.bifurcan IEdge
                                IEntry
                                IMap
@@ -102,7 +102,7 @@
   (let [failed (ct/failed-writes #{:w} history)]
     ; Look for ok ops with a read mop of a failed append
     (->> history
-         (filter op/ok?)
+         h/oks
          ct/op-mops
          (keep (fn [[op [f k v :as mop]]]
                  (when (= :r f)
@@ -126,7 +126,7 @@
   (let [im (ct/intermediate-writes #{:w} history)]
     ; Look for ok ops with a read mop of an intermediate append
     (->> history
-         (filter op/ok?)
+         h/oks
          ct/op-mops
          (keep (fn [[op [f k v :as mop]]]
                  (when (= :r f)
@@ -150,7 +150,7 @@
   to think carefully about how to interpret the meaning of their nil reads."
   [ext-fn history]
   (->> history
-       (r/filter op/ok?)
+       h/oks
        (reduce (fn [idx op]
                  (reduce (fn [idx [k v]]
                            (update-in idx [k v] conj op))
@@ -164,13 +164,13 @@
   encoding this relationship."
   [history]
   (reduce (fn op [vgs op]
-            (if (or (op/invoke? op)
-                    (op/fail?   op))
+            (if (or (h/invoke? op)
+                    (h/fail?   op))
               vgs ; No sense in inferring anything here
               (let [txn (:value op)
                     writes (txn/ext-writes txn)
                     ; For reads, we only know their values when the op is OK.
-                    reads  (when (op/ok? op) (txn/ext-reads txn))]
+                    reads  (when (h/ok? op) (txn/ext-reads txn))]
                 (->> (concat writes reads)
                      ; OK, now iterate over kv maps, building up our version
                      ; graph.
@@ -190,8 +190,7 @@
   some key x, and an external write of x as well."
   [history]
   (->> history
-       (filter op/ok?) ; Since we need BOTH reads and writes, this only works
-                       ; with ok ops.
+       h/oks ; Since we need BOTH reads and writes, this only works with ok ops.
        (reduce
          (fn [vgs op]
            (let [txn    (:value op)
@@ -212,10 +211,10 @@
   "Given an operation, returns the set of keys we know it interacted with via
   an external read or write."
   [op]
-  (when (or (op/ok? op) (op/info? op))
+  (when (or (h/ok? op) (h/info? op))
     (let [txn    (:value op)
           ; Can't infer crashed reads!
-          reads  (when (op/ok? op)
+          reads  (when (h/ok? op)
                    (txn/ext-reads txn))
           ; We can infer crashed writes though!
           writes (txn/ext-writes txn)]
@@ -773,7 +772,7 @@
   ([history]
    (check {}))
   ([opts history]
-   (let [history      (remove (comp #{:nemesis} :process) history)
+   (let [history      (h/client-ops history)
          _            (ct/assert-type-sanity history)
          g1a          (g1a-cases history)
          g1b          (g1b-cases history)
