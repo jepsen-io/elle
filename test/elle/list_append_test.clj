@@ -944,7 +944,7 @@
 
 (deftest ^:perf ^:focus perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system
-  (let [n (long 4e5)
+  (let [n (long 1e5)
         ; Takes a state, a txn, and a volatile for the completed txn to go to.
         ; Applies txn to state, returning new state, and updating volatile.
         apply-txn (fn apply-txn [state txn txn'-volatile]
@@ -988,6 +988,7 @@
         t2 (System/nanoTime)
         run-time   (/ (- t1 t0) 1e9)
         check-time (/ (- t2 t1) 1e9)]
+    (is (= true (:valid? analysis)))
     (println (format "list-append-perf-test: %d ops run in %.2f s (%.2f ops/sec); checked in %.2f s (%.2f ops/sec)"
                      n run-time (/ n run-time)
                      check-time (/ n check-time)))))

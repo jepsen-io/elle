@@ -37,7 +37,9 @@
             [jepsen [history :as h]
                      [txn :as txn]]
             [jepsen.txn.micro-op :as mop]
-            [slingshot.slingshot :refer [try+ throw+]]))
+            [slingshot.slingshot :refer [try+ throw+]])
+  (:import (io.lacuna.bifurcan ISet
+                               Set)))
 
 ; This is going to look a bit odd. Please bear with me.
 ;
@@ -347,9 +349,9 @@
   ; link every buffered completion (a, b, c...) to x. When we see a new
   ; completion d, we look backwards in the graph to see whether any buffered
   ; completions point to d, and remove those from the buffer.
-  (loopr [oks     #{}          ; Our buffer of completed ops
-          g       (g/digraph)] ; Our order graph
-         [op history]
+  (loopr [^ISet oks (.linear (Set.)) ; Our buffer of completed ops
+          g         (g/digraph)]     ; Our order graph
+         [op history :via :reduce]
          (case (:type op)
            ; A new operation begins! Link every completed op to this one's
            ; completion. Note that we generate edges here regardless of whether
@@ -357,17 +359,15 @@
            ; failures, but I don't think they'll hurt. We *do* need edges to
            ; crashed ops, because they may complete later on.
            :invoke (let [op' (h/completion history op)
-                         g   (reduce (fn [g ok]
-                                       (g/link g ok op' :realtime))
-                                     g
-                                     oks)]
+                         g   (g/link-all-to g oks op' :realtime)]
                      (recur oks g))
            ; An operation has completed. Add it to the oks buffer, and remove
            ; oks that this ok implies must have completed.
-           :ok     (let [implied (g/->clj (g/in g op))
-                         oks     (-> oks
-                                     (set/difference implied)
-                                     (conj op))]
+           :ok     (let [implied (g/in g op)
+                         oks     (if implied
+                                   (.difference oks implied)
+                                   oks)
+                         oks     (.add oks op)]
                      (recur oks g))
            ; An operation that failed doesn't affect anything--we don't generate
            ; dependencies on failed transactions because they didn't happen. I

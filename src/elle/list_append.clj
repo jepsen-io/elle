@@ -8,6 +8,7 @@
             [clojure.core.reducers :as r]
             [clojure.java.io :as io]
             [clojure.tools.logging :refer [info error warn]]
+            [dom-top.core :as dt :refer [loopr]]
             [elle [core :as elle]
                   [graph :as g]
                   [txn :as ct]
@@ -17,7 +18,8 @@
             [jepsen [history :as h]
                     [txn :as txn :refer [reduce-mops]]]
             [jepsen.txn.micro-op :as mop]
-            [slingshot.slingshot :refer [try+ throw+]])
+            [slingshot.slingshot :refer [try+ throw+]]
+            [tesser.core :as t])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
                                ICollection
@@ -30,35 +32,45 @@
 (defn verify-mop-types
   "Takes a history where operation values are transactions. Verifies that the
   history contains only reads [:r k v] and appends [:append k v]. Returns nil
-  if the history conforms, or throws an error object otherwise." [history]
-  (let [bad (remove (fn [op] (every? #{:r :append} (map mop/f (:value op))))
-                    history)]
+  if the history conforms, or throws an error object otherwise."
+  [history]
+  (when-let [bad (->> (t/filter (fn bad? [op]
+                                  (loopr [res nil]
+                                         [[f] (:value op)]
+                                         (if (or (identical? f :r)
+                                                 (identical? f :append))
+                                           (recur nil)
+                                           op))))
+                      (t/take 8)
+                      (t/into [])
+                      (h/tesser history))]
     (when (seq bad)
       (throw+ {:valid?    :unknown
                :type      :unexpected-txn-micro-op-types
                :message   "history contained operations other than appends or reads"
-               :examples  (take 8 bad)}))))
+               :examples  bad}))))
 
 (defn verify-unique-appends
   "Takes a history of txns made up of appends and reads, and checks to make
   sure that every invoke appending a value to a key chose a unique value."
   [history]
-  (reduce-mops (fn [written op [f k v]]
-                 (if (and (h/invoke? op) (= :append f))
-                   (let [writes-of-k (written k #{})]
-                     (if (contains? writes-of-k v)
-                       (throw+ {:valid?   :unknown
-                                :type     :duplicate-appends
-                                :op       op
-                                :key      k
-                                :value    v
-                                :message  (str "value " v " appended to key " k
-                                               " multiple times!")})
-                       (assoc written k (conj writes-of-k v))))
-                   ; Something other than an invoke append, whatever
-                   written))
-               {}
-               history))
+  (loopr [written (transient {})]
+         [op      history :via :reduce
+          [f k v] (:value op)]
+         (if (and (h/invoke? op)
+                  (identical? f :append))
+           (let [writes-of-k (written k #{})]
+             (if (contains? writes-of-k v)
+               (throw+ {:valid?   :unknown
+                        :type     :duplicate-appends
+                        :op       op
+                        :key      k
+                        :value    v
+                        :message  (str "value " v " appended to key " k
+                                       " multiple times!")})
+               (recur (assoc! written k (conj writes-of-k v)))))
+           ; Something other than an invoke append, whatever
+           (recur written))))
 
 (defn g1a-cases
   "G1a, or aborted read, is an anomaly where a transaction reads data from an
@@ -539,24 +551,31 @@
    :write-index   A write index
    :read-index    A read index}"
   [history]
-   ; Make sure there are only appends and reads
-   (verify-mop-types history)
-   ; And that every append is unique
-   (verify-unique-appends history)
+  (let [; Make sure there are only appends and reads
+        vmt (h/task history verify-mop-types-task []
+                    (verify-mop-types history))
+        ; And that every append is unique
+        vua (h/task history verify-unique-appends-task []
+                    (verify-unique-appends history))]
+    ; These will throw if either finds a problem
+    @vmt @vua)
 
    ; We only care about ok and info ops; invocations don't matter, and failed
    ; ops can't contribute to the state. TODO: do we... want to start inferring
    ; deps for failed ops too? Might simplify the dirty-update codepath.
-   (let [history       (filter (comp #{:ok :info} :type) history)
+   (let [history       (h/possible history)
          sorted-values (sorted-values history)]
      ; Compute indices
-     (let [append-index (append-index sorted-values)
-           write-index  (write-index history)
-           read-index   (read-index history)]
+     (let [append-index (h/task history append-index []
+                                (append-index sorted-values))
+           write-index  (h/task history write-index []
+                                (write-index history))
+           read-index   (h/task history read-index []
+                                (read-index history))]
        {:history      history
-        :append-index append-index
-        :write-index  write-index
-        :read-index   read-index})))
+        :append-index @append-index
+        :write-index  @write-index
+        :read-index   @read-index})))
 
 (defrecord WWExplainer [append-index write-index read-index]
   elle/DataExplainer
@@ -585,22 +604,22 @@
 
 (defn ww-graph
   "Analyzes write-write dependencies."
-  [history]
-  (let [{:keys [history append-index write-index read-index]} (preprocess
-                                                                history)]
-    {:graph (g/forked
-              (reduce-mops (fn [g op [f :as mop]]
-                             ; Only appends have dependencies, cuz we're
-                             ; interested in ww cycles.
-                             (if (not= f :append)
-                               g
-                               (if-let [dep (ww-mop-dep
-                                              append-index write-index op mop)]
-                                 (g/link g dep op :ww)
-                                 g)))
-                           (g/linear (g/digraph))
-                           history))
-     :explainer (WWExplainer. append-index write-index read-index)}))
+  ([history]
+   (ww-graph (preprocess history) nil))
+  ([{:keys [history append-index write-index read-index]} _]
+   {:graph (g/forked
+             (reduce-mops (fn [g op [f :as mop]]
+                            ; Only appends have dependencies, cuz we're
+                            ; interested in ww cycles.
+                            (if (not= f :append)
+                              g
+                              (if-let [dep (ww-mop-dep
+                                             append-index write-index op mop)]
+                                (g/link g dep op :ww)
+                                g)))
+                          (g/linear (g/digraph))
+                          history))
+    :explainer (WWExplainer. append-index write-index read-index)}))
 
 (defrecord WRExplainer [append-index write-index read-index]
   elle/DataExplainer
@@ -624,21 +643,21 @@
 
 (defn wr-graph
   "Analyzes write-read dependencies."
-  [history]
-  (let [{:keys [history append-index write-index read-index]} (preprocess
-                                                                history)]
-    {:graph (g/forked
-              (reduce-mops (fn [g op [f :as mop]]
-                             (if (not= f :r)
-                               g
-                               ; Figure out what write we overwrote
-                               (if-let [dep (wr-mop-dep write-index op mop)]
-                                 (g/link g dep op :wr)
-                                 ; No dep
-                                 g)))
-                           (g/linear (g/digraph))
-                           history))
-     :explainer (WRExplainer. append-index write-index read-index)}))
+  ([history]
+   (wr-graph (preprocess history) nil))
+  ([{:keys [history append-index write-index read-index]} _]
+   {:graph (g/forked
+             (reduce-mops (fn [g op [f :as mop]]
+                            (if (not= f :r)
+                              g
+                              ; Figure out what write we overwrote
+                              (if-let [dep (wr-mop-dep write-index op mop)]
+                                (g/link g dep op :wr)
+                                ; No dep
+                                g)))
+                          (g/linear (g/digraph))
+                          history))
+    :explainer (WRExplainer. append-index write-index read-index)}))
 
 (defrecord RWExplainer [append-index write-index read-index]
   elle/DataExplainer
@@ -681,22 +700,22 @@
 
 (defn rw-graph
   "Analyzes read-write anti-dependencies."
-  [history]
-  (let [{:keys [history append-index write-index read-index]} (preprocess
-                                                                history)]
-    {:graph (g/forked
-              (reduce-mops (fn [g op [f :as mop]]
-                             (if (= f :append)
-                               ; Who read the state just before we wrote?
-                               (if-let [deps (rw-mop-deps append-index
-                                                          write-index
-                                                          read-index op mop)]
-                                 (g/link-all-to g deps op :rw)
-                                 g)
-                               g))
-                           (g/linear (g/digraph))
-                           history))
-     :explainer (RWExplainer. append-index write-index read-index)}))
+  ([history]
+   (rw-graph (preprocess history) nil))
+  ([{:keys [history append-index write-index read-index]} _]
+   {:graph (g/forked
+             (reduce-mops (fn [g op [f :as mop]]
+                            (if (= f :append)
+                              ; Who read the state just before we wrote?
+                              (if-let [deps (rw-mop-deps append-index
+                                                         write-index
+                                                         read-index op mop)]
+                                (g/link-all-to g deps op :rw)
+                                g)
+                              g))
+                          (g/linear (g/digraph))
+                          history))
+    :explainer (RWExplainer. append-index write-index read-index)}))
 
 (defn graph
   "Some parts of a transaction's dependency graph--for instance,
@@ -738,7 +757,13 @@
   For more context, see Adya, Liskov, and O'Neil's 'Generalized Isolation Level
   Definitions', page 8."
   [history]
-  ((elle/combine ww-graph wr-graph rw-graph) history))
+  ; We need these auxiliary structures for each subgraph; might as well do the
+  ; work just once.
+  (let [preprocessed (preprocess history)]
+    ((elle/combine (partial ww-graph preprocessed)
+                   (partial wr-graph preprocessed)
+                   (partial rw-graph preprocessed))
+     history)))
 
 (defn rand-bg-color
   "Hashes anything and assigns a lightish hex color to it--helpful for
