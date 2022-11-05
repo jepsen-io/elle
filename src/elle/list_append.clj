@@ -901,21 +901,28 @@
    (check {} history))
   ([opts history]
    (let [history      (h/client-ops history)
-         g1a          (g1a-cases history)
-         g1b          (g1b-cases history)
-         internal     (internal-cases history)
-         dirty-update (dirty-update-cases (append-index (sorted-values history))
-                                          history)
+         g1a          (h/task history g1a [] (g1a-cases history))
+         g1b          (h/task history g1b [] (g1b-cases history))
+         internal     (h/task history internal [] (internal-cases history))
+         dirty-update (h/task history dirty-update []
+                              (dirty-update-cases
+                                (append-index (sorted-values history))
+                                history))
 
          ; We don't want to detect duplicates or incompatible orders for
          ; aborted txns.
          history+      (h/possible history)
-         dups          (duplicates history+)
-         sorted-values (sorted-values history+)
-         incmp-order   (incompatible-orders sorted-values)
-         _             (render-incompatible-orders!
-                         (:directory opts) history+ sorted-values incmp-order)
-         lost-update   (ct/lost-update-cases #{:append} history+)
+         dups          (h/task history dups [] (duplicates history+))
+         sorted-values (h/task history sorted-values+ []
+                               (sorted-values history+))
+         incmp-order   (h/task history incmp-order [sv sorted-values]
+                               (incompatible-orders sv))
+         _             (h/task history render-incmp-order [sv    sorted-values
+                                                           incmp incmp-order]
+                               (render-incompatible-orders!
+                                 (:directory opts) history+ sv incmp))
+         lost-update   (h/task history lost-update []
+                               (ct/lost-update-cases #{:append} history+))
 
          ; Great, now construct a graph analyzer...
          analyzers     (into [graph] (ct/additional-graphs opts))
@@ -924,13 +931,13 @@
 
          ; And merge in our own anomalies
          anomalies (cond-> cycles
-                     dups           (assoc :duplicate-elements dups)
-                     incmp-order    (assoc :incompatible-order incmp-order)
-                     internal       (assoc :internal internal)
-                     dirty-update   (assoc :dirty-update dirty-update)
-                     (seq g1a)      (assoc :G1a g1a)
-                     (seq g1b)      (assoc :G1b g1b)
-                     lost-update    (assoc :lost-update lost-update))]
+                     @dups          (assoc :duplicate-elements @dups)
+                     @incmp-order   (assoc :incompatible-order @incmp-order)
+                     @internal      (assoc :internal @internal)
+                     @dirty-update  (assoc :dirty-update @dirty-update)
+                     (seq @g1a)     (assoc :G1a @g1a)
+                     (seq @g1b)     (assoc :G1b @g1b)
+                     @lost-update   (assoc :lost-update @lost-update))]
      (ct/result-map opts anomalies))))
 
 (defn append-txns
