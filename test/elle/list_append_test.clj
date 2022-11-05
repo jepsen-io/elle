@@ -3,6 +3,7 @@
   (:require [clojure [pprint :refer [pprint]]
                      [test :refer :all]
                      [walk :as walk]]
+            [dom-top.core :refer [loopr]]
             [elle [core :as elle]
                   [core-test :refer [read-history]]
                   [list-append :refer :all]
@@ -940,3 +941,54 @@
   ; A case where even small SCCs caused the cycle search to time out
   (cf {:consistency-models [:strong-snapshot-isolation]}
       "histories/small-slow-scc.edn"))
+
+(deftest ^:perf ^:focus perfect-perf-test
+  ; An end-to-end performance test based on a perfect strict-1SR system
+  (let [n (long 4e5)
+        ; Takes a state, a txn, and a volatile for the completed txn to go to.
+        ; Applies txn to state, returning new state, and updating volatile.
+        apply-txn (fn apply-txn [state txn txn'-volatile]
+                    (loopr [state' (transient state)
+                            txn'  (transient [])]
+                           [[f k v :as mop] txn]
+                           (case f
+                             :r (recur state'
+                                       (conj! txn' [f k (get state' k)]))
+                             :append (recur (assoc! state' k
+                                                    (conj (get state' k []) v))
+                                            (conj! txn' mop)))
+                           (do (vreset! txn'-volatile (persistent! txn'))
+                               (persistent! state'))))
+        t0 (System/nanoTime)
+        ; Build history
+        txn' (volatile! nil)
+        h (loopr [history (transient [])
+                  state   {}
+                  i       0]
+                 [op (take n (gen))]
+                 (let [process  (rand-int 10)
+                       op       (h/op (assoc op
+                                             :index i,
+                                             :time i,
+                                             :process process))
+                       history' (conj! history op)
+                       state'   (apply-txn state (:value op) txn')
+                       i'       (inc i)
+                       op'      (assoc op :index i' :time i', :type :ok,
+                                       :value @txn')
+                       history' (conj! history' op')]
+                   (recur history' state' (inc i')))
+                   (h/history (persistent! history)
+                              {:dense-indices? true
+                               :have-indices? true
+                               :already-ops? true}))
+        t1 (System/nanoTime)
+        _ (is (= (* 2 n) (count h)))
+        analysis (check h)
+        t2 (System/nanoTime)
+        run-time   (/ (- t1 t0) 1e9)
+        check-time (/ (- t2 t1) 1e9)]
+    (println (format "list-append-perf-test: %d ops run in %.2f s (%.2f ops/sec); checked in %.2f s (%.2f ops/sec)"
+                     n run-time (/ n run-time)
+                     check-time (/ n check-time)))))
+

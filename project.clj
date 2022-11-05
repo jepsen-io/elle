@@ -23,5 +23,6 @@
                                              (:overflow m))))
                    :all         (fn [m] true)
                    :perf        :perf
+                   :focus       :focus
                    :overflow    :overflow
                    :interactive :interactive})
