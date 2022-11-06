@@ -350,13 +350,6 @@
   Later, we should change the whole structure of append indexes to admit
   multiple prior txns rather than just one, and get rid of this."
   ([as bs]
-;   (loopr [i      0
-;           last-a ::sentinel
-;           last-b ::sentinel
-;           merged (transient [])]
-;          [a as]
-
-
    (merge-orders [] (distinct as) (distinct bs)))
   ([merged as bs]
    (cond (empty? as) (into merged bs)
