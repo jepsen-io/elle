@@ -703,18 +703,21 @@
   ([history]
    (rw-graph (preprocess history) nil))
   ([{:keys [history append-index write-index read-index]} _]
-   {:graph (g/forked
-             (reduce-mops (fn [g op [f :as mop]]
-                            (if (= f :append)
-                              ; Who read the state just before we wrote?
-                              (if-let [deps (rw-mop-deps append-index
-                                                         write-index
-                                                         read-index op mop)]
-                                (g/link-all-to g deps op)
-                                g)
-                              g))
-                          (g/linear (g/named-graph :rw))
-                          history))
+   {:graph (loopr [; Yourkit claims we were burning time in NamedGraph/link, so
+                   ; we'll fall back to the concrete digraph then wrap.
+                   ; Maybe inliner got confused.
+                   g (g/linear (g/digraph))]
+                  [op           history
+                   [f :as mop]  op]
+                  (if (identical? f :append)
+                    ; Who read the state just before we wrote?
+                    (if-let [deps (rw-mop-deps append-index
+                                               write-index
+                                               read-index op mop)]
+                      (recur (g/link-all-to g deps op))
+                      (recur g))
+                    (recur g))
+                  (g/named-graph :rw (g/forked g)))
     :explainer (RWExplainer. append-index write-index read-index)}))
 
 (defn graph

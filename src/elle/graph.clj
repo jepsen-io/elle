@@ -88,8 +88,10 @@
 
 (defn ^NamedGraph named-graph
   "Constructs a fresh named directed graph with the given name."
-  [name]
-  (NamedGraph. name (digraph)))
+  ([name]
+   (NamedGraph. name (digraph)))
+  ([name graph]
+   (NamedGraph. name graph)))
 
 (defn linear
   "Bifurcan's analogue to (transient x)"
