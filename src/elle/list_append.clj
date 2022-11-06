@@ -350,6 +350,13 @@
   Later, we should change the whole structure of append indexes to admit
   multiple prior txns rather than just one, and get rid of this."
   ([as bs]
+;   (loopr [i      0
+;           last-a ::sentinel
+;           last-b ::sentinel
+;           merged (transient [])]
+;          [a as]
+
+
    (merge-orders [] (distinct as) (distinct bs)))
   ([merged as bs]
    (cond (empty? as) (into merged bs)
@@ -705,10 +712,10 @@
   ([{:keys [history append-index write-index read-index]} _]
    {:graph (loopr [; Yourkit claims we were burning time in NamedGraph/link, so
                    ; we'll fall back to the concrete digraph then wrap.
-                   ; Maybe inliner got confused.
+                   ; Maybe inliner got confused?
                    g (g/linear (g/digraph))]
                   [op           history
-                   [f :as mop]  op]
+                   [f :as mop]  (:value op)]
                   (if (identical? f :append)
                     ; Who read the state just before we wrote?
                     (if-let [deps (rw-mop-deps append-index
