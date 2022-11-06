@@ -38,6 +38,7 @@
   (:require [clojure.core.reducers :as r]
             [clojure [set :as set]
                      [pprint :refer [pprint]]]
+            [dom-top.core :refer [loopr]]
             [elle [core :as elle]
                   [txn :as ct]
                   [graph :as g]
@@ -536,25 +537,28 @@
   [history version-graphs]
   (let [ext-read-index  (ext-index txn/ext-reads  history)
         ext-write-index (ext-index txn/ext-writes history)]
-    (reduce
-      (fn per-key [g [k version-graph]]
-        (reduce (fn [g ^IEdge edge]
-                  (let [v1        (.from edge)
-                        v2        (.to edge)
-                        k-writes  (get ext-write-index k)
-                        k-reads   (get ext-read-index k)
-                        v1-reads  (get k-reads v1)
-                        v1-writes (get k-writes v1)
-                        v2-writes (get k-writes v2)
-                        all-vals  (set (concat v1-reads v1-writes v2-writes))]
-                    (-> g
-                        (g/link-all-to-all v1-writes v2-writes :ww)
-                        (g/link-all-to-all v1-reads  v2-writes :rw)
-                        (g/remove-self-edges all-vals))))
-                g
-                (g/edges version-graph)))
-      (g/digraph)
-      version-graphs)))
+    (loopr [ww (g/linear (g/named-graph :ww))
+            rw (g/linear (g/named-graph :rw))]
+           [[k version-graph] version-graphs
+            ^IEdge edge (g/edges version-graph)]
+           (let [v1        (.from edge)
+                 v2        (.to edge)
+                 k-writes  (get ext-write-index k)
+                 k-reads   (get ext-read-index k)
+                 v1-reads  (get k-reads v1)
+                 v1-writes (get k-writes v1)
+                 v2-writes (get k-writes v2)
+                 all-vals  (set (concat v1-reads v1-writes v2-writes))
+                 ww'       (-> ww
+                               (g/link-all-to-all v1-writes v2-writes)
+                               (g/remove-self-edges all-vals))
+                 rw'       (-> rw
+                               (g/link-all-to-all v1-reads v2-writes)
+                               (g/remove-self-edges all-vals))]
+             (recur ww' rw'))
+           (reduce g/rel-graph-union
+                   (g/rel-graph-union)
+                   [(g/forked ww) (g/forked rw)]))))
 
 (defn explain-op-deps
   "Given version graphs, a function extracting a map of keys to values from op
@@ -657,8 +661,8 @@
   an order over txns based on the external writes and reads of key k: any txn
   that reads value v must come after the txn that wrote v."
   [history]
-  (let [ext-writes (ext-index txn/ext-writes  history)
-        ext-reads  (ext-index txn/ext-reads   history)]
+  (let [ext-writes (ext-index txn/ext-writes history)
+        ext-reads  (ext-index txn/ext-reads  history)]
     ; Take all reads and relate them to prior writes.
     {:graph
      (g/forked
@@ -678,8 +682,7 @@
                                ; OK, in this case, we've got exactly one
                                ; txn that wrote this value, which is good!
                                ; We can generate dependency edges here!
-                               1 (g/link-to-all graph (first writes) reads
-                                                    :wr)
+                               1 (g/link-to-all graph (first writes) reads)
 
                                ; But if there's more than one, we can't do this
                                ; sort of cycle analysis because there are
@@ -695,7 +698,7 @@
                                                      (pr-str writes))))))))
                          graph
                          values->reads))
-               (g/linear (g/digraph))
+               (g/linear (g/named-graph :wr))
                ext-reads))
      :explainer (WRExplainer.)}))
 

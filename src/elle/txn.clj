@@ -311,7 +311,7 @@
   (sorted-map-by
     (fn [a b] (compare (cycle-type-priorities a 100)
                        (cycle-type-priorities b 100)))
-    :G0        {:rels (g/bset :ww)}
+    :G0        {:rels #{:ww}}
     ; We want at least one wr edge, so we specify that as first-rels.
     :G1c       {:first-rels #{:wr}
                 :rest-rels  #{:ww :wr}}
@@ -454,7 +454,7 @@
   etc, so we can keep only the graphs we need in memory. On the other hand,
   that might waste more time doing SCC-specific precomputation. Not sure."
   [graph]
-  (memoize (fn [rels] (g/filter-relationships rels graph))))
+  (memoize (fn [rels] (g/project-relationships rels graph))))
 
 (defn warm-filtered-graphs!
   "I thought memoizing this and making it lazy was a good idea, and it might be
@@ -612,8 +612,7 @@
   :G0-realtime        G0, but with realtime edges
   ..."
   [opts graph pair-explainer sccs]
-  (let [fg (-> (filtered-graphs graph)
-               warm-filtered-graphs!)]
+  (let [fg (-> (filtered-graphs graph) warm-filtered-graphs!)]
     (->> sccs
          (mapcat (partial cycle-cases-in-scc opts graph fg pair-explainer))
          ; And group them by type

@@ -36,6 +36,7 @@
             [clojure.java.io :as io]
             [jepsen [history :as h]
                      [txn :as txn]]
+            [jepsen.history.task :as task]
             [jepsen.txn.micro-op :as mop]
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan ISet
@@ -176,27 +177,30 @@
   (checker (combine monotonic-keys real-time))"
   [& analyzers]
   (fn analyze [history]
-    (loop [analyzers  analyzers
-           anomalies  nil
-           graph      (g/linear (g/digraph))
-           explainers []]
-      (if (seq analyzers)
-        ; Use this analyzer on the history and merge its result map into our
-        ; state.
-        (let [analyzer (first analyzers)
-              analysis (analyzer history)]
-          (assert (and (:graph analysis) (:explainer analysis))
-                  (str "Analyzer " (pr-str analyzer)
-                       " did not return a map with a :graph and :analysis."
-                       " Instead, we got " (pr-str analysis)))
-          (recur (next analyzers)
-                 (merge anomalies (:anomalies analysis))
-                 (g/digraph-union graph (:graph analysis))
-                 (conj explainers (:explainer analysis))))
-        ; Done!
-      {:anomalies anomalies
-       :graph     (g/forked graph)
-       :explainer (CombinedExplainer. explainers)}))))
+    ; Fire off all analyzers
+    (let [tasks (mapv (fn launch-analysis [analyzer]
+                        (task/submit! (h/executor history)
+                                      [:analyze analyzer]
+                                      nil
+                                      (fn task [_]
+                                        (analyzer history))))
+                      analyzers)
+          analyses (mapv deref tasks)]
+      ; Validate
+      (doseq [[analyzer analysis] (map vector analyzers analyses)]
+        (assert (and (:graph analysis) (:explainer analysis))
+                (str "Analyzer "
+                     (pr-str analyzer)
+                     " did not return a map with a :graph and :analysis."
+                     " Instead, we got " (pr-str analysis))))
+      {; Merge anomalies
+       :anomalies (reduce merge (map :anomalies analyses))
+       ; Merge graphs
+       :graph (reduce g/rel-graph-union
+                      (g/rel-graph-union)
+                      (mapv :graph analyses))
+       ; Merge explainers
+       :explainer (CombinedExplainer. (mapv :explainer analyses))})))
 
 ;; Monotonic keys!
 
@@ -238,8 +242,8 @@
          (partition 2 1)
          ; And build a graph out of them
          (reduce (fn [g [[v1 ops1] [v2 ops2]]]
-                   (g/link-all-to-all g ops1 ops2 :monotonic-key))
-                 (g/linear (g/digraph)))
+                   (g/link-all-to-all g ops1 ops2))
+                 (g/linear (g/named-graph :monotonic-key)))
          g/forked)))
 
 (defn monotonic-key-graph
@@ -252,7 +256,8 @@
                    (mapcat (comp keys :value))
                    distinct
                    (map (fn [k] (monotonic-key-order k history)))
-                   (reduce g/digraph-union))]
+                   (reduce g/named-graph-union
+                           (g/named-graph :monotonic-key)))]
     {:graph     graph
      :explainer (MonotonicKeyExplainer.)}))
 
@@ -265,8 +270,8 @@
   (->> history
        (filter (comp #{process} :process))
        (partition 2 1)
-       (reduce (fn [g [op1 op2]] (g/link g op1 op2 :process))
-               (g/linear (g/digraph)))
+       (reduce (fn [g [op1 op2]] (g/link g op1 op2))
+               (g/linear (g/named-graph :process)))
        g/forked))
 
 (defrecord ProcessExplainer []
@@ -290,7 +295,8 @@
                    (map :process)
                    distinct
                    (map (fn [p] (process-order oks p)))
-                   (reduce g/digraph-union))]
+                   (reduce g/named-graph-union
+                           (g/named-graph :process)))]
     {:graph     graph
      :explainer (ProcessExplainer.)}))
 
@@ -350,7 +356,7 @@
   ; completion d, we look backwards in the graph to see whether any buffered
   ; completions point to d, and remove those from the buffer.
   (loopr [^ISet oks (.linear (Set.)) ; Our buffer of completed ops
-          g         (g/digraph)]     ; Our order graph
+          g         (g/named-graph :realtime)]     ; Our order graph
          [op history :via :reduce]
          (case (:type op)
            ; A new operation begins! Link every completed op to this one's
@@ -359,7 +365,7 @@
            ; failures, but I don't think they'll hurt. We *do* need edges to
            ; crashed ops, because they may complete later on.
            :invoke (let [op' (h/completion history op)
-                         g   (g/link-all-to g oks op' :realtime)]
+                         g   (g/link-all-to g oks op')]
                      (recur oks g))
            ; An operation has completed. Add it to the oks buffer, and remove
            ; oks that this ok implies must have completed.

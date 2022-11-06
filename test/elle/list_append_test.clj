@@ -944,7 +944,7 @@
 
 (deftest ^:perf ^:focus perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system
-  (let [n (long 1e5)
+  (let [n (long 1e6)
         ; Takes a state, a txn, and a volatile for the completed txn to go to.
         ; Applies txn to state, returning new state, and updating volatile.
         apply-txn (fn apply-txn [state txn txn'-volatile]

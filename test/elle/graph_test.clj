@@ -1,8 +1,12 @@
 (ns elle.graph-test
-  (:require [elle.graph :refer :all]
+  (:require [clojure [pprint :refer [pprint]]]
+            [elle.graph :refer :all]
             [jepsen.txn :as txn]
             [clojure.test :refer :all]
-            [slingshot.slingshot :refer [try+ throw+]]))
+            [slingshot.slingshot :refer [try+ throw+]])
+  (:import (io.lacuna.bifurcan IMap
+                               Map)
+           (elle RelGraph)))
 
 (deftest tarjan-test
   (let [tarjan (comp set tarjan)]
@@ -241,21 +245,6 @@
               (link 1 2 :bar))]
     (is (= #{:foo :bar} (->clj (edge g 1 2))))))
 
-(deftest project+remove-relationship-test
-  (let [g (-> (digraph)
-              (link 1 2 :foo)
-              (link 1 3 :foo)
-              (link 2 3 :bar)
-              (link 1 2 :bar))]
-    (testing "remove"
-      (is (= #{{:from 1, :to 2, :value #{:bar}}
-               {:from 2, :to 3, :value #{:bar}}}
-             (set (map ->clj (edges (remove-relationship g :foo)))))))
-    (testing "project"
-      (is (= #{{:from 1, :to 2, :value #{:foo}}
-               {:from 1, :to 3, :value #{:foo}}}
-             (set (map ->clj (edges (project-relationship g :foo)))))))))
-
 (deftest collapse-graph-test
   (testing "simple"
     (is (= (map->bdigraph {1 [3]})
@@ -287,3 +276,21 @@
                              (link 1 3 :b) ; becomes 1->2
                              (link 2 4 :c) ; becomes 1->2
                              ))))))
+
+(deftest rel-graph-test
+  (let [a (.. (named-graph :a)
+              (link 1 2)
+              (link 1 3))
+        b (.. (named-graph :b)
+              (link 1 2)
+              (link 1 4)
+              (link 5 6))
+        g (reduce rel-graph-union (rel-graph-union) [a b])]
+    (is (= true (.isDirected g)))
+    (is (= #{1 2 3 4 5 6} (->clj (.vertices g))))
+    (is (= a (.projectRel g :a)))
+    (is (= b (.projectRel g :b)))
+    (is (= g (.projectRels g [:a :b])))
+    (is (= #{2 3 4} (->clj (.out g 1))))
+    (is (thrown? IllegalArgumentException (->clj (.out g 0))))
+    (is (= #{6} (->clj (.out g 5))))))

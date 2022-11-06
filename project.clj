@@ -11,8 +11,10 @@
                  [io.jepsen/history "0.1.0-SNAPSHOT"]
                  [jepsen.txn "0.1.2"]
                  [io.lacuna/bifurcan "0.2.0-alpha6"]]
+  :java-source-paths ["src"]
+  :javac-options ["-target" "1.8" "-source" "1.8"]
   :profiles {:dev {:dependencies [[org.clojure/clojure "1.11.1"]
-                                  [spootnik/unilog "0.7.30"]]}}
+                                  [spootnik/unilog "0.7.31"]]}}
   :jvm-opts ["-server"
              "-XX:-OmitStackTraceInFastThrow"
              ;"-XX:+PrintGC"

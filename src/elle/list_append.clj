@@ -615,9 +615,9 @@
                               g
                               (if-let [dep (ww-mop-dep
                                              append-index write-index op mop)]
-                                (g/link g dep op :ww)
+                                (g/link g dep op)
                                 g)))
-                          (g/linear (g/digraph))
+                          (g/linear (g/named-graph :ww))
                           history))
     :explainer (WWExplainer. append-index write-index read-index)}))
 
@@ -652,10 +652,10 @@
                               g
                               ; Figure out what write we overwrote
                               (if-let [dep (wr-mop-dep write-index op mop)]
-                                (g/link g dep op :wr)
+                                (g/link g dep op)
                                 ; No dep
                                 g)))
-                          (g/linear (g/digraph))
+                          (g/linear (g/named-graph :wr))
                           history))
     :explainer (WRExplainer. append-index write-index read-index)}))
 
@@ -710,10 +710,10 @@
                               (if-let [deps (rw-mop-deps append-index
                                                          write-index
                                                          read-index op mop)]
-                                (g/link-all-to g deps op :rw)
+                                (g/link-all-to g deps op)
                                 g)
                               g))
-                          (g/linear (g/digraph))
+                          (g/linear (g/named-graph :rw))
                           history))
     :explainer (RWExplainer. append-index write-index read-index)}))
 

@@ -10,7 +10,9 @@
             [dom-top.core :refer [loopr]]
             [elle.util :refer [map-vals maybe-interrupt]]
             [jepsen.history :as h])
-  (:import (io.lacuna.bifurcan DirectedGraph
+  (:import (elle NamedGraph
+                 RelGraph)
+           (io.lacuna.bifurcan DirectedGraph
                                Graphs
                                ICollection
                                IEdge
@@ -83,6 +85,11 @@
   "Constructs a fresh directed graph."
   []
   (DirectedGraph.))
+
+(defn ^NamedGraph named-graph
+  "Constructs a fresh named directed graph with the given name."
+  [name]
+  (NamedGraph. name (digraph)))
 
 (defn linear
   "Bifurcan's analogue to (transient x)"
@@ -168,11 +175,11 @@
   "Helper for linking Bifurcan graphs. Optionally takes a relationship, which
   is added to the value set of the edge. Nil relationships are treated as if no
   relationship were passed."
-  ([^DirectedGraph graph node succ]
+  ([^IGraph graph node succ]
    ;(assert (not (nil? node)))
    ;(assert (not (nil? succ)))
    (.link graph node succ))
-  ([^DirectedGraph graph node succ relationship]
+  ([^IGraph graph node succ relationship]
    (do ;(assert (not (nil? node)))
        ;(assert (not (nil? succ)))
        (.link graph node succ (bset relationship) union-edge))))
@@ -192,7 +199,7 @@
   "Given a graph g, links all xs to y."
   ([g xs y]
    (if (seq xs)
-     (recur (link (first xs) y) (next xs) y)
+     (recur (link g (first xs) y) (next xs) y)
      g))
   ([g xs y relationship]
    (if (seq xs)
@@ -229,53 +236,12 @@
     (recur (unlink g (first xs) y) (next xs) y)
     g))
 
-(defn keep-edge-values
-  "Transforms a graph by applying a function (f edge-value) to each edge in the
-  graph. Where the function returns `nil`, removes that edge altogether."
-  [f ^DirectedGraph g]
-  (forked
-     (reduce (fn [^IGraph g, ^IEdge edge]
-              (let [v' (f (.value edge))]
-                (if (nil? v')
-                  ; Remove edge
-                  (.unlink g (.from edge) (.to edge))
-                  ; Update existing edge
-                  (.link g (.from edge) (.to edge) v'))))
-            (linear g)
-            ; Note that we iterate over an immutable copy of g, and mutate a
-            ; linear version in-place, to avoid seeing our own mutations during
-            ; iteration.
-            (edges (forked g)))))
-
-(defn remove-relationship
-  "Filters a graph, removing the given relationship from it."
-  [g rel]
-  (keep-edge-values (fn [^ISet rs]
-                      (let [rs' (.remove rs rel)]
-                        (when-not (= 0 (.size rs'))
-                          rs')))
-                    g))
-
-(defn project-relationship
-  "Filters a graph to just those edges with the given relationship."
-  [g rel]
-  ; Might as well re-use this, we're gonna build it a lot.
-  (let [rs' (bset rel)]
-    (keep-edge-values (fn [^Set rs] (when (.contains rs rel) rs'))
-                      g)))
-
-(defn filter-relationships
-  "Filters a graph g to just those edges which intersect with the given set of
-  relationships."
-  [target-rels g]
-  (let [^Set target-rels (if (instance? ISet target-rels)
-                           target-rels
-                           (->bset target-rels))]
-    (keep-edge-values (fn [^ISet rels]
-                        (let [rels' (.intersection target-rels rels)]
-                          (when-not (= 0 (.size rels'))
-                            rels')))
-                      g)))
+(defn project-relationships
+  "Projects a RelGraph to just the given set of relationships."
+  [target-rels ^RelGraph g]
+  (if (= 1 (count target-rels))
+    (.projectRel  ^RelGraph g (first target-rels))
+    (.projectRels ^RelGraph g target-rels)))
 
 (defn ^DirectedGraph remove-self-edges
   "There are times when it's just way simpler to use link-all-to-all between
@@ -370,6 +336,28 @@
                     succs))
           (.linear (DirectedGraph.))
           m))
+
+(defn ^NamedGraph named-graph-union
+  "Unions two named graphs together."
+  [^NamedGraph a, ^NamedGraph b]
+  (.union a b))
+
+(defn ^RelGraph rel-graph-union
+  "Unions something into a RelGraph. Can take either a NamedGraph or another
+  RelGraph. With no args, returns an empty RelGraph."
+  ([] RelGraph/EMPTY)
+  ([a]
+   (condp instance? a
+     NamedGraph (.union RelGraph/EMPTY ^NamedGraph a)
+     RelGraph   (.union RelGraph/EMPTY ^RelGraph a)
+     (throw (IllegalArgumentException.
+              (str "Don't know how to union a relgraph with " (type a))))))
+  ([^RelGraph a b]
+   (condp instance? b
+     NamedGraph (.union a ^NamedGraph b)
+     RelGraph   (.union a ^RelGraph b)
+     (throw (IllegalArgumentException.
+              (str "Don't know how to union a relgraph with " (type b)))))))
 
 (defn ^DirectedGraph digraph-union
   "Takes the union of n graphs, merging edges with union."
@@ -495,7 +483,7 @@
   "Given a graph g, and a set of paths (each a sequence like [a b c]),
   constructs a new set of paths by taking the tip c of each path p, and
   expanding p to all vertices c can reach: [a b c] => #{[a b c d] [a b c e]}."
-  [^DirectedGraph g, paths]
+  [^IGraph g, paths]
   (->> paths
        (mapcat (fn [path]
                  (maybe-interrupt)
@@ -516,7 +504,7 @@
 (defn path-shells
   "Given a graph, and a starting collection of paths, constructs shells
   outwards from those paths: collections of longer and longer paths."
-  [^DirectedGraph g starting-paths]
+  [^IGraph g starting-paths]
   ; The longest possible cycle is the entire graph, plus one.
   (take (inc (.size g))
         (iterate (comp prune-alternate-paths
