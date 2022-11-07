@@ -194,35 +194,35 @@
 (defn link-to-all
   "Given a graph g, links x to all ys."
   ([g x ys]
-   (if (seq ys)
-     (recur (link g x (first ys)) x (next ys))
-     g))
+   (loopr [g' g]
+          [y ys]
+          (recur (link g' x y))))
   ([g x ys rel]
-   (if (seq ys)
-     (recur (link g x (first ys) rel) x (next ys) rel)
-     g)))
+   (loopr [g' g]
+          [y ys]
+          (recur (link g' x y rel)))))
 
 (defn link-all-to
   "Given a graph g, links all xs to y."
   ([g xs y]
-   (if (seq xs)
-     (recur (link g (first xs) y) (next xs) y)
-     g))
+   (loopr [g' g]
+          [x xs]
+          (recur (link g' x y))))
   ([g xs y relationship]
-   (if (seq xs)
-     (recur (link g (first xs) y relationship) (next xs) y relationship)
-     g)))
+   (loopr [g' g]
+          [x xs]
+          (recur (link g' x y relationship)))))
 
 (defn link-all-to-all
   "Given a graph g, links all xs to all ys."
   ([g xs ys]
-   (if (seq xs)
-     (recur (link-to-all g (first xs) ys) (next xs) ys)
-     g))
+   (loopr [g' g]
+          [x xs, y ys]
+          (recur (link g' x y))))
   ([g xs ys rel]
-   (if (seq xs)
-     (recur (link-to-all g (first xs) ys rel) (next xs) ys rel)
-     g)))
+   (loopr [g' g]
+          [x xs, y ys]
+          (recur (link g' x y rel)))))
 
 (defn unlink
   "Heper for unlinking Bifurcan graphs."
