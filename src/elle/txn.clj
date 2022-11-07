@@ -12,10 +12,13 @@
                   [viz :as viz]]
             [jepsen [history :as h]
                     [txn :as txn :refer [reduce-mops]]]
+            [jepsen.history.fold :refer [loopf]]
+            [tesser.core :as t]
             [unilog.config :refer [start-logging!]])
   (:import (io.lacuna.bifurcan IGraph
                                LinearMap
-                               Map)))
+                               Map)
+           (jepsen.history Op)))
 
 
 (start-logging! {:console "%p [%d] %t - %c %m%n"})
@@ -24,6 +27,20 @@
   "A lazy sequence of all [op mop] pairs from a history."
   [history]
   (mapcat (fn [op] (map (fn [mop] [op mop]) (:value op))) history))
+
+(t/deftransform keep-op-mops
+  "A tesser fold over a history. For every op, and every mop in that op, calls
+  `(f op mop])`. Passes non-nil results to downstream transforms."
+  [f]
+  (assoc downstream :reducer
+         (fn reducer [acc ^Op op]
+           (reduce (fn mop [acc mop]
+                     (let [res (f op mop)]
+                       (if (nil? res)
+                         acc
+                         (reducer- acc res))))
+                   acc
+                   (.value op)))))
 
 (defn ok-keep
 	"Given a function of operations, returns a sequence of that function applied
@@ -66,38 +83,50 @@
   "Returns a map of keys to maps of failed write values to the operations which
   wrote them. Used for detecting aborted reads."
   [write? history]
-  (reduce-mops (fn index [failed op [f k v :as mop]]
-                 (if (and (h/fail? op)
-                          (write? f))
-                   (assoc-in failed [k v] op)
-                   failed))
-               {}
-               history))
+  (h/fold history
+          (loopf {:name :failed-writes}
+                 ([failed {}]
+                  [^Op op]
+                  (recur
+                    (if (h/fail? op)
+                      (loopr [failed' failed]
+                             [[f k v :as mop] (.value op)]
+                             (if (write? f)
+                               (recur (update failed' k assoc v op))
+                               (recur failed')))
+                      failed)))
+                 ([failed {}]
+                  [failed']
+                  (recur (merge-with merge failed failed'))))))
 
 (defn intermediate-writes
   "Returns a map of keys to maps of intermediate write values to the operations
   which wrote them. Used for detecting intermediate reads."
   [write? history]
-  (reduce (fn [im op]
-            ; Find intermediate writes for this particular txn by
-            ; producing two maps: intermediate keys to values, and
-            ; final keys to values in this txn. We shift elements
-            ; from final to intermediate when they're overwritten.
-            (first
-              (reduce (fn [[im final :as state] [f k v]]
-                        (if (write? f)
-                          (if-let [e (final k)]
-                            ; We have a previous write of k
-                            [(assoc-in im [k e] op)
-                             (assoc final k v)]
-                            ; No previous write
-                            [im (assoc final k v)])
-                          ; Something other than an append
-                          state))
-                      [im {}]
-                      (:value op))))
-          {}
-          history))
+  (h/fold history
+          (loopf {:name :intermediate-writes}
+                 ([im {}]
+                  [^Op op]
+                  ; Find intermediate writes for this particular txn by
+                  ; producing two maps: intermediate keys to values, and
+                  ; final keys to values in this txn. We shift elements
+                  ; from final to intermediate when they're overwritten.
+                  (recur (loopr [im'   im
+                                 final {}]
+                                [[f k v] (.value op)]
+                                (if (write? f)
+                                  (if-let [e (final k)]
+                                    ; We have a previous write of k
+                                    (recur (assoc-in im' [k e] op)
+                                           (assoc final k v))
+                                    ; No previous write
+                                    (recur im' (assoc final k v)))
+                                  ; Something other than an append
+                                  (recur im' final))
+                                im')))
+                 ([im {}]
+                  [im']
+                  (recur (merge-with merge im im'))))))
 
 (defn lost-update-cases
   "Takes a function write? which returns true iff an operation is a write, and

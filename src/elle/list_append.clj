@@ -80,25 +80,28 @@
   writes, we can't conclude they aborted, sooooo...
 
   This function takes a history (which should include :fail events!), and
-  produces a sequence of error objects, each representing an operation which
-  read state written by a failed transaction."
+  produces a collection of error objects, each representing an operation which
+  read state written by a failed transaction. Nil if no errors found."
   [history]
   ; Build a map of keys to maps of failed elements to the ops that appended
   ; them.
-  (let [failed (ct/failed-writes #{:append} history)]
-    ; Look for ok ops with a read mop of a failed append
-    (->> history
-         h/oks
-         ct/op-mops
-         (mapcat (fn [[op [f k v :as mop]]]
-                   (when (= :r f)
-                     (keep (fn [e]
-                             (when-let [writer (get-in failed [k e])]
-                               {:op        op
-                                :mop       mop
-                                :writer    writer
-                                :element   e}))
-                           v)))))))
+  (let [failed (ct/failed-writes #{:append} history)
+        errs (->> (t/filter h/ok?)
+                  (ct/keep-op-mops
+                    (fn mop [op [f k v :as mop]]
+                      (when (identical? :r f)
+                        (keep (fn per-element [e]
+                                (when-let [writer (get-in failed
+                                                          [k e])]
+                                  {:op        op
+                                   :mop       mop
+                                   :writer    writer
+                                   :element   e}))
+                              v))))
+                  (t/mapcat identity)
+                  (t/into [])
+                  (h/tesser history))]
+    (when (seq errs) errs)))
 
 (defn g1b-cases
   "G1b, or intermediate read, is an anomaly where a transaction T2 reads a
@@ -111,23 +114,25 @@
   [history]
   ; Build a map of keys to maps of intermediate elements to the ops that wrote
   ; them
-  (let [im (ct/intermediate-writes #{:append} history)]
-    ; Look for ok ops with a read mop of an intermediate append
-    (->> history
-         h/oks
-         ct/op-mops
-         (keep (fn [[op [f k v :as mop]]]
-                 (when (= :r f)
-                   ; We've got an illegal read if our last element came from an
-                   ; intermediate append.
-                   (when-let [writer (get-in im [k (peek v)])]
-                     ; Internal reads are OK!
-                     (when (not= op writer)
-                       {:op       op
-                        :mop      mop
-                        :writer   writer
-                        :element  (peek v)}))))))))
-
+  (let [im (ct/intermediate-writes #{:append} history)
+        ; Look for ok ops with a read mop of an intermediate append
+        errs (->> (t/filter h/ok?)
+                  (ct/keep-op-mops
+                    (fn g1b [op [f k v :as mop]]
+                      (when (identical? :r f)
+                        ; We've got an illegal read if our last element came
+                        ; from an intermediate append.
+                        (when-let [writer (get-in im [k (peek v)])]
+                          ; Internal reads are OK!
+                          (when (not= op writer)
+                            {:op       op
+                             :mop      mop
+                             :writer   writer
+                             :element  (peek v)})))))
+                  (t/into [])
+                  (h/tesser history))]
+    (when (seq errs)
+      errs)))
 
 (def unknown-prefix
   "A marker we use in a list to identify an unknown prefix."
@@ -893,8 +898,8 @@
                      @incmp-order   (assoc :incompatible-order @incmp-order)
                      @internal      (assoc :internal @internal)
                      @dirty-update  (assoc :dirty-update @dirty-update)
-                     (seq @g1a)     (assoc :G1a @g1a)
-                     (seq @g1b)     (assoc :G1b @g1b)
+                     @g1a           (assoc :G1a @g1a)
+                     @g1b           (assoc :G1b @g1b)
                      @lost-update   (assoc :lost-update @lost-update))]
      (ct/result-map opts anomalies))))
 

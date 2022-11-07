@@ -222,7 +222,7 @@
 
 (deftest g1a-cases-test
   (testing "empty"
-    (is (= [] (g1a-cases (h/history [])))))
+    (is (= nil (g1a-cases (h/history [])))))
   (testing "valid and invalid reads"
     (let [[t2 t3 t1 :as h]
           (h/history [(op "rx1ax2")
@@ -240,7 +240,7 @@
 
 (deftest g1b-cases-test
   (testing "empty"
-    (is (= [] (g1b-cases (h/history [])))))
+    (is (= nil (g1b-cases (h/history [])))))
 
   (testing "valid and invalid reads"
     ; t1 has an intermediate append of 1 which should never be visible alone.
@@ -257,7 +257,7 @@
 
   (testing "internal reads"
     (let [[t1 :as h] (h/history [(op "ax1rx1ax2")])]
-      (is (= [] (g1b-cases h))))))
+      (is (= nil (g1b-cases h))))))
 
 (deftest internal-cases-test
   (testing "empty"
@@ -938,7 +938,7 @@
   (cf {:consistency-models [:strong-snapshot-isolation]}
       "histories/small-slow-scc.edn"))
 
-(deftest ^:perf perfect-perf-test
+(deftest ^:perf ^:focus perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system
   (let [n (long 1e6)
         ; Takes a state, a txn, and a volatile for the completed txn to go to.
