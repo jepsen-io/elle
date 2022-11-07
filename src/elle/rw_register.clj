@@ -773,24 +773,29 @@
                             which we're willing to try and render.
 "
   ([history]
-   (check {}))
+   (check {} history))
   ([opts history]
    (let [history      (h/client-ops history)
-         _            (ct/assert-type-sanity history)
-         g1a          (g1a-cases history)
-         g1b          (g1b-cases history)
-         internal     (internal-cases history)
-         lost-update  (ct/lost-update-cases #{:w} history)
-         cycles   (:anomalies (ct/cycles! opts (partial graph opts) history))
+         type-sanity  (h/task history type-sanity []
+                              (ct/assert-type-sanity history))
+         g1a          (h/task history g1a [] (g1a-cases history))
+         g1b          (h/task history g1b [] (g1b-cases history))
+         internal     (h/task history internal [] (internal-cases history))
+         lost-update  (h/task history lost-update []
+                              (ct/lost-update-cases #{:w} history))
+         cycles       (:anomalies (ct/cycles! opts (partial graph opts)
+                                              history))
+         _            @type-sanity ; Will throw if problems
          ; Build up anomaly map
          anomalies (cond-> cycles
-                     internal     (assoc :internal internal)
-                     g1a          (assoc :G1a g1a)
-                     g1b          (assoc :G1b g1b)
-                     lost-update  (assoc :lost-update lost-update))]
+                     @internal     (assoc :internal @internal)
+                     @g1a          (assoc :G1a @g1a)
+                     @g1b          (assoc :G1b @g1b)
+                     @lost-update  (assoc :lost-update @lost-update))]
      (ct/result-map opts anomalies))))
 
 (defn gen
   "See elle.txn/wr-txns for options"
-  [opts]
-  (ct/gen (ct/wr-txns opts)))
+  ([] (gen {}))
+  ([opts]
+   (ct/gen (ct/wr-txns opts))))

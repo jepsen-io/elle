@@ -1,7 +1,7 @@
 (ns elle.rw-register-test
   (:refer-clojure :exclude [test])
   (:require [clojure.pprint :refer [pprint]]
-            [dom-top.core :refer [real-pmap]]
+            [dom-top.core :refer [loopr real-pmap]]
 						[elle [core :as elle]
                   [graph :as g]
                   [rw-register :refer :all]
@@ -606,8 +606,8 @@
   (deftest type-sanity
     (is (thrown-with-msg? java.lang.AssertionError #"a mix of integer types"
                           (c {}
-                             [{:process 0, :value [[:r :x (short 1)]]}
-                              {:process 0, :value [[:r :x (long 1)]]}]))))
+                             [{:process 0, :type :ok, :value [[:r :x (short 1)]]}
+                              {:process 0, :type :ok, :value [[:r :x (long 1)]]}]))))
 
 
   (deftest lost-update-test
@@ -731,3 +731,51 @@
     ; (println (ext-key-graph graph))
     (time
 			(ext-key-graph graph))))
+
+(deftest ^:perf ^:focus perfect-perf-test
+  ; An end-to-end performance test based on a perfect strict-1SR DB.
+  (let [n (long 1e4)
+        ; Takes state and txn, returns [state' txn'].
+        apply-txn (fn apply-txn [state txn]
+                    (loopr [state' (transient state)
+                            txn'   (transient [])]
+                           [[f k v :as mop] txn]
+                           (case f
+                             :w (recur (assoc! state' k v)
+                                       (conj! txn' mop))
+                             :r (recur state'
+                                       (conj! txn' [f k (get state' k)])))
+                           [(persistent! state')
+                            (persistent! txn')]))
+        t0 (System/nanoTime)
+        ; Build history
+        h (loopr [history (transient [])
+                  state   {}
+                  i       0]
+                 [op (take n (gen))]
+                 (let [process        (rand-int 10)
+                       op (h/op       (assoc op
+                                             :index i
+                                             :time i
+                                             :process process))
+                       history'       (conj! history op)
+                       [state' txn']  (apply-txn state (:value op))
+                       i'             (inc i)
+                       op'            (assoc op :index i', :time i',
+                                             :type :ok, :value txn')
+                       history'       (conj! history' op')]
+                   (recur history' state' (inc i')))
+                 (h/history (persistent! history)
+                            {:dense-indices? true
+                             :have-indices? true
+                             :already-ops? true}))
+        t1 (System/nanoTime)
+        _ (is (= (* 2 n) (count h)))
+        analysis (check {:sequential-keys? true} h)
+        t2 (System/nanoTime)
+        run-time   (/ (- t1 t0) 1e9)
+        check-time (/ (- t2 t1) 1e9)]
+    (is (= true (:valid? analysis)))
+    (println (format "rw-register-perf-test: %d ops run in %.2f s (%.2f ops/sec); checked in %.2f s (%.2f ops/sec)"
+                     n run-time (/ n run-time)
+                     check-time (/ n check-time)))))

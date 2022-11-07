@@ -938,7 +938,7 @@
   (cf {:consistency-models [:strong-snapshot-isolation]}
       "histories/small-slow-scc.edn"))
 
-(deftest ^:perf ^:focus perfect-perf-test
+(deftest ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system
   (let [n (long 1e6)
         ; Takes a state, a txn, and a volatile for the completed txn to go to.
@@ -974,10 +974,10 @@
                                        :value @txn')
                        history' (conj! history' op')]
                    (recur history' state' (inc i')))
-                   (h/history (persistent! history)
-                              {:dense-indices? true
-                               :have-indices? true
-                               :already-ops? true}))
+                 (h/history (persistent! history)
+                            {:dense-indices? true
+                             :have-indices? true
+                             :already-ops? true}))
         t1 (System/nanoTime)
         _ (is (= (* 2 n) (count h)))
         analysis (check h)
