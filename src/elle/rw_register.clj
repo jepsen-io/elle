@@ -38,22 +38,30 @@
   (:require [clojure.core.reducers :as r]
             [clojure [set :as set]
                      [pprint :refer [pprint]]]
+            [clojure.tools.logging :refer [info warn]]
             [dom-top.core :refer [loopr]]
             [elle [core :as elle]
                   [txn :as ct]
                   [graph :as g]
-                  [util :as util :refer [map-vals index-of]]]
+                  [util :as util :refer [map-vals
+                                         index-of
+                                         op-memoize]]]
             [jepsen [history :as h]
                     [txn :as txn :refer [reduce-mops]]]
-						[jepsen.txn.micro-op :as mop])
-  (:import (io.lacuna.bifurcan IEdge
+            [jepsen.history.fold :refer [loopf]]
+						[jepsen.txn.micro-op :as mop]
+            [tesser.core :as t])
+  (:import (io.lacuna.bifurcan DirectedGraph
+                               IEdge
                                IEntry
                                IMap
                                ISet
+                               Graphs
                                LinearMap
                                LinearSet
                                Map
-                               Set)))
+                               Set)
+           (jepsen.history Op)))
 
 (defn op-internal-case
   "Given an op, returns a map describing internal consistency violations, or
@@ -302,11 +310,10 @@
                        (.put kg op (g/forked downstream))
                        (pop ops))))))))))
 
-(defn ext-key-graph
+(defn ^IMap ext-key-graph
   "Takes a transaction graph g, and yields a map of ops a to keys k to
   downstream ops b, such that if a externally interacted with k, b did too, and
-  b follows a in g. Ops must be augmented with :elle.txn/ext-writes and
-  ext-reads keys.
+  b follows a in g.
 
   This graph lets us ask \"what were the next transactions to interact with a
   given key?\". We use this to extract *version* orders from a transaction
@@ -391,66 +398,87 @@
   [txn-graph]
   ; These seem expensive according to Yourkit, but I'm not actually seeing
   ; a change in runtime memoizing em. Not sure what's up.
-  (let [ext-reads  (memoize txn/ext-reads)
-        ext-writes (memoize txn/ext-writes)]
-    (->> (ext-key-graph txn-graph)
-         ; Turn each [a {:k #{b1, b2, ...}}] in the ext key graph into
-         ; an entry in the specific key graph.
-         (reduce
-           ; We're trying to relate *external* values forward. There are two
-           ; possible external values per key per txn: the first read, and the
-           ; final write. WFR (which we check separately) lets us infer the
-           ; relationship between the first read and final write *in* the
-           ; transaction, so what we want to infer here is the relationship
-           ; between the *final* external value. If internal consistency holds
-           ; (which we check separately), then the final external value must be
-           ; the final write, or if that's not present, the first read.
-           (fn [key-graphs ^IEntry pair]
-             (let [a          (.key pair)
-                   downstream (.value pair)
-                   ta (:value a)
-                   ext-writes-a (ext-writes ta)
-                   ext-reads-a  (ext-reads  ta)]
-               (reduce
-                 (fn [key-graphs ^IEntry pair]
-                   (let [k (.key pair)
-                         bs (.value pair)
-                         kg (get key-graphs k (g/linear (g/digraph)))
-                         ; Figure out what version of k we last interacted with
-                         v1 (condp = (:type a)
-                              :ok   (or (get ext-writes-a k)
-                                        (get ext-reads-a  k))
-                              :info (get ext-writes-a k ::none)
-                              :fail ::none)]
-                     (if (= ::none v1)
-                       ; Nothing doing
-                       (assoc! key-graphs k kg)
+  (let [ext-reads  (op-memoize (comp txn/ext-reads :value))
+        ext-writes (op-memoize (comp txn/ext-writes :value))
+        ; Build up a map of t1 -> k -> #{t2 t3 ...}
+        ext-key-graph (ext-key-graph txn-graph)
+        ; This is really expensive, so we parallelize
+        procs (.availableProcessors (Runtime/getRuntime))
+        ext-key-graph-chunks (.split ext-key-graph (* 4 procs))
+        ; A fold which turns chunks of the key graph into version orders, then
+        ; merges those order graphs together.
+        fold
+        (loopf {:name :txn-graph->version-graph}
+               ; Reducer
+               ([key-graphs (transient {})] ; k -> value-digraph
+                [^IEntry pair] ; op -> m, where m is k -> op-set
+                ; We're trying to relate *external* values forward. There are
+                ; two possible external values per key per txn: the first
+                ; read, and the final write. WFR (which we check separately)
+                ; lets us infer the relationship between the first read and
+                ; final write *in* the transaction, so what we want to infer
+                ; here is the relationship between the *final* external value.
+                ; If internal consistency holds (which we check separately),
+                ; then the final external value must be the final write, or if
+                ; that's not present, the first read.
+                (let [a            ^Op (.key pair)
+                      downstream   (.value pair)
+                      ta           (.value a)
+                      ext-writes-a (ext-writes a)
+                      ext-reads-a  (ext-reads  a)]
+                  ; For each key and set of downstream txns bs...
+                  (loopr [key-graphs' key-graphs]
+                         [^IEntry pair downstream]
+                         (let [k  (.key pair)
+                               bs (.value pair)
+                               kg (get key-graphs' k (g/linear (g/digraph)))
+                               ; Figure out what version of k we last
+                               ; interacted with
+                               v1 (condp = (:type a)
+                                    :ok   (or (get ext-writes-a k)
+                                              (get ext-reads-a  k))
+                                    :info (get ext-writes-a k ::none)
+                                    :fail ::none)]
+                           (if (= ::none v1)
+                             ; Nothing doing
+                             (recur (assoc! key-graphs' k kg))
 
-                       ; Now, we want to relate this version v1 to the first
-                       ; external value of k for b, which will be either the
-                       ; external read, or if that's missing, the external
-                       ; write.
-                       (let [v2s (->> bs
-                                      (map (fn [b]
-                                             (let [tb (:value b)]
-                                               (condp = (:type b)
-                                                 :ok (or (get (ext-reads tb)
-                                                              k)
-                                                         (get (ext-writes tb)
-                                                              k))
-                                                 :info (get (ext-writes tb)
-                                                            k ::none)
-                                                 :fail ::none))))
-                                      set)
-                             ; Don't generate self-edges
-                             v2s (disj v2s v1 ::none)]
-                         ; Great, link these all together.
-                         (assoc! key-graphs k (g/link-to-all kg v1 v2s))))))
-                 key-graphs
-                 downstream)))
-           (transient {}))
-         persistent!
-         (util/map-vals g/forked))))
+                             ; Now, we want to relate this version v1 to the
+                             ; first external value of k for b, which will be
+                             ; either the external read, or if that's missing,
+                             ; the external write.
+                             (let [v2s
+                                   (->> bs
+                                        (r/map
+                                          (fn b [b]
+                                            (condp = (:type b)
+                                              :ok (or (get (ext-reads b)
+                                                           k)
+                                                      (get (ext-writes b)
+                                                           k))
+                                              :info (get (ext-writes b)
+                                                         k ::none)
+                                              :fail ::none)))
+                                        (into #{}))
+                                   ; Don't generate self-edges
+                                   v2s (disj v2s v1 ::none)]
+                               ; Great, link these all together.
+                               (recur
+                                 (assoc! key-graphs' k
+                                         (g/link-to-all kg v1 v2s))))))
+                         (recur key-graphs')))
+                ; Seal off transients
+                (persistent! key-graphs))
+               ; Combiner
+               ([key-graphs {}]
+                [key-graphs2]
+                (recur (merge-with (fn [^DirectedGraph g1, ^DirectedGraph g2]
+                                     (.merge g1 g2 g/merge-last-write-wins))
+                                   key-graphs key-graphs2))
+                ; Seal off transients
+                (map-vals g/forked key-graphs)))]
+    ; Run fold
+    (t/tesser ext-key-graph-chunks (t/fold fold))))
 
 (defn cyclic-version-cases
   "Given a map of version graphs, returns a sequence (or nil) of cycles in that

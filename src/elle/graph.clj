@@ -130,6 +130,11 @@
   (try (.out g v)
        (catch IllegalArgumentException e)))
 
+(def ^BinaryOperator merge-last-write-wins
+  "A binary operator that takes a, b -> b"
+  (reify BinaryOperator
+    (apply [_ a b] b)))
+
 (def ^BinaryOperator union-edge
   "A binary operator performing bifurcan set union on the values of edges."
   (reify BinaryOperator

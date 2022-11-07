@@ -175,7 +175,16 @@
              (-> txn-graph
                  g/map->bdigraph
                  transaction-graph->version-graphs
-                 g/->clj))]
+                 g/->clj))
+        ; A little helper for making Op objects
+        Op (fn Op
+             ([index string] (h/op (assoc (op string)
+                                    :index index
+                                    :time  -1)))
+             ([index process type string]
+              (h/op (assoc (op process type string)
+                           :index index
+                           :time -1))))]
     (testing "empty"
       (is (= {}
              (vg {}))))
@@ -183,67 +192,67 @@
     (testing "r->w"
       (is (= {:x {1 #{2}
                   2 #{}}}
-             (vg {(op "rx1") [(op "wx2")]}))))
+             (vg {(Op 0 "rx1") [(Op 1 "wx2")]}))))
 
     (testing "fork-join"
       (is (= {:x {1 #{2 3}
                   2 #{4}
                   3 #{4}
                   4 #{}}}
-             (vg {(op "rx1") [(op "wx2") (op "wx3")]
-                  (op "wx2") [(op "rx4")]
-                  (op "wx3") [(op "rx4")]}))))
+             (vg {(Op 0 "rx1") [(Op 1 "wx2") (Op 2 "wx3")]
+                  (Op 1 "wx2") [(Op 3 "rx4")]
+                  (Op 2 "wx3") [(Op 3 "rx4")]}))))
 
     (testing "external ww"
       (is (= {:x {2 #{4}, 4 #{}}}
              ; 3 is an internal version; we want to generate 2->4!
-             (vg {(op "wx1wx2") [(op "wx3wx4rx5")]}))))
+             (vg {(Op 0 "wx1wx2") [(Op 1 "wx3wx4rx5")]}))))
 
     (testing "external wr"
       (is (= {:x {2 #{3}, 3 #{}}}
-             (vg {(op "wx1wx2") [(op "rx3rx4wx5")]}))))
+             (vg {(Op 0 "wx1wx2") [(Op 1 "rx3rx4wx5")]}))))
 
     (testing "external rw"
       (is (= {:x {1 #{4}, 4 #{}}}
-             (vg {(op "rx1rx2") [(op "wx3wx4rx5")]}))))
+             (vg {(Op 0 "rx1rx2") [(Op 1 "wx3wx4rx5")]}))))
 
     (testing "external rr"
       (is (= {:x {1 #{3}, 3 #{}}}
-             (vg {(op "rx1rx2") [(op "rx3rx4wx5")]}))))
+             (vg {(Op 0 "rx1rx2") [(Op 1 "rx3rx4wx5")]}))))
 
     (testing "don't infer v1 -> v1 deps"
       (is (= {:x {}}
-             (vg {(op "wx1") [(op "rx1")]}))))
+             (vg {(Op 0 "wx1") [(Op 1 "rx1")]}))))
 
     (testing "don't infer deps on failed or crashed reads"
       (is (= {:x {}}
-             (vg {(op "wx1") [(op 0 :fail "rx2")
-                              (op 0 :info "rx3")]
-                  (op 0 :fail "rx4") [(op "rx5")]
-                  (op 0 :info "rx6") [(op "rx7")]}))))
+             (vg {(Op 1 "wx1") [(Op 2 0 :fail "rx2")
+                                (Op 3 0 :info "rx3")]
+                  (Op 4 0 :fail "rx4") [(Op 5 "rx5")]
+                  (Op 6 0 :info "rx6") [(Op 7 "rx7")]}))))
 
     (testing "don't infer deps on failed writes, but do infer crashed"
       (is (= {:x {1 #{4}, 4 #{}
                   8 #{9}, 9 #{}}}
-              (vg {(op "wx1") [(op 0 :fail "wx2")
-                               ; Note that we ignore this read, but use write
-                               (op 0 :info "rx3wx4")]
-                   (op 0 :fail "wx5") [(op "rx6")]
+             (vg {(Op 1 "wx1") [(Op 2 0 :fail "wx2")
+                                ; Note that we ignore this read, but use write
+                                (Op 3 0 :info "rx3wx4")]
+                  (Op 5 0 :fail "wx5") [(Op 6 "rx6")]
                    ; I don't know why you'd be able to get this graph, but if
                    ; you DID, it'd be legal to infer
-                   (op 0 :info "wx8") [(op "rx9")]}))))
+                   (Op 8 0 :info "wx8") [(Op 9 "rx9")]}))))
 
-    (testing "see through failed/crashed ops"
+    (testing "see through failed/crashed Ops"
       (is (= {:x {1 #{3}, 3 #{}}
               :y {1 #{3}, 3 #{}}}
-             (vg {(op "wx1") [(op 0 :info "rx_") (op "rx3")]
-                  (op "wy1") [(op 0 :fail "wy2") (op "ry3")]}))))
+             (vg {(Op 0 "wx1") [(Op 1 0 :info "rx_") (Op 2 "rx3")]
+                  (Op 3 "wy1") [(Op 4 0 :fail "wy2") (Op 5 "ry3")]}))))
 
-    (testing "see through seq. failed/crashed ops"
+    (testing "see through seq. failed/crashed Ops"
       (is (= {:x {1 #{3}, 3 #{}}}
-             (vg {(op "wx1")          [(op 0 :info "rx_")]
-                  (op 0 :info "rx_")  [(op 0 :fail "wx2")]
-                  (op 0 :fail "wx2")  [(op 0 :ok "wx3")]}))))))
+             (vg {(Op 0 "wx1")          [(Op 1 0 :info "rx_")]
+                  (Op 1 0 :info "rx_")  [(Op 2 0 :fail "wx2")]
+                  (Op 2 0 :fail "wx2")  [(Op 3 0 :ok "wx3")]}))))))
 
 (deftest version-graphs->transaction-graphs-test
   (testing "empty"
@@ -630,7 +639,7 @@
 ; This is here for pasting in experimental histories when we hit checker bugs.
 ; It's a helpful skeleton for refining a test case.
 (comment
-(deftest ^:test-refresh/focus foo-test
+(deftest foo-test
   (let [h [
 
            ]]
@@ -734,7 +743,7 @@
 
 (deftest ^:perf ^:focus perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR DB.
-  (let [n (long 1e4)
+  (let [n (long 5e4)
         ; Takes state and txn, returns [state' txn'].
         apply-txn (fn apply-txn [state txn]
                     (loopr [state' (transient state)
