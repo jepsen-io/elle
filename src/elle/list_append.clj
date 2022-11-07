@@ -90,14 +90,14 @@
                   (ct/keep-op-mops
                     (fn mop [op [f k v :as mop]]
                       (when (identical? :r f)
-                        (keep (fn per-element [e]
-                                (when-let [writer (get-in failed
-                                                          [k e])]
-                                  {:op        op
-                                   :mop       mop
-                                   :writer    writer
-                                   :element   e}))
-                              v))))
+                        (when-let [failed (get failed k)]
+                          (keep (fn per-element [e]
+                                  (when-let [writer (get failed e)]
+                                    {:op        op
+                                     :mop       mop
+                                     :writer    writer
+                                     :element   e}))
+                                v)))))
                   (t/mapcat identity)
                   (t/into [])
                   (h/tesser history))]
