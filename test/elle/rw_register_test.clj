@@ -136,36 +136,39 @@
                                  [[:r :x 0] [:r :y 0] [:w :y 1]])))))))
 
 (deftest ext-key-graph-test
-  (let [ekg (fn [tg] (-> tg g/map->bdigraph ext-key-graph g/->clj))]
+  (let [ekg (fn [tg] (-> tg g/map->bdigraph ext-key-graph g/->clj))
+        ; Helper to construct ops
+        op  (fn [index string]
+              (h/op (assoc (op string) :index index)))]
     (testing "empty"
       (is (= {}
              (ekg {}))))
 
     (testing "simple"
-      (is (= {(op "rx1") {:x #{(op "rx2")}}
-              (op "rx2") {}}
-             (ekg {(op "rx1") [(op "rx2")]}))))
+      (is (= {(op 0 "rx1") {:x #{(op 1 "rx2")}}
+              (op 1 "rx2") {}}
+             (ekg {(op 0 "rx1") [(op 1 "rx2")]}))))
 
     (testing "transitive"
-      (is (= {(op "wx1") {:x #{(op "wx2")}}
-              (op "wx2") {:x #{(op "wx3")}}
-              (op "wx3") {:x #{(op "wx4")}}
-              (op "wx4") {}}
-             (ekg {(op "wx1") [(op "wx2")]
-                   (op "wx2") [(op "wx3")]
-                   (op "wx3") [(op "wx4")]}))))
+      (is (= {(op 1 "wx1") {:x #{(op 2 "wx2")}}
+              (op 2 "wx2") {:x #{(op 3 "wx3")}}
+              (op 3 "wx3") {:x #{(op 4 "wx4")}}
+              (op 4 "wx4") {}}
+             (ekg {(op 1 "wx1") [(op 2 "wx2")]
+                   (op 2 "wx2") [(op 3 "wx3")]
+                   (op 3 "wx3") [(op 4 "wx4")]}))))
 
     (testing "transitive w diff keys"
-      (is (= {(op "wx1") {:x #{(op "wx2wy2")}
-                          :y #{(op "wx2wy2")}
-                          :z #{(op "wy3wz3")}}
-              (op "wx2wy2") {:y #{(op "wy3wz3")}
-                             :z #{(op "wy3wz3")}}
-              (op "wy3wz3") {:z #{(op "wz4")}}
-              (op "wz4") {}}
-             (ekg {(op "wx1")     [(op "wx2wy2")]
-                   (op "wx2wy2")  [(op "wy3wz3")]
-                   (op "wy3wz3")  [(op "wz4")]}))))))
+      (is (= {(op 1 "wx1") {:x #{(op 2 "wx2wy2")}
+                            :y #{(op 2 "wx2wy2")}
+                            :z #{(op 3 "wy3wz3")}}
+              (op 2 "wx2wy2") {:y #{(op 3 "wy3wz3")}
+                               :z #{(op 3 "wy3wz3")}}
+              (op 3 "wy3wz3") {:z #{(op 4 "wz4")}}
+              (op 4 "wz4") {}}
+             (ekg {(op 1 "wx1")     [(op 2 "wx2wy2")]
+                   (op 2 "wx2wy2")  [(op 3 "wy3wz3")]
+                   (op 3 "wy3wz3")  [(op 4 "wz4")]}))))))
 
 
 (deftest transaction-graph->version-graphs-test
@@ -199,9 +202,9 @@
                   2 #{4}
                   3 #{4}
                   4 #{}}}
-             (vg {(Op 0 "rx1") [(Op 1 "wx2") (Op 2 "wx3")]
-                  (Op 1 "wx2") [(Op 3 "rx4")]
-                  (Op 2 "wx3") [(Op 3 "rx4")]}))))
+             (vg {(Op 1 "rx1") [(Op 2 "wx2") (Op 3 "wx3")]
+                  (Op 2 "wx2") [(Op 4 "rx4")]
+                  (Op 3 "wx3") [(Op 4 "rx4")]}))))
 
     (testing "external ww"
       (is (= {:x {2 #{4}, 4 #{}}}
@@ -743,7 +746,7 @@
 
 (deftest ^:perf ^:focus perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR DB.
-  (let [n (long 2e4)
+  (let [n (long 5)
         ; Takes state and txn, returns [state' txn'].
         apply-txn (fn apply-txn [state txn]
                     (loopr [state' (transient state)
