@@ -271,7 +271,7 @@
   all operations that process performed."
   [history process]
   (->> history
-       (filter (comp #{process} :process))
+       (h/filter (comp #{process} :process))
        (partition 2 1)
        (reduce (fn [g [op1 op2]] (g/link g op1 op2))
                (g/linear (g/named-graph :process)))
@@ -295,9 +295,9 @@
   [history]
   (let [oks (h/oks history) ; TODO: order infos?
         graph (->> oks
-                   (map :process)
+                   (h/map :process)
                    distinct
-                   (map (fn [p] (process-order oks p)))
+                   (map (partial process-order oks))
                    (reduce g/named-graph-union
                            (g/named-graph :process)))]
     {:graph     graph

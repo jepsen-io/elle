@@ -743,7 +743,7 @@
 
 (deftest ^:perf ^:focus perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR DB.
-  (let [n (long 5e4)
+  (let [n (long 2e4)
         ; Takes state and txn, returns [state' txn'].
         apply-txn (fn apply-txn [state txn]
                     (loopr [state' (transient state)
