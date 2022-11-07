@@ -271,35 +271,28 @@
   - `out`, a set of ops downstream from some op
 
   Returns a pair of a new downstream map (a map of k -> #{op1 op2 ...}), and a
-  vector of unexplored ops."
-  [kg out]
-  (loop [downstream  (LinearMap.) ; map of k => #{op1, op2}
-         unexplored  []           ; list of ops to explore
-         out         out]
-    (if-not (seq out)
-      ; Done
-      [downstream unexplored]
-      (let [n         (first out)
-            ext-keys  (ext-keys n)]
-        ;(prn :checking-descendent n)
-        ; Transitive k->vs
-        (if-let [trans-downstream (.get kg n nil)]
-          ; Check this next node. We use the downstream
-          ; information from kg, and override it with whatever's
-          ; in the node itself.
-          (let [ds (-> downstream
-                       (downstream-ops-by-ext-key-transitive!
-                         kg ext-keys trans-downstream)
-                       ; OK, and now local deps!
-                       (downstream-ops-by-ext-key-local!
-                         ext-keys n))]
-            (recur ds unexplored (next out)))
-
-          ; Huh, this node hasn't been explored yet.
-          (do ; (prn :unexplored!)
-              (recur downstream
-                     (conj unexplored n)
-                     (next out))))))))
+  vector of unexplored ops we need to look at before we can check this one."
+  [^IMap kg out]
+  (loopr [downstream  (LinearMap.) ; map of k => #{op1, op2}
+          unexplored  []]          ; list of ops to explore
+          [op out]
+          (let [ext-keys (ext-keys op)]
+            ;(prn :checking-descendent n)
+            ; Transitive k->vs
+            (if-let [trans-downstream (.get kg op nil)]
+              ; Check this next node. We use the downstream
+              ; information from kg, and override it with whatever's
+              ; in the node itself.
+              (recur (-> downstream
+                         (downstream-ops-by-ext-key-transitive!
+                           kg ext-keys trans-downstream)
+                         ; OK, and now local deps!
+                         (downstream-ops-by-ext-key-local!
+                           ext-keys op))
+                     unexplored)
+              ; Huh, this node hasn't been explored yet.
+              (do ; (prn :unexplored!)
+                  (recur downstream (conj unexplored op)))))))
 
 (defn downstream-ops-by-ext-key
   "Takes a transaction graph, a (perhaps partial) ext-key graph, a set of keys
@@ -309,16 +302,14 @@
   (if (empty? ops)
     ; Nowhere else to explore!
     kg
-
     (let [op (peek ops)]
       ; (prn :op op)
       (if (.contains kg op)
         ; Well, we've already explored this op; no need to go further!
-        (do ; (prn :hit!)
+        (do ;(prn :hit!)
             (recur g kg (pop ops)))
-
         (let [out (g/out g op)]
-          (if (empty? out)
+          (if (= 0 (.size out))
             ; Nobody downstream of us; all we need is a node.
             (recur g (.put kg op (Map.)) (pop ops))
 
@@ -326,8 +317,8 @@
             ; explored.
             (let [[downstream unexplored]
                   (downstream-ops-by-ext-key-explore kg out)]
-              ; (prn :downstream (count downstream))
-              (if (seq unexplored)
+              ;(prn :downstream (.size downstream) :unexplored (count unexplored))
+              (if (< 0 (count unexplored))
                 ; If we have any unexplored, move on to them; we'll come
                 ; back to this later.
                 (do ;(prn :unexplored (count unexplored))
