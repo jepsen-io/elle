@@ -18,8 +18,9 @@
                                   [org.clojure/test.check "1.1.1"]
                                   [spootnik/unilog "0.7.31"]]}}
   :jvm-opts ["-server"
-             "-XX:-OmitStackTraceInFastThrow"
+             ;"-XX:-OmitStackTraceInFastThrow"
              ;"-XX:+PrintGC"
+             "-agentpath:/home/aphyr/yourkit/bin/linux-x86-64/libyjpagent.so=disablestacktelemetry,exceptions=disable,delay=10000,usedmem=50"
              ]
   :repl-options {:init-ns elle.core}
   :test-selectors {:default (fn [m] (not (or (:perf m)

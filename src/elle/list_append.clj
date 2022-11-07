@@ -23,6 +23,7 @@
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs
                                ICollection
+                               IEntry
                                IList
                                ISet
                                IGraph
@@ -304,18 +305,21 @@
   more than that--and if we do, it could mess up our whole \"total order\"
   thing!"
   [history]
-  (->> history
-       ct/op-mops
-       (keep (fn check-op [[op [f k v :as mop]]]
-                 (when (= f :r)
-                   (let [dups (->> (frequencies v)
-                                   (filter (comp (partial < 1) val))
-                                   (into (sorted-map)))]
-                     (when (seq dups)
-                       {:op         op
-                        :mop        mop
-                        :duplicates dups})))))
-       seq))
+  (let [r (->> (ct/keep-op-mops
+                 (fn check-op [op [f k v :as mop]]
+                   (when (identical? :r f)
+                     (loopr [dups (sorted-map)]
+                            [^IEntry kv (util/fast-frequencies v)]
+                            (recur (if (< 1 (.value kv))
+                                     (assoc dups (.key kv) (.value kv))
+                                     dups))
+                            (when (seq dups)
+                              {:op         op
+                               :mop        mop
+                               :duplicates dups})))))
+               (t/into [])
+               (h/tesser history))]
+    (when (seq r) r)))
 
 (defn append-index
   "Takes a map of keys to observed values (e.g. from sorted-values), and builds

@@ -1,8 +1,11 @@
 (ns elle.util
   "Kitchen sink"
   (:require [clojure.core.reducers :as r]
-            [clojure.tools.logging :refer [info warn]])
-  (:import (java.util.concurrent ExecutionException)))
+            [clojure.tools.logging :refer [info warn]]
+            [dom-top.core :refer [loopr]])
+  (:import (java.util.concurrent ExecutionException)
+           (java.util.function BinaryOperator)
+           (io.lacuna.bifurcan IMap Map)))
 
 (defn nanos->secs [nanos] (/ nanos 1e9))
 
@@ -40,3 +43,13 @@
   "Type-hinted .indexOf"
   [^java.util.List coll element]
   (.indexOf coll element))
+
+(defn fast-frequencies
+  "Like frequencies, but faster. Returns an IMap."
+  [coll]
+  (let [add (reify BinaryOperator
+              (apply [_ x y] (+ ^Long x ^Long y)))]
+    (loopr [^IMap m (.linear (Map.))]
+           [x coll]
+           (recur (.put m x 1 add))
+           (.forked m))))
