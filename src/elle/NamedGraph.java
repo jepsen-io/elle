@@ -23,7 +23,7 @@ import io.lacuna.bifurcan.Set;
  *         relationships in the edges themselves.
  */
 
-public class NamedGraph<V, N> implements IGraph<V, N> {
+public class NamedGraph<V, N> implements IGraph<V, N>, ElleGraph {
   private static final Set<Object> EMPTY_SET = new Set<Object>();
   private final N name;
   private IGraph<V, Object> graph;
@@ -55,6 +55,11 @@ public class NamedGraph<V, N> implements IGraph<V, N> {
     } else {
       return new NamedGraph<V, N>(name, graphPrime);
     }
+  }
+
+  @Override
+  public boolean isEmpty() {
+    return (graph.vertices().size() == 0);
   }
 
   public NamedGraph<V, N> linear() {

@@ -39,7 +39,10 @@
             [jepsen.history.task :as task]
             [jepsen.txn.micro-op :as mop]
             [slingshot.slingshot :refer [try+ throw+]])
-  (:import (io.lacuna.bifurcan ISet
+  (:import (elle ElleGraph
+                 RelGraph
+                 NamedGraph)
+           (io.lacuna.bifurcan ISet
                                Set)))
 
 ; This is going to look a bit odd. Please bear with me.
@@ -488,7 +491,7 @@
                                               explainer)))
         ; It's almost certainly the case that something went wrong if we didn't
         ; infer *any* dependencies.
-        anomalies (if (= 0 (g/size graph))
+        anomalies (if (.isEmpty ^ElleGraph graph)
                     (assoc anomalies :empty-transaction-graph true)
                     anomalies)]
     {:graph     graph

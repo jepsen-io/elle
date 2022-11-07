@@ -34,7 +34,7 @@ import io.lacuna.bifurcan.Set;
  *         so it's worth optimizing.
  */
 
-public class RelGraph<V, R> implements IGraph<V, Set<R>> {
+public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   private static final Object DEFAULT = new Object();
   private static final Set<Object> EMPTY_SET = new Set<Object>();
 
@@ -130,6 +130,18 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>> {
       }
     }
     return new RelGraph<V, R>(linear, vertexHash, vertexEquality, graphsPrime.forked());
+  }
+
+  // Materializing the vertex set is expensive, so we have an optimized routine
+  // for checking if empty.
+  @Override
+  public boolean isEmpty() {
+    for (IGraph<V, Object> g : graphs.values()) {
+      if (0 < g.vertices().size()) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // ??? @Override
