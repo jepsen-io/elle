@@ -13,7 +13,9 @@
                  [io.lacuna/bifurcan "0.2.0-alpha6"]]
   :java-source-paths ["src"]
   :javac-options ["-target" "1.8" "-source" "1.8"]
-  :profiles {:dev {:dependencies [[org.clojure/clojure "1.11.1"]
+  :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.13"]
+                                  [org.clojure/clojure "1.11.1"]
+                                  [org.clojure/test.check "1.1.1"]
                                   [spootnik/unilog "0.7.31"]]}}
   :jvm-opts ["-server"
              "-XX:-OmitStackTraceInFastThrow"

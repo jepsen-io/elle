@@ -239,7 +239,7 @@
        ; append operation to infer a value.
        (merge (values-from-single-appends history))
        ; And sort
-         (util/map-vals (partial sort-by count))))
+       (util/map-vals (comp vec (partial sort-by count)))))
 
 (defn incompatible-orders
   "Takes a map of keys to sorted observed values and verifies that for each key
@@ -312,70 +312,25 @@
                         :duplicates dups})))))
        seq))
 
-(defn merge-orders
-  "Takes two potentially incompatible read orders (sequences of elements), and
-  computes a total order which is consistent with both of them: where there are
-  conflicts, we drop those elements.
-
-  First, we remove duplicates; an order shouldn't have them at all. Yes, this
-  means we fail to compute some dependencies.
-
-  In general, the differences between orders fall into some cases:
-
-  1. One empty
-
-      _
-      1 2 3 4 5
-
-     We simply pick the non-empty order.
-
-  2. Same first element
-
-     2 x y
-     2 z
-
-     Our order is [2] followed by the merged result of [x y] and [z].
-
-  3. Different first elements followed by a common element
-
-     3 y
-     2 3
-
-    We drop the smaller element and recur with [3 y] [3]. This isn't... exactly
-  symmetric; we prefer longer and higher elements for tail-end conflicts, but I
-  think that's still a justifiable choice. After all, we DID read both values,
-  and it's sensible to compute a dependency based on any read. Might as well
-  pick longer ones.
-
-  Later, we should change the whole structure of append indexes to admit
-  multiple prior txns rather than just one, and get rid of this."
-  ([as bs]
-   (merge-orders [] (distinct as) (distinct bs)))
-  ([merged as bs]
-   (cond (empty? as) (into merged bs)
-         (empty? bs) (into merged as)
-
-         (= (first as) (first bs))
-         (recur (conj merged (first as)) (next as) (next bs))
-
-         (< (first as) (first bs)) (recur merged (next as) bs)
-         true                      (recur merged as (next bs)))))
-
 (defn append-index
   "Takes a map of keys to observed values (e.g. from sorted-values), and builds
   a bidirectional index: a map of keys to indexes on those keys, where each
   index is a map relating appended values on that key to the order in which
   they were effectively appended by the database.
 
+  We also build a graph of appended elements, where a -> b iff we ever observed
+  a immediately before b in some read.
+
     {:x {:indices {v0 0, v1 1, v2 2}
-         :values  [v0 v1 v2]}}
+         :values  [v0 v1 v2]
+         :graph   (digraph {v0 #{v1 v2}, v1 #{v3}, ...})}}
 
   We merge all observed orders on a key using merge-orders."
   [sorted-values]
   (util/map-vals (fn [values]
                    ; The last value will be the longest, and since every other
                    ; is a prefix, it includes all the information we need.
-                   (let [vs (reduce merge-orders [] values)]
+                   (let [vs (vec (distinct (peek values)))]
                      {:values  vs
                       :indices (into {} (map vector vs (range)))}))
                  sorted-values))

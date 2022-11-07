@@ -1,8 +1,12 @@
 (ns elle.list-append-test
   (:refer-clojure :exclude [test])
   (:require [clojure [pprint :refer [pprint]]
-                     [test :refer :all]
+                     [set :as set]
+                     [test :refer [deftest is testing]]
                      [walk :as walk]]
+            [clojure.test.check [generators :as gen]]
+            [com.gfredericks.test.chuck.clojure-test :refer
+             [checking for-all]]
             [dom-top.core :refer [loopr]]
             [elle [core :as elle]
                   [core-test :refer [read-history]]
@@ -613,9 +617,9 @@
                 h)))))
 
   (testing "contradictory read orders"
-    (let [t1 (op "ax1ry1")  ; read t3's ay1
-          t2 (op "ax2")
-          t3 (op "ax3ay1")  ; append of x happens later
+    (let [t1 (op "ax1ry1")  ; append to 1, read t3's ay1
+          t2 (op "ax2")     ; after t1, t2 appends
+          t3 (op "ax3ay1")  ; after t2, t3 appends
           t4 (op "rx13")
           t5 (op "rx123")
           [t1 t2 t3 t4 t5 :as h]
@@ -625,17 +629,23 @@
               :not           #{:read-committed :read-atomic}
               :anomalies
               {:incompatible-order [{:key :x, :values [[1 3] [1 2 3]]}]
-               :G1c [{:cycle [t3 t1 t3]
+               :G1c [{:cycle [t3 t1 t2 t3]
                       :steps
-                      [{:type :wr,
-                        :key :y,
-                        :value 1,
+                      [{:type        :wr,
+                        :key         :y,
+                        :value       1,
                         :a-mop-index 1,
                         :b-mop-index 1}
-                       {:type :ww,
-                        :key :x,
-                        :value 1,
-                        :value' 3,
+                       {:type        :ww
+                        :key         :x
+                        :value       1
+                        :value'      2
+                        :a-mop-index 0
+                        :b-mop-index 0}
+                       {:type        :ww
+                        :key         :x
+                        :value       2
+                        :value'      3
                         :a-mop-index 0,
                         :b-mop-index 0}]
                       :type :G1c}]}}
@@ -923,26 +933,12 @@
 ;(deftest dirty-update-1-test
 ;  (cf {} "histories/dirty-update-1.edn")))
 
-(deftest merge-order-test
-  (is (= [] (merge-orders [] [])))
-  (is (= [1 2 3] (merge-orders [1 2 3] [])))
-  (is (= [2 3 4] (merge-orders [] [2 3 4])))
-  (is (= [1 2 3] (merge-orders [1 2 3] [1 2 3])))
-  (is (= [1 4 9] (merge-orders [1 4] [1 4 9])))
-  (is (= [1 4 5] (merge-orders [1 4 5] [1])))
-  (is (= [1 5 6] (merge-orders [1 2 5 6] [1 3 5 6])))
-  (is (= [1 3]   (merge-orders [1 2] [1 3])))
-  (testing "dups"
-    (is (= [1 2 3] (merge-orders [1 2 2 3] [])))
-    (is (= [1 2 3 5] (merge-orders [1 2 3 2]
-                                   [1 2 3 2 5])))))
-
 (deftest ^:perf scc-search-perf-test
   ; A case where even small SCCs caused the cycle search to time out
   (cf {:consistency-models [:strong-snapshot-isolation]}
       "histories/small-slow-scc.edn"))
 
-(deftest ^:perf ^:focus perfect-perf-test
+(deftest ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system
   (let [n (long 1e6)
         ; Takes a state, a txn, and a volatile for the completed txn to go to.
