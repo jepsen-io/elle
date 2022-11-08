@@ -81,7 +81,7 @@
   nil
   (->clj [x] x))
 
-(defn digraph
+(defn ^DirectedGraph digraph
   "Constructs a fresh directed graph."
   []
   (DirectedGraph.))

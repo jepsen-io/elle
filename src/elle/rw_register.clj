@@ -61,6 +61,8 @@
                                LinearSet
                                Map
                                Set)
+           (java.util.function BinaryOperator
+                               BiFunction)
            (jepsen.history Op)))
 
 (defn op-internal-case
@@ -461,7 +463,7 @@
         fold
         (loopf {:name :txn-graph->version-graph}
                ; Reducer
-               ([key-graphs (transient {})] ; k -> value-digraph
+               ([key-graphs (.linear Map/EMPTY)] ; k -> value-digraph
                 [^IEntry pair] ; op -> m, where m is k -> op-set
                 ; We're trying to relate *external* values forward. There are
                 ; two possible external values per key per txn: the first
@@ -478,11 +480,11 @@
                       ext-writes-a (ext-writes a)
                       ext-reads-a  (ext-reads  a)]
                   ; For each key and set of downstream txns bs...
-                  (loopr [key-graphs' key-graphs]
+                  (loopr [^IMap key-graphs' key-graphs]
                          [^IEntry pair downstream]
                          (let [k  (.key pair)
                                bs (.value pair)
-                               kg (get key-graphs' k (g/linear (g/digraph)))
+                               kg (.get key-graphs' k (.linear (g/digraph)))
                                ; Figure out what version of k we last
                                ; interacted with
                                v1 (condp = (:type a)
@@ -492,22 +494,21 @@
                                     :fail ::none)]
                            (if (= ::none v1)
                              ; Nothing doing
-                             (recur (assoc! key-graphs' k kg))
+                             (recur (.put key-graphs' k kg))
 
                              ; Now, we want to relate this version v1 to the
                              ; first external value of k for b, which will be
                              ; either the external read, or if that's missing,
                              ; the external write.
                              (loopr [^ISet v2s (.linear Set/EMPTY)]
-                                    [^Op b bs]
-                                    (let [v
-                                          (condp identical? (.type b)
-                                            :ok (or (get (ext-reads b) k)
-                                                    (get (ext-writes b)
-                                                         k))
-                                            :info (get (ext-writes b) k
-                                                       ::none)
-                                            ::none)]
+                                    ; As a LinearSet, bs is faster with iterator
+                                    [^Op b bs :via :iterator]
+                                    (let [v (condp identical? (.type b)
+                                              :ok (or (get (ext-reads b) k)
+                                                      (get (ext-writes b) k))
+                                              :info (get (ext-writes b) k
+                                                         ::none)
+                                              ::none)]
                                       (if (or (identical? ::none v)
                                               ; Don't generate self-edges
                                               (= v1 v))
@@ -517,20 +518,26 @@
                                     (recur
                                       (if (= 0 (.size v2s))
                                         key-graphs'
-                                        (assoc! key-graphs' k
-                                                (g/link-to-all-iter
-                                                  kg v1 v2s)))))))
-                         (recur key-graphs')))
-                ; Seal off transients
-                (persistent! key-graphs))
+                                        (.put key-graphs' k
+                                              (g/link-to-all-iter
+                                                kg v1 v2s)))))))
+                         (recur key-graphs'))))
                ; Combiner
-               ([key-graphs {}]
-                [key-graphs2]
-                (recur (merge-with (fn [^DirectedGraph g1, ^DirectedGraph g2]
-                                     (.merge g1 g2 g/merge-last-write-wins))
-                                   key-graphs key-graphs2))
-                ; Seal off transients
-                (map-vals g/forked key-graphs)))]
+               ([^IMap kg1 (.linear Map/EMPTY)]
+                [^IMap kg2]
+                (recur
+                  (.merge kg1 kg2
+                          (reify BinaryOperator
+                            (apply [_ g1 g2]
+                              (.merge ^DirectedGraph g1, ^DirectedGraph g2
+                                      g/merge-last-write-wins)))))
+                ; Seal off transients, convert back to Clojure map
+                (loopr [kg (transient {})]
+                       [^IEntry pair kg1 :via :iterator]
+                       (recur (assoc! kg
+                                      (.key pair)
+                                      (.forked ^DirectedGraph (.value pair))))
+                       (persistent! kg))))]
     ; Run fold
     (t/tesser ext-key-graph-chunks (t/fold fold))))
 
