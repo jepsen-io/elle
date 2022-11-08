@@ -518,7 +518,8 @@
                                       (if (= 0 (.size v2s))
                                         key-graphs'
                                         (assoc! key-graphs' k
-                                                (g/link-to-all kg v1 v2s)))))))
+                                                (g/link-to-all-iter
+                                                  kg v1 v2s)))))))
                          (recur key-graphs')))
                 ; Seal off transients
                 (persistent! key-graphs))

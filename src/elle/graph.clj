@@ -191,6 +191,14 @@
        ;(assert (not (nil? succ)))
        (.link graph node succ (bset relationship) union-edge))))
 
+(defn link-to-all-iter
+  "Given a graph g, links x to all ys, using a loop w/iterator instead of
+  reduce. Faster for some v hot reduce codepaths."
+  [g x ys]
+  (loopr [g' g]
+         [y ys :via :iterator]
+         (recur (link g' x y))))
+
 (defn link-to-all
   "Given a graph g, links x to all ys."
   ([g x ys]
