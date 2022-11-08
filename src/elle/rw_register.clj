@@ -229,27 +229,42 @@
           writes (txn/ext-writes txn)]
       (keys (merge reads writes)))))
 
-(defn downstream-ops-by-ext-key-transitive!
-  "Enlarges a downstream map with transitive dependencies.
+;(defn kg-str
+;  "Prints a key graph to a string. You'll want this to optimize
+;  downstream-ops-by-ext-key."
+;  [kg]
+;  (-> kg
+;       g/->clj
+;       (update-keys :index)
+;       (update-vals (fn [k->ops]
+;                      (update-vals k->ops
+;                                   (fn [ops]
+;                                     (sort (map :index ops))))))
+;       pprint
+;       with-out-str))
 
-  Takes a downstream map, a partial ext-key graph (a map of ops to keys to
-  downstream txns), a collection of ext keys for this op, and a transitive
-  downstream map. Each downstream map is a map of keys to sets of downstream
-  ops.
+(defn downstream-ops-by-ext-key-transitive!
+  "Takes a downstream map and adds transitive dependencies to it. Uses a
+  partial ext-key graph (a map of ops to keys to downstream txns), a set of ext
+  keys for the op under consideration, and a transitive downstream map taken
+  from the key graph for this op.
 
   We use the downstream information from the key graph kg, and override it with
   whatever is in the node itself. Returns a new downstream LinearMap."
-  [^LinearMap downstream, ^IMap kg, ext-keys, ^LinearMap transitive-downstream]
+  [^LinearMap downstream, ^IMap kg, ^ISet ext-keys,
+   ^LinearMap transitive-downstream]
   (reduce (fn [^IMap downstream ^IEntry k->bs']
             (let [k   (.key k->bs')
-                  bs' (.value k->bs')
-                  bs  (.get downstream k (LinearSet.))]
-              (if (some #{k} ext-keys)
+                  bs' ^ISet (.value k->bs')]
+              ;(prn :trans k (map :index bs'))
+              (if (.contains ext-keys k)
                 ; We'll handle this in downstream-ops-by-ext-key-local!
                 downstream
                 ; Use transitive bs
-                (.put downstream k
-                      (reduce g/set-add bs bs')))))
+                (do ;(prn :trans-union
+                    ;     (sort (map :index bs))
+                    ;     (sort (map :index bs')))
+                    (.put downstream k bs' g/union-edge)))))
           downstream
           transitive-downstream))
 
@@ -259,6 +274,7 @@
   added for each key in ext-keys."
   [downstream ext-keys op]
   (reduce (fn [^IMap downstream k]
+            ; (prn :local k :op (:index op))
             (let [bs (.get downstream k (LinearSet.))]
               (.put downstream k (g/set-add bs op))))
           downstream
@@ -276,48 +292,59 @@
   (loopr [downstream  (LinearMap.) ; map of k => #{op1, op2}
           unexplored  []]          ; list of ops to explore
           [op out]
-          (let [ext-keys (ext-keys op)]
+          (let [ext-keys (ext-keys op)
+                ext-keys (if (nil? ext-keys)
+                           (Set/empty)
+                           (Set/from ^Iterable ext-keys))]
             ;(prn :checking-descendent n)
             ; Transitive k->vs
             (if-let [trans-downstream (.get kg op nil)]
-              ; Check this next node. We use the downstream
-              ; information from kg, and override it with whatever's
-              ; in the node itself.
-              (recur (-> downstream
-                         (downstream-ops-by-ext-key-transitive!
-                           kg ext-keys trans-downstream)
-                         ; OK, and now local deps!
-                         (downstream-ops-by-ext-key-local!
-                           ext-keys op))
-                     unexplored)
-              ; Huh, this node hasn't been explored yet.
-              (do ; (prn :unexplored!)
+              (if (< 0 (count unexplored))
+                ; There are unexplored nodes in this pass; we're not actually
+                ; going to use our downstream results here and there's no sense
+                ; in computing them.
+                (recur downstream unexplored)
+                ; Check this next node. We use the downstream
+                ; information from kg, and override it with whatever's
+                ; in the node itself.
+                (recur (-> downstream
+                           (downstream-ops-by-ext-key-transitive!
+                             kg ext-keys trans-downstream)
+                           ; OK, and now local deps!
+                           (downstream-ops-by-ext-key-local!
+                             ext-keys op))
+                       unexplored))
+              ; Huh, this node hasn't been explored yet. If this happens we
+              ; can't use the downstream results we've built so far.
+              (do ;(prn :unexplored!)
                   (recur downstream (conj unexplored op)))))))
 
 (defn downstream-ops-by-ext-key
   "Takes a transaction graph, a (perhaps partial) ext-key graph, a set of keys
   to ignore, and a stack of ops to explore. Returns a more complete key graph
-  by exploring [ops]."
+  which contains an entry for every op in the ops stack as well as all their
+  downstream dependencies, transitively."
   [g ^IMap kg ops]
   (if (empty? ops)
     ; Nowhere else to explore!
     kg
     (let [op (peek ops)]
-      ; (prn :op op)
+      ; (prn :op (.index op) :with (dec (count ops)) :more)
       (if (.contains kg op)
         ; Well, we've already explored this op; no need to go further!
         (do ;(prn :hit!)
             (recur g kg (pop ops)))
         (let [out (g/out g op)]
           (if (= 0 (.size out))
-            ; Nobody downstream of us; all we need is a node.
-            (recur g (.put kg op (Map.)) (pop ops))
+            ; Nobody downstream of us; all we need is an empty map.
+            (recur g (.put kg op Map/EMPTY) (pop ops))
 
             ; OK, so we've got downstream nodes. We need all of them to be
             ; explored.
             (let [[downstream unexplored]
                   (downstream-ops-by-ext-key-explore kg out)]
-              ;(prn :downstream (.size downstream) :unexplored (count unexplored))
+              ;(prn :downstream (.size downstream)
+              ;     :unexplored (count unexplored))
               (if (< 0 (count unexplored))
                 ; If we have any unexplored, move on to them; we'll come
                 ; back to this later.
@@ -327,14 +354,15 @@
                 ; Good, we explored everything; this means our results are
                 ; total. Update kg with our findings for this node and
                 ; move on to the next op in the stack.
-                (recur g
-                       (.put kg op (g/forked downstream))
-                       (pop ops))))))))))
+                (do ;(prn :complete (.index op))
+                    (recur g
+                           (.put kg op (g/forked downstream))
+                           (pop ops)))))))))))
 
 (defn ^IMap ext-key-graph
-  "Takes a transaction graph g, and yields a map of ops a to keys k to
-  downstream ops b, such that if a externally interacted with k, b did too, and
-  b follows a in g.
+  "Takes a transaction graph g, and yields an external key graph: a map of ops
+  a to keys k to downstream ops b, such that if a externally interacted with k,
+  b did too, and b follows a in g.
 
   This graph lets us ask \"what were the next transactions to interact with a
   given key?\". We use this to extract *version* orders from a transaction
@@ -354,7 +382,8 @@
        ; Build up the key graph
        (reduce (fn red [kg op]
                  ;(println "\n")
-                 ;(prn :ext-key-graph op)
+                 ;(prn :ext-key-graph (:index op))
+                 ;(print :kg (kg-str kg))
                  (downstream-ops-by-ext-key g kg [op]))
                (LinearMap.))
        g/forked))
@@ -469,25 +498,27 @@
                              ; first external value of k for b, which will be
                              ; either the external read, or if that's missing,
                              ; the external write.
-                             (let [v2s
-                                   (->> bs
-                                        (r/map
-                                          (fn b [b]
-                                            (condp = (:type b)
-                                              :ok (or (get (ext-reads b)
-                                                           k)
-                                                      (get (ext-writes b)
-                                                           k))
-                                              :info (get (ext-writes b)
-                                                         k ::none)
-                                              :fail ::none)))
-                                        (into #{}))
-                                   ; Don't generate self-edges
-                                   v2s (disj v2s v1 ::none)]
-                               ; Great, link these all together.
-                               (recur
-                                 (assoc! key-graphs' k
-                                         (g/link-to-all kg v1 v2s))))))
+                             (loopr [^ISet v2s (.linear Set/EMPTY)]
+                                    [^Op b bs]
+                                    (let [v
+                                          (condp identical? (.type b)
+                                            :ok (or (get (ext-reads b) k)
+                                                    (get (ext-writes b)
+                                                         k))
+                                            :info (get (ext-writes b) k
+                                                       ::none)
+                                            ::none)]
+                                      (if (or (identical? ::none v)
+                                              ; Don't generate self-edges
+                                              (= v1 v))
+                                        (recur v2s)
+                                        (recur (.add v2s v))))
+                                    ; Done building v2s; link v1 to each
+                                    (recur
+                                      (if (= 0 (.size v2s))
+                                        key-graphs'
+                                        (assoc! key-graphs' k
+                                                (g/link-to-all kg v1 v2s)))))))
                          (recur key-graphs')))
                 ; Seal off transients
                 (persistent! key-graphs))

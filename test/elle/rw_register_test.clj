@@ -170,6 +170,22 @@
                    (op 2 "wx2wy2")  [(op 3 "wy3wz3")]
                    (op 3 "wy3wz3")  [(op 4 "wz4")]}))))))
 
+(deftest ext-key-graph-cache-test
+  ; Trying to make sure this isn't quadratic; we construct a chain of ops and
+  ; ask for its ext-key-graph.
+  (let [ekg (fn [tg] (-> tg g/map->bdigraph ext-key-graph g/->clj))
+        ; Helper to construct ops
+        op  (fn [index string]
+              (h/op (assoc (op string) :index index)))]
+    (let [; A linear transaction graph
+          t1 (op 1 "wx1")
+          t2 (op 2 "wx2")
+          t3 (op 3 "wx3")
+          t4 (op 4 "wx4")
+          t5 (op 5 "wx5")
+          tg {t1 [t2] t2 [t3] t3 [t4] t4 [t5]}]
+      ;(println (kg-str (ekg tg)))
+      )))
 
 (deftest transaction-graph->version-graphs-test
   ; Turn transaction graphs (in clojure maps) into digraphs, then into version
@@ -224,7 +240,7 @@
              (vg {(Op 0 "rx1rx2") [(Op 1 "rx3rx4wx5")]}))))
 
     (testing "don't infer v1 -> v1 deps"
-      (is (= {:x {}}
+      (is (= {}
              (vg {(Op 0 "wx1") [(Op 1 "rx1")]}))))
 
     (testing "don't infer deps on failed or crashed reads"
@@ -722,7 +738,7 @@
                             (history/index h)
                             nil))))))
 
-(deftest ^:perf e-graph-test-perf
+(deftest ^:perf ext-key-graph-perf-test
   ; Generate a random history
   (let [history (atom [])
         x       (atom 0)
@@ -744,9 +760,9 @@
     (time
 			(ext-key-graph graph))))
 
-(deftest ^:perf ^:focus perfect-perf-test
+(deftest ^:focus ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR DB.
-  (let [n (long 5)
+  (let [n (long 1e5)
         ; Takes state and txn, returns [state' txn'].
         apply-txn (fn apply-txn [state txn]
                     (loopr [state' (transient state)

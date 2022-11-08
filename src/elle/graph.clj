@@ -124,7 +124,7 @@
   (try (.in g v)
        (catch IllegalArgumentException e)))
 
-(defn out
+(defn ^Set out
   "Outbound edges from v in graph g."
   [^IGraph g v]
   (try (.out g v)
