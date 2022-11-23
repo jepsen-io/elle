@@ -652,6 +652,44 @@
              (c {:consistency-models [:strong-session-snapshot-isolation]}
                 h)))))
 
+  ; TODO: We're not clever enough to catch this anomaly yet.
+  #_ (testing "Strong Session SI violation 2"
+    ; This one was submitted by Tsunaou:
+    ; https://github.com/jepsen-io/elle/issues/17
+    (let [; wr: observes t3's append on z
+          t0  {:process 0, :index 0, :type :invoke, :value [[:r :x nil] [:r :z nil]]}
+          t0' {:process 0, :index 1, :type :ok,     :value [[:r :x nil] [:r :z [1]]]}
+          ; rw: t0 did not see the append to x
+          t1  {:process 1, :index 2, :type :invoke, :value [[:append :x 1]]}
+          t1' {:process 1, :index 3, :type :ok,     :value [[:append :x 1]]}
+          ; process: still p1
+          t2  {:process 1, :index 4, :type :invoke, :value [[:r :z nil]]}
+          t2' {:process 1, :index 5, :type :ok,     :value [[:r :z nil]]}
+          ; rw: t2 did not observe append of z.
+          t3  {:process 2, :index 6, :type :invoke, :value [[:append :z 1]]}
+          t3' {:process 2, :index 7, :type :ok,     :value [[:append :z 1]]}
+          ; Unnecessary read, but just to help make sure this isn't an issue
+          ; with the nil -> any write rw inference rule...
+          t4  {:process 3, :index 8, :type :invoke, :value [[:r :x nil] [:r :z nil]]}
+          t4' {:process 3, :index 9, :type :ok,     :value [[:r :x [1]] [:r :z [1]]]}
+                     [t0 t0' t1 t1' t2 t2' t3 t3' :as h]
+          (h/history [t0 t0' t1 t1' t2 t2' t3 t3' t4 t4'])]
+      ; A serializable checker won't catch this
+      (is (= {:valid? true}
+             (c {:consistency-models [:serializable]} h)))
+      ; But it will if we ask for strict-serializable.
+      (is (= {:valid?         false
+              :anomaly-types  [:G-single-process]
+              :not            #{:strong-session-snapshot-isolation
+                                :strong-session-serializable}
+              :anomalies
+              {:G-single-process
+               [{:cycle [:todo]
+                 :steps :todo
+                 :type :G-single-process}]}}
+             (c {:consistency-models [:strong-session-snapshot-isolation]}
+                h)))))
+
   (testing "contradictory read orders"
     (let [t1 (op "ax1ry1")  ; append to 1, read t3's ay1
           t2 (op "ax2")     ; after t1, t2 appends
