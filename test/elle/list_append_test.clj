@@ -616,6 +616,42 @@
              (c {:consistency-models [:strict-serializable]}
                 h)))))
 
+  (testing "Strong Session SI violation"
+    (let [; T1 anti-depends on T2, but T1 happens first in process order.
+          t0  {:process 0, :index 0, :type :invoke, :value [[:append :x 1]]}
+          t0' {:process 0, :index 1, :type :ok,     :value [[:append :x 1]]}
+          t1  {:process 1, :index 2, :type :invoke, :value [[:append :x 2]]}
+          t1' {:process 1, :index 3, :type :ok,     :value [[:append :x 2]]}
+          t2  {:process 1, :index 4, :type :invoke, :value [[:r :x nil]]}
+          t2' {:process 1, :index 5, :type :ok,     :value [[:r :x [1]]]}
+          t3  {:process 2, :index 6, :type :invoke, :value [[:r :x nil]]}
+          t3' {:process 2, :index 7, :type :ok,     :value [[:r :x [1 2]]]}
+                     [t0 t0' t1 t1' t2 t2' t3 t3' :as h]
+          (h/history [t0 t0' t1 t1' t2 t2' t3 t3'])]
+      ; A serializable checker won't catch this
+      (is (= {:valid? true}
+             (c {:consistency-models [:serializable]} h)))
+      ; But it will if we ask for strict-serializable.
+      (is (= {:valid?         false
+              :anomaly-types  [:G-single-process]
+              :not            #{:strong-session-snapshot-isolation
+                                :strong-session-serializable}
+              :anomalies
+              {:G-single-process
+               [{:cycle [t2' t1' t2']
+                 :steps
+                 [{:type :rw,
+                   :key :x,
+                   :value 1,
+                   :value' 2,
+                   :a-mop-index 0,
+                   :b-mop-index 0}
+                  {:type :process
+                   :process 1}]
+                 :type :G-single-process}]}}
+             (c {:consistency-models [:strong-session-snapshot-isolation]}
+                h)))))
+
   (testing "contradictory read orders"
     (let [t1 (op "ax1ry1")  ; append to 1, read t3's ay1
           t2 (op "ax2")     ; after t1, t2 appends
