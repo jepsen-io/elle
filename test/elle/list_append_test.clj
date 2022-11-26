@@ -42,6 +42,8 @@
                                \x [txn (conj mop :x)]
                                \y [txn (conj mop :y)]
                                \z [txn (conj mop :z)]
+                               \t [txn (conj mop :t)]
+                               \u [txn (conj mop :u)]
                                (let [e (Long/parseLong (str c))]
                                  [txn [f k (case f
                                              :append e
@@ -652,9 +654,10 @@
              (c {:consistency-models [:strong-session-snapshot-isolation]}
                 h)))))
 
-  ; TODO: We're not clever enough to catch this anomaly yet.
-  #_ (testing "Strong Session SI violation 2"
-    ; This one was submitted by Tsunaou:
+  (testing "G-nonadjacent-process"
+    ; This one was submitted by Tsunaou. It depends on a combination of
+    ; process order and nonadjacent RW edges, but our checker, until recently,
+    ; only knew about G-single-realtime.
     ; https://github.com/jepsen-io/elle/issues/17
     (let [; wr: observes t3's append on z
           t0  {:process 0, :index 0, :type :invoke, :value [[:r :x nil] [:r :z nil]]}
@@ -668,25 +671,36 @@
           ; rw: t2 did not observe append of z.
           t3  {:process 2, :index 6, :type :invoke, :value [[:append :z 1]]}
           t3' {:process 2, :index 7, :type :ok,     :value [[:append :z 1]]}
-          ; Unnecessary read, but just to help make sure this isn't an issue
-          ; with the nil -> any write rw inference rule...
-          t4  {:process 3, :index 8, :type :invoke, :value [[:r :x nil] [:r :z nil]]}
-          t4' {:process 3, :index 9, :type :ok,     :value [[:r :x [1]] [:r :z [1]]]}
                      [t0 t0' t1 t1' t2 t2' t3 t3' :as h]
-          (h/history [t0 t0' t1 t1' t2 t2' t3 t3' t4 t4'])]
+          (h/history [t0 t0' t1 t1' t2 t2' t3 t3'])]
       ; A serializable checker won't catch this
       (is (= {:valid? true}
              (c {:consistency-models [:serializable]} h)))
-      ; But it will if we ask for strict-serializable.
+      ; But it will if we ask for strong session SI.
       (is (= {:valid?         false
-              :anomaly-types  [:G-single-process]
+              :anomaly-types  [:G-nonadjacent-process]
               :not            #{:strong-session-snapshot-isolation
                                 :strong-session-serializable}
               :anomalies
-              {:G-single-process
-               [{:cycle [:todo]
-                 :steps :todo
-                 :type :G-single-process}]}}
+              {:G-nonadjacent-process
+               [{:cycle [t1' t2' t3' t0' t1']
+                 :steps [{:type :process, :process 1}
+                         {:type :rw, :key :z, :value :elle.list-append/init
+                          :value' 1
+                          :a-mop-index 0
+                          :b-mop-index 0}
+                         {:type :wr
+                          :key :z
+                          :value 1
+                          :a-mop-index 0
+                          :b-mop-index 1}
+                         {:type :rw,
+                          :key :x
+                          :value :elle.list-append/init
+                          :value' 1
+                          :a-mop-index 0
+                          :b-mop-index 0}]
+                 :type :G-nonadjacent-process}]}}
              (c {:consistency-models [:strong-session-snapshot-isolation]}
                 h)))))
 
@@ -958,7 +972,17 @@
                                         :a-mop-index 1,
                                         :b-mop-index 0}],
                                :type :G-nonadjacent}]}}
-                             (c {} h)))))
+                             (c {} h))))
+
+  ; We should *not* detect a cycle like rw rw wr rw wr, because two of the rw
+  ; edges are adjacent.
+  (let [[t1 t1'] (pair (op "rx5ay1")) ; wr: observes ax5
+        [t2 t2'] (pair (op "ryaz2"))  ; rw: fails to observe ay1
+        [t3 t3'] (pair (op "rzat3"))  ; rw: fails to observe az2
+        [t4 t4'] (pair (op "rt3au4")) ; wr: observes at3
+        [t5 t5'] (pair (op "ruax5"))  ; rw: fails to observe au4
+        h (h/history [t1 t1' t2 t2' t3 t3' t4 t4' t5 t5'])]
+    (is (= {:valid? true} (c {:consistency-models [:snapshot-isolation]} h)))))
 
 (deftest lost-update-test
   ; For a lost update, we need two transactions which read the same value (e.g.

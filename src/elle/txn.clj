@@ -281,23 +281,6 @@
       (elle/render-cycle-explanation
         elle/cycle-explainer pair-explainer ex))))
 
-(defn nonadjacent-rw
-  "This fn ensures that no :rw is next to another by testing successive edge
-  types. In addition, we ensure that the first edge in the cycle is not an rw.
-  Cycles must have at least two edges, and in order for no two rw edges to be
-  adjacent, there must be at least one non-rw edge among them. This constraint
-  ensures a sort of boundary condition for the first and last nodes--even if
-  the last edge is rw, we don't have to worry about violating the nonadjacency
-  property when we jump to the first."
-  ([v] [0 true]) ; Our accumulator here is a map of rw-count, last-was-rw.
-  ([[n last-was-rw?] path rel v']
-   ; It's fine to follow *non* rw links, but if you've only
-   ; got rw, and we just did one, this path is invalid.
-   (let [rw? (= (g/bset :rw) rel)]
-     (if (and last-was-rw? rw?)
-       :elle.graph/invalid
-       [(if rw? (inc n) n) rw?]))))
-
 (def cycle-type-priorities
   "A map of cycle types to approximately how bad they are; low numbers are more
   interesting/severe anomalies"
@@ -318,6 +301,29 @@
         :G2-item-realtime]
        (map-indexed (fn [i t] [t i]))
        (into {})))
+
+(defn nonadjacent-rw
+  "This fn ensures that no :rw is next to another by testing successive edge
+  types. In addition, we ensure that the first edge in the cycle is not an rw.
+  Cycles must have at least two edges, and in order for no two rw edges to be
+  adjacent, there must be at least one non-rw edge among them. This constraint
+  ensures a sort of boundary condition for the first and last nodes--even if
+  the last edge is rw, we don't have to worry about violating the nonadjacency
+  property when we jump to the first."
+  ([v] [0 true]) ; Our accumulator here is a map of rw-count, last-was-rw.
+  ([[n last-was-rw?] path rel v']
+   ; It's fine to follow *non* rw links, but if you've only
+   ; got rw, and we just did one, this path is invalid.
+   (let [rw? (= (g/bset :rw) rel)]
+     (if (and last-was-rw? rw?)
+       :elle.graph/invalid
+       [(if rw? (inc n) n) rw?]))))
+
+(defn nonadjacent-rw-filter-path-state
+  "We need more than one RW edge for us to call something G-nonadjacent
+  specifically."
+  [ps]
+  (< 1 (first (:state ps))))
 
 (def cycle-anomaly-specs
   "We define a specification language for different anomaly types, and a small
@@ -359,7 +365,17 @@
                     :with              nonadjacent-rw
                     ; We need more than one rw edge for this to count;
                     ; otherwise it's G-single.
-                    :filter-path-state (fn [ps] (< 1 (first (:state ps))))}
+                    :filter-path-state nonadjacent-rw-filter-path-state}
+    :G-nonadjacent-process
+    {:rels               #{:ww :wr :rw :process}
+     :with               nonadjacent-rw
+     :filter-path-state  nonadjacent-rw-filter-path-state
+     :filter-ex          (comp #{:G-nonadjacent-process} :type)}
+    :G-nonadjacent-realtime
+    {:rels              #{:ww :wr :rw :realtime}
+     :with              nonadjacent-rw
+     :filter-path-state nonadjacent-rw-filter-path-state
+     :filter-ex         (comp #{:G-nonadjacent-realtime} :type)}
 
     ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
     ; insists on being G2, rather than G-single. Not bulletproof, but G-single
