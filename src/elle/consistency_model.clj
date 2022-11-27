@@ -369,8 +369,8 @@
                                     ;
                                     ; Chatting with Alexey Gotsman about this
                                     ; confirms my suspicion: generalized SI
-                                    ; forbids *any* nonadjacent rw edges, not
-                                    ; just G-single.
+                                    ; forbids *any* history where all rw edges
+                                    ; are nonadjacent, not just G-single.
                                     :G-nonadjacent
                                     ]
         :read-atomic               [:internal          ; Cerone (incomplete)
