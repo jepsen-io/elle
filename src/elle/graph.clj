@@ -311,7 +311,7 @@
   This method destroys relationship edges. I'm not sure what the semantics of
   preserving them might be, and we won't be using them for the application I'm
   thinking of anyway."
-  [pred ^DirectedGraph g]
+  [pred ^IGraph g]
   ;(info "collapsing graph of " (.size g) "nodes," (count (filter pred (.vertices g))) "of which match pred")
   ; We proceed through the graph linearly, taking every node n which matches
   ; pred. We explore its downstream neighborhood up to and including, but not

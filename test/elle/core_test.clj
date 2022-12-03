@@ -16,7 +16,7 @@
   (with-open [r (PushbackReader. (io/reader filename))]
     (->> (repeatedly #(edn/read {:eof nil} r))
          (take-while identity)
-         vec)))
+         h/history)))
 
 (deftest process-graph-test
   (let [[o1 o2 o3 o4 :as h]
@@ -138,8 +138,7 @@
     (let [history (->> (range)
                        (mapcat read-only-gen)
                        (take 1000000)
-                       (map-indexed #(assoc %2 :index %1))
-                       vec)]
+                       h/history)]
       (time
        (dotimes [n 1]
          (print "Run" n ":")
