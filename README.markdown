@@ -45,7 +45,8 @@ return the current value of the given list, and writes `[:append :y 4]`, which
 append a number to the end of the list.
 
 ```clj
-=> (require '[elle.list-append :as a])
+=> (require '[elle.list-append :as a]
+            '[jepsen.history :as h])
 nil
 ```
 
@@ -55,9 +56,10 @@ observes `:y = [1]`. The second appends 2 to `:x` and 1 to `:y`. The third
 observes `x`, and sees its value as `[1 2]`.
 
 ```clj
-=> (def h [{:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-           {:type :ok, :value [[:append :x 2] [:append :y 1]]}
-           {:type :ok, :value [[:r :x [1 2]]]}])
+=> (def h (h/history
+            [{:process 0, :type :ok, :value [[:append :x 1] [:r :y [1]]]}
+             {:process 1, :type :ok, :value [[:append :x 2] [:append :y 1]]}
+             {:process 2, :type :ok, :value [[:r :x [1 2]]]}]))
 h
 ```
 
@@ -71,9 +73,24 @@ have it dump anomalies to a directory called `out/`.
  :anomalies
  {:G1c
   [{:cycle
-    [{:type :ok, :value [[:append :x 2] [:append :y 1]]}
-     {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
-     {:type :ok, :value [[:append :x 2] [:append :y 1]]}],
+    [{:process 1,
+      :type :ok,
+      :f nil,
+      :value [[:append :x 2] [:append :y 1]],
+      :index 1,
+      :time -1}
+     {:process 0,
+      :type :ok,
+      :f nil,
+      :value [[:append :x 1] [:r :y [1]]],
+      :index 0,
+      :time -1}
+     {:process 1,
+      :type :ok,
+      :f nil,
+      :value [[:append :x 2] [:append :y 1]],
+      :index 1,
+      :time -1}],
     :steps
     ({:type :wr, :key :y, :value 1, :a-mop-index 1, :b-mop-index 1}
      {:type :ww,
@@ -87,8 +104,10 @@ have it dump anomalies to a directory called `out/`.
  :also-not
  #{:consistent-view :cursor-stability :forward-consistent-view
    :monotonic-atomic-view :monotonic-snapshot-read :monotonic-view
-   :repeatable-read :serializable :snapshot-isolation
-   :strict-serializable :update-serializable}}
+   :repeatable-read :serializable :snapshot-isolation :strong-serializable
+   :strong-session-serializable :strong-session-snapshot-isolation
+   :strong-snapshot-isolation :update-serializable}}
+
 ```
 
 Here, Elle can infer the write-read relationship between T1 and T2 on the basis
@@ -109,8 +128,11 @@ Let's see the G1c anomaly in text:
 $ cat out/G1c.txt
 G1c #0
 Let:
-  T1 = {:type :ok, :value [[:append :x 2] [:append :y 1]]}
-  T2 = {:type :ok, :value [[:append :x 1] [:r :y [1]]]}
+  T1 = {:index 1, :time -1, :type :ok, :process 1, :f nil,
+        :value [[:append :x 2] [:append :y 1]]}
+  T2 = {:index 0, :time -1, :type :ok, :process 0, :f nil,
+        :value [[:append :x 1] [:r :y [1]]]}
+
 
 Then:
   - T1 < T2, because T2 observed T1's append of 1 to key :y.
@@ -146,19 +168,7 @@ If you'd like to define your own relationships between transactions, see
 
 ### Observed Histories
 
-Elle expects its observed histories in the same format as [Jepsen](https://github.com/jepsen-io/jepsen). An observed history should be a list of operations in real-time order, where each operation is a map of the form:
-
-```clj
-{:type    One of :invoke, :ok, :info, :fail
- :process A logical identifier for a single thread of execution
- :value   A transaction; structure and semantics vary}
-```
-
-Each process should perform alternating `:invoke` and `:ok`/`:info`/`:fail`
-operations. `:ok` indicates the operation definitely committed. `:fail`
-indicates it definitely did not occur--e.g. it was aborted, was never submitted
-to the database, etc. `:info` indicates an indeterminate state; the transaction
-may or may not have taken place. After an `:info`, a process may not perform another operation; the invocation remains open for the rest of the history.
+Elle expects its observed histories in the same format as [Jepsen](https://github.com/jepsen-io/jepsen). See [jepsen.history](https://github.com/jepsen-io/history) for the structure of these histories.
 
 ### Types of Tests
 
