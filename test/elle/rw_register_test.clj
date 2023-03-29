@@ -58,17 +58,17 @@
   (is (= {:process 0, :type :ok, :value [[:w :x 1] [:r :x 2]]}
          (op "wx1rx2"))))
 
-(deftest ext-index-test
+(deftest k->v->ops-index-test
   (testing "empty"
-    (is (= {} (ext-index txn/ext-writes (h/history [])))))
+    (is (= {} (k->v->ops-index txn/writes (h/history [])))))
   (testing "writes"
     (let [[w1 w2 :as h]
           (h/history
-            [{:process 0, :type :ok, :value [[:w :x 1] [:w :y 3] [:w :x 2]]}
-             {:process 1, :type :ok, :value [[:w :y 3] [:w :x 4]]}])]
+            [{:process 0, :type :ok, :value [[:w :x 1] [:w :y 2] [:w :x 3]]}
+             {:process 1, :type :ok, :value [[:w :y 4] [:w :x 5]]}])]
       (is (= {:x {2 [w1], 4 [w2]}
               :y {3 [w2 w1]}}
-             (ext-index txn/ext-writes h))))))
+             (k->v->ops-index txn/writes h))))))
 
 (deftest internal-cases-test
   (testing "empty"
@@ -311,12 +311,15 @@
                   (version-graphs->transaction-graph h)
                   g/->clj)))))
 
-  (testing "ignores internal writes/reads"
-    (is (= {}
-           (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
-                (version-graphs->transaction-graph
-                  (h/history [(op "wx1wx2") (op "rx2rx3")]))
-                g/->clj)))))
+  (testing "catches internal writes/reads"
+    (let [[t1 t2 :as h] (h/history [(op "wx1wx2") (op "rx1")])]
+      (prn t1)
+      (prn t2)
+      (is (= {t1 #{t2}, t2 #{}}
+             (->> {:x (g/map->bdigraph {1 [2], 2 [3]})}
+                  (version-graphs->transaction-graph h)
+                  ;g/->clj
+                  ))))))
 
 (let [c (fn [checker-opts history]
 					(-> (check checker-opts (h/history history))
@@ -387,7 +390,7 @@
                  (c {:consistency-models  nil
                      :anomalies           [:G0]
                      :sequential-keys?    true}
-                    [t1 t1' t2 t2' t3 t3' t4 t4']))))))
+                    h))))))
 
     (testing "G1a"
       (let [; T2 sees T1's failed write
@@ -408,22 +411,17 @@
             t1 (op "wx1wx2")
             t2 (op "rx1")
             [t1 t2 :as h] (h/history [t1 t2])]
-        ; G0 checker won't catch this. The txn graph is empty though,
-        ; because the read dep isn't external.
-        (is (= {:valid?         :unknown
-                :anomaly-types  [:empty-transaction-graph]
-                :anomalies      {:empty-transaction-graph true}
-                :not            #{:read-committed}}
+        ; G0 checker won't catch this.
+        (is (= {:valid? true}
                (c {:consistency-models  nil
                    :anomalies           [:G0]}
                   h)))
 
         ; G1 will, as will a read-committed checker.
         (is (= {:valid? false
-                :anomaly-types [:G1b :empty-transaction-graph]
+                :anomaly-types [:G1b]
                 :not       #{:read-committed}
-                :anomalies {:empty-transaction-graph true
-                              :G1b [{:op    t2
+                :anomalies {:G1b [{:op    t2
                                    :writer  t1
                                    :mop     [:r :x 1]}]}}
                (c {:consistency-models nil
@@ -631,6 +629,36 @@
                (c {:sequential-keys? true}
                   [t1 t1' t2 t2' t3 t3']))))))
 
+(deftest ^:focus g0-internal-wfr-test
+  ; In this history, submitted by @sitano
+  ; (https://github.com/jepsen-io/maelstrom/issues/56), we have an internal
+  ; write cycle: T1 writes 1, T2 writes 9, T1 writes 2. We can detect this
+  ; via WFR.
+  (let [[t1 t1'] (pair (op 0 :ok "wx1rx1rx9wx2wx3rx3"))
+        [t2 t2'] (pair (op 1 :ok "rx1wx9rx3wx8"))
+        [t1 t1' t2 t2' :as h] (h/history [t1 t1' t2 t2'])]
+    (is (= {:valid? false
+            :anomaly-types [:G0]
+            :not #{:read-uncommitted :read-atomic}
+            :anomalies {:G0 [{:cycle [t2' t1' t2']
+                              :steps [{:key :x,
+                                       :value 9,
+                                       :value' 2,
+                                       :type :ww,
+                                       :a-mop-index 1,
+                                       :b-mop-index 3}
+                                      {:key :x,
+                                       :value 1,
+                                       :value' 9,
+                                       :type :ww,
+                                       :a-mop-index 0,
+                                       :b-mop-index 1}]
+                              :type :G0}]}}
+           (c {:consistency-models  nil
+               :anomalies           [:G0]
+               :wfr-keys?           true}
+              h)))))
+
   (deftest type-sanity
     (is (thrown-with-msg? java.lang.AssertionError #"a mix of integer types"
                           (c {}
@@ -760,7 +788,7 @@
     (time
 			(ext-key-graph graph))))
 
-(deftest ^:focus ^:perf perfect-perf-test
+(deftest ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR DB.
   (let [n (long 1e5)
         ; Takes state and txn, returns [state' txn'].

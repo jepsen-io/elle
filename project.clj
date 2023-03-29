@@ -9,7 +9,7 @@
                  [org.clojure/tools.logging "1.2.4"]
                  [rhizome "0.2.9"]
                  [io.jepsen/history "0.1.0"]
-                 [jepsen.txn "0.1.2"]
+                 [jepsen.txn "0.1.3-SNAPSHOT"]
                  [io.lacuna/bifurcan "0.2.0-alpha6"]]
   :java-source-paths ["src"]
   :javac-options ["-target" "1.8" "-source" "1.8"]

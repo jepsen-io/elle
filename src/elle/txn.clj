@@ -369,13 +369,11 @@
     :G-nonadjacent-process
     {:rels               #{:ww :wr :rw :process}
      :with               nonadjacent-rw
-     :filter-path-state  nonadjacent-rw-filter-path-state
-     :filter-ex          (comp #{:G-nonadjacent-process} :type)}
+     :filter-path-state  nonadjacent-rw-filter-path-state}
     :G-nonadjacent-realtime
     {:rels              #{:ww :wr :rw :realtime}
      :with              nonadjacent-rw
-     :filter-path-state nonadjacent-rw-filter-path-state
-     :filter-ex         (comp #{:G-nonadjacent-realtime} :type)}
+     :filter-path-state nonadjacent-rw-filter-path-state}
 
     ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
     ; insists on being G2, rather than G-single. Not bulletproof, but G-single
@@ -384,43 +382,34 @@
     ; Note that right now we have no model for predicate dependencies, so
     ; *everything* we find is G2-item.
     :G2-item   {:first-rels  #{:rw}
-                :rest-rels   #{:ww :wr :rw}
-                :filter-ex   (comp #{:G2-item} :type)}
+                :rest-rels   #{:ww :wr :rw}}
 
     ; A process G0 can use any number of process and ww edges--process is
     ; acyclic, so there's got to be at least one ww edge. We also demand the
     ; resulting cycle be G0-process, to filter out plain old G0s.
-    :G0-process        {:rels        #{:ww :process}
-                        :filter-ex   (comp #{:G0-process} :type)}
+    :G0-process        {:rels        #{:ww :process}}
     ; G1c-process needs at least one wr-edge to distinguish itself from
     ; G0-process.
     :G1c-process       {:first-rels  #{:wr}
-                        :rest-rels   #{:ww :wr :process}
-                        :filter-ex   (comp #{:G1c-process} :type)}
+                        :rest-rels   #{:ww :wr :process}}
     ; G-single-process starts with an anti-dep edge and can use processes from
     ; there.
     :G-single-process  {:first-rels  #{:rw}
-                        :rest-rels   #{:ww :wr :process}
-                        :filter-ex   (comp #{:G-single-process} :type)}
+                        :rest-rels   #{:ww :wr :process}}
     ; G2-process starts with an anti-dep edge, and allows anything from there.
     ; Plus it's gotta be G2-process, so we don't report G2s or G-single-process
     ; etc.
     :G2-item-process   {:first-rels  #{:rw}
-                        :rest-rels   #{:ww :wr :rw :process}
-                        :filter-ex   (comp #{:G2-item-process} :type)}
+                        :rest-rels   #{:ww :wr :rw :process}}
 
     ; Ditto for realtime
-    :G0-realtime        {:rels        #{:ww :realtime}
-                         :filter-ex   (comp #{:G0-realtime} :type)}
+    :G0-realtime        {:rels        #{:ww :realtime}}
     :G1c-realtime       {:first-rels  #{:wr}
-                         :rest-rels   #{:ww :wr :realtime}
-                         :filter-ex   (comp #{:G1c-realtime} :type)}
+                         :rest-rels   #{:ww :wr :realtime}}
     :G-single-realtime  {:first-rels  #{:rw}
-                         :rest-rels   #{:ww :wr :realtime}
-                         :filter-ex   (comp #{:G-single-realtime} :type)}
+                         :rest-rels   #{:ww :wr :realtime}}
     :G2-item-realtime   {:first-rels  #{:rw}
-                         :rest-rels   #{:ww :wr :rw :realtime}
-                         :filter-ex   (comp #{:G2-item-realtime} :type)}))
+                         :rest-rels   #{:ww :wr :rw :realtime}}))
 
 (def cycle-types
   "All types of cycles we can detect."
@@ -595,14 +584,14 @@
       ; g-single, there's no need to look for g-nonadjacent.
       ;(info "Checking scc of size" (count scc))
       (doseq [[type spec] cycle-anomaly-specs]
-        ; (info "Checking for" type)
+        ;(info "Checking for" type)
         ; For timeout reporting, we keep track of what type of anomaly
         ; we're looking for.
         (swap! types conj type)
 
         ; First, find a cycle using the spec.
         (let [;_      (prn)
-              ; _      (prn :spec type spec)
+              ;_      (prn :spec type spec)
               ; Restrict the graph to certain relationships, if necessary.
               g     (if-let [rels (:rels spec)]
                       (do ;(info "getting restricted graph")
@@ -629,8 +618,12 @@
             ; Explain the cycle
             (let [ex (elle/explain-cycle cycle-explainer pair-explainer
                                          cycle)
-                  ; _ (info "Filtering explanation")
-                  ; _ (prn :explanation ex)
+                  ;_ (info "Filtering explanation")
+                  ;_ (prn :explanation ex)
+                  ; If the cycle is reportable as G0, don't bother reporting it
+                  ; under G1c, etc.
+                  ex (when (= type (:type ex))
+                       ex)
                   ; Make sure it passes the filter, if we have one.
                   ex (if-let [p (:filter-ex spec)]
                        (when (p ex) ex)

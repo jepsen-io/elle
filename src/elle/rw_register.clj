@@ -151,23 +151,39 @@
                         :writer   writer})))))
          seq)))
 
-(defn ext-index
-  "Given a function that takes a txn and returns a map of external keys to
-  written values for that txn, and a history, computes a map like {k {v [op1,
-  op2, ...]}}, where k is a key, v is a particular value for that key, and op1,
-  op2, ... are operations which externally wrote k=v.
+(defn k->v->ops-index
+  "Given a function that takes a txn and returns a map of keys to collections
+  of values that txn interacted with, and a history, computes a map like {k {v
+  [op1, op2, ...]}}, where k is a key, v is a particular value for that key,
+  and op1, op2, ... are operations which interacted with k=v.
 
-  Right now we index only :ok ops. Later we should do :infos too, but we need
-  to think carefully about how to interpret the meaning of their nil reads."
-  [ext-fn history]
-  (->> history
-       h/oks
-       (reduce (fn [idx op]
-                 (reduce (fn [idx [k v]]
-                           (update-in idx [k v] conj op))
-                         idx
-                         (ext-fn (:value op))))
-               {})))
+  Right now we index only :ok ops. TODO: Later we should do :infos too, but we
+  need to think carefully about how to interpret the meaning of their nil
+  reads."
+  [k->vs-fn history]
+  ; Doing this with transients is a right mess; I actually don't know how to
+  ; turn nested transients back into persistents when you can't list their
+  ; keys.
+  (h/fold
+    history
+    {:reducer
+     (fn reducer
+       ([] {})
+       ([k->v->ops] k->v->ops)
+       ([k->v->ops ^Op op]
+        (if-not (h/ok? op)
+          k->v->ops ; Skip
+          (loopr [k->v->ops k->v->ops]
+                 [[k vs]  (k->vs-fn (.value op))
+                  v       vs]
+                 (let [v->ops     (get k->v->ops k {})
+                       ops        (get v->ops v [])
+                       ops'       (conj ops op)
+                       v->ops'    (assoc v->ops v ops')
+                       k->v->ops' (assoc k->v->ops k v->ops')]
+                   (recur k->v->ops'))))))
+     :combiner-identity (constantly {})
+     :combiner (partial merge-with (partial merge-with into))}))
 
 (defn initial-state-version-graphs
   "We assume the initial state of every key is `nil`; every version trivially
@@ -179,46 +195,61 @@
                     (h/fail?   op))
               vgs ; No sense in inferring anything here
               (let [txn (:value op)
-                    writes (txn/ext-writes txn)
+                    writes (txn/writes txn)
                     ; For reads, we only know their values when the op is OK.
-                    reads  (when (h/ok? op) (txn/ext-reads txn))]
-                (->> (concat writes reads)
-                     ; OK, now iterate over kv maps, building up our version
-                     ; graph.
-                     (reduce (fn kv [vgs [k v]]
-                               (if (nil? v)
-                                 ; Don't make a self-edge!
-                                 vgs
-                                 (let [vg (get vgs k (g/digraph))]
-                                   (assoc vgs k (g/link vg nil v)))))
-                               vgs)))))
+                    reads  (when (h/ok? op) (txn/reads txn))]
+                (loopr [vgs vgs]
+                       [[k vs] (concat writes reads)
+                        v      vs]
+                       (recur
+                         (if (nil? v)
+                           ; Don't make a self-edge!
+                           (let [vg (get vgs k (g/digraph))]
+                             (assoc vgs k (g/link vg nil v)))))))))
           {}
           history))
 
 (defn wfr-version-graphs
   "If we assume that within a transaction, writes follow reads, then we can
-  infer the version order wherever a transaction performs an external read of
-  some key x, and an external write of x as well."
+  infer version order relationship wherever a transaction performs a read of x
+  followed by a write of x. Takes a history and returns a map of keys to
+  digraphs of versions."
   [history]
-  (->> history
-       h/oks ; Since we need BOTH reads and writes, this only works with ok ops.
-       (reduce
-         (fn [vgs op]
-           (let [txn    (:value op)
-                 reads  (txn/ext-reads txn)
-                 writes (txn/ext-writes txn)]
-             (reduce (fn [vgs [k v]]
-                       (if (not (nil? v)) ; nils handled separately
-                         (if-let [v' (get writes k)]
-                           (let [vg (get vgs k (g/digraph))]
-                             (assoc vgs k (g/link vg v v')))
-                           vgs)
-                         vgs))
-                     vgs
-                     reads)))
-         {})))
+  (->> {:reducer
+        (fn reducer
+          ([] (transient {}))
+          ([version-graphs] (persistent! version-graphs))
+          ([version-graphs, ^Op op]
+           (if-not (h/ok? op)
+             version-graphs ; Skip
+             ; TODO: pull this out into a generic function for internal version
+             ; graph inference: we should do MR, MW, RYW, and WFR. It gets a
+             ; little weird because a bunch of these are either a.) redundant,
+             ; or b.) partial if you only do one or two of them. Right now we
+             ; only infer the most strict WFR--a single read immediately
+             ; followed by a single write. We'll miss that rx0, wx1, wx2
+             ; implies 0 -> 2.
+             (loopr [version-graphs version-graphs
+                     last-reads    (transient {})]
+                    [[f k v] (.value op)]
+                    (case f
+                      :r (recur version-graphs (assoc! last-reads k v))
+                      :w (let [r (get last-reads k ::not-found)]
+                           (if (identical? r ::not-found)
+                             (recur version-graphs last-reads)
+                             (let [vg (get version-graphs
+                                           k
+                                           (g/linear (g/digraph)))
+                                   vg' (g/link vg r v)]
+                               (recur (assoc! version-graphs k vg')
+                                      (dissoc! last-reads k))))))
+                   version-graphs))))
+        :combiner-identity  (constantly {})
+        :combiner           (partial merge-with g/merge)
+        :post-combiner      (partial map-vals g/forked)}
+       (h/fold history)))
 
-(defn ext-keys
+(defn op-keys
   "Given an operation, returns the set of keys we know it interacted with via
   an external read or write."
   [^Op op]
@@ -226,9 +257,9 @@
     (let [txn    (.value op)
           ; Can't infer crashed reads!
           reads  (when (h/ok? op)
-                   (txn/ext-reads txn))
+                   (txn/reads txn))
           ; We can infer crashed writes though!
-          writes (txn/ext-writes txn)]
+          writes (txn/writes txn)]
       (keys (merge reads writes)))))
 
 ;(defn kg-str
@@ -245,9 +276,9 @@
 ;       pprint
 ;       with-out-str))
 
-(defn downstream-ops-by-ext-key-transitive!
+(defn downstream-ops-by-op-key-transitive!
   "Takes a downstream map and adds transitive dependencies to it. Uses a
-  partial ext-key graph (a map of ops to keys to downstream txns), a set of ext
+  partial op-key graph (a map of ops to keys to downstream txns), a set of op
   keys for the op under consideration, and a transitive downstream map taken
   from the key graph for this op.
 
@@ -596,6 +627,7 @@
             ; we inferred a version order.
             sources'  (conj sources name)
             graph     (grapher history)
+            ;_         (prn :graph graph)
             graphs'   (merge-with g/digraph-union graphs graph)]
         (if-let [cs (->> (cyclic-version-cases graphs')
                          (map #(assoc % :sources sources'))
@@ -616,24 +648,26 @@
   version graph information.
 
   We do this by taking every key k, and for k, every edge v1 -> v2 in the
-  version graph, and for every T1 which finally interacted with v1, and every
-  T2 which initially interacted with T2, emitting an edge in the transaction
-  graph. We tag our edges :ww and :rw as appropriate. :wr edges we can detect
-  directly; we don't need the version graph to do that. Any :rr edge SHOULD
-  (assuming values just don't pop out of nowhere, internal consistency holds,
-  etc) manifest as a combination of :rw, :ww, and :wr edges; we don't gain
-  anything by emitting them here."
+  version graph, and for every T1 which interacted with v1, and every T2 which
+  interacted with T2, emitting an edge in the transaction graph. We tag our
+  edges :ww and :rw as appropriate. :wr edges we can detect directly; we don't
+  need the version graph to do that. Any :rr edge SHOULD (assuming values just
+  don't pop out of nowhere, internal consistency holds, etc) manifest as a
+  combination of :rw, :ww, and :wr edges; we don't gain anything by emitting
+  them here."
   [history version-graphs]
-  (let [ext-read-index  (ext-index txn/ext-reads  history)
-        ext-write-index (ext-index txn/ext-writes history)]
+  (let [read-index  (k->v->ops-index txn/reads  history)
+        write-index (k->v->ops-index txn/writes history)]
+    (prn :read-index read-index)
+    (prn :write-index write-index)
     (loopr [ww (g/linear (g/named-graph :ww))
             rw (g/linear (g/named-graph :rw))]
            [[k version-graph] version-graphs
             ^IEdge edge (g/edges version-graph)]
            (let [v1        (.from edge)
                  v2        (.to edge)
-                 k-writes  (get ext-write-index k)
-                 k-reads   (get ext-read-index k)
+                 k-writes  (get write-index k)
+                 k-reads   (get read-index k)
                  v1-reads  (get k-reads v1)
                  v1-writes (get k-writes v1)
                  v2-writes (get k-writes v2)
@@ -650,33 +684,34 @@
                    [(g/forked ww) (g/forked rw)]))))
 
 (defn explain-op-deps
-  "Given version graphs, a function extracting a map of keys to values from op
-  A, and also from op B, and a pair of operations A and B, returns a map (or
-  nil) explaining why A precedes B.
+  "Given version graphs, a function extracting a map of keys to lists of values
+  from op A, and also from op B, and a pair of operations A and B, returns a
+  map (or nil) explaining why A precedes B.
 
   We look for a key on which A interacted with version v, and B interacted with
   v', and v->v' in the version graph."
-  [version-graphs ext-a a ext-b b]
-  (let [a-kvs (ext-a (:value a))
-        b-kvs (ext-b (:value b))]
+  [version-graphs a-kvs a b-kvs b]
+  (let [a-kvs (a-kvs (:value a))
+        b-kvs (b-kvs (:value b))]
     ; Look for a key where a's value precedes b's!
-    (first
-      (keep (fn [[k a-value]]
-              (when-let [version-graph (get version-graphs k)]
-                (when-let [b-value (get b-kvs k)]
-                  (when (.contains ^ISet (g/out version-graph a-value)
-                                   b-value)
-                    {:key     k
-                     :value   a-value
-                     :value'  b-value}))))
-            a-kvs))))
+    (loopr []
+           [[k a-values]  a-kvs
+            a-value       a-values
+            b-value       (get b-kvs k)]
+           (if-let [version-graph (get version-graphs k)]
+             (if (.contains ^ISet (g/out version-graph a-value) b-value)
+               {:key     k
+                :value   a-value
+                :value'  b-value}
+               (recur))
+             (recur)))))
 
 (defrecord WWExplainer [version-graphs]
   elle/DataExplainer
   (explain-pair-data [_ a b]
     (when-let [{:keys [key value value'] :as e}
                (explain-op-deps
-                 version-graphs txn/ext-writes a txn/ext-writes b)]
+                 version-graphs txn/writes a txn/writes b)]
       (assoc e
              :type :ww
              :a-mop-index (index-of (:value a) [:w key value])
@@ -692,7 +727,7 @@
   (explain-pair-data [_ a b]
     (when-let [{:keys [key value value'] :as e}
                (explain-op-deps version-graphs
-                                txn/ext-reads a txn/ext-writes b)]
+                                txn/reads a txn/writes b)]
       (assoc e
              :type :rw
              :a-mop-index (index-of (:value a) [:r key value])
@@ -718,6 +753,8 @@
   [opts history]
   (let [{:keys [anomalies sources graphs]} (version-graphs opts history)
         tg  (version-graphs->transaction-graph history graphs)]
+    ;(prn :tg)
+    ;(pprint tg)
     ; We might have found anomalies when computing the version graph
     {:anomalies anomalies
      :graph     tg
@@ -727,19 +764,19 @@
 (defrecord WRExplainer []
   elle/DataExplainer
   (explain-pair-data [_ a b]
-    (let [writes (txn/ext-writes (:value a))
-          reads  (txn/ext-reads  (:value b))]
-      (reduce (fn [_ [k v]]
-                (when (and (contains? reads k)
-                           (= v (get reads k)))
-                  (reduced
-                    {:type  :wr
-                     :key   k
-                     :value v
-                     :a-mop-index (index-of (:value a) [:w k v])
-                     :b-mop-index (index-of (:value b) [:r k v])})))
-              nil
-              writes)))
+    (let [writes (txn/writes (:value a))
+          reads  (txn/reads  (:value b))]
+      (loopr []
+             [[k vs] writes
+              v      vs]
+             (if (and (contains? reads k)
+                      (contains? (get reads k) v))
+               {:type  :wr
+                :key   k
+                :value v
+                :a-mop-index (index-of (:value a) [:w k v])
+                :b-mop-index (index-of (:value b) [:r k v])}
+               (recur)))))
 
   (render-explanation [_ {:keys [key value]} a-name b-name]
     (str a-name " wrote " (pr-str key) " = " (pr-str value)
@@ -747,11 +784,11 @@
 
 (defn wr-graph
   "Given a history where ops are txns (e.g. [[:r :x 2] [:w :y 3]]), constructs
-  an order over txns based on the external writes and reads of key k: any txn
+  an order over txns based on the writes and reads of key k: any txn
   that reads value v must come after the txn that wrote v."
   [history]
-  (let [ext-writes (ext-index txn/ext-writes history)
-        ext-reads  (ext-index txn/ext-reads  history)]
+  (let [writes (k->v->ops-index txn/writes history)
+        reads  (k->v->ops-index txn/reads  history)]
     ; Take all reads and relate them to prior writes.
     {:graph
      (g/forked
@@ -759,7 +796,7 @@
                  ; OK, we've got a map of values to ops that read those values
                  (reduce (fn [graph [v reads]]
                            ; Find ops that set k=v
-                           (let [writes (-> ext-writes (get k) (get v))]
+                           (let [writes (-> writes (get k) (get v))]
                              (case (count writes)
                                ; Huh. We read a value that came out of nowhere.
                                ; This is probably an initial state. Later on
@@ -788,7 +825,7 @@
                          graph
                          values->reads))
                (g/linear (g/named-graph :wr))
-               ext-reads))
+               reads))
      :explainer (WRExplainer.)}))
 
 (defn graph

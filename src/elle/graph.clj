@@ -5,7 +5,9 @@
   We perform as much of our heavy lifting as possible in Bifurcan structures,
   then coerce them back to Clojure data structures for analysis, serialization,
   pretty-printing, etc."
+  (:refer-clojure :exclude [merge])
   (:require [clojure.tools.logging :refer [info error warn]]
+            [clojure [core :as c]]
             [clojure.core.reducers :as r]
             [dom-top.core :refer [loopr]]
             [elle.util :refer [map-vals maybe-interrupt]]
@@ -382,6 +384,13 @@
    (.merge a b union-edge))
   ([a b & more]
    (reduce digraph-union a (cons b more))))
+
+(defn ^DirectedGraph merge
+  "Merges two graphs using last-write-wins."
+  ([] (DirectedGraph.))
+  ([a] a)
+  ([^DirectedGraph a, ^DirectedGraph b]
+   (.merge a b merge-last-write-wins)))
 
 (defn strongly-connected-components
   "Finds the strongly connected components of a graph, greater than 1 element."
