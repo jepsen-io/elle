@@ -43,12 +43,14 @@
                    (.value op)))))
 
 (defn ok-keep
-	"Given a function of operations, returns a sequence of that function applied
-  to all ok operations. Returns nil iff every invocation of f is nil."
+  "Given a function of operations, returns a sequence of that function applied
+  to all ok operations. Returns nil iff every invocation of f is nil. Uses a
+  concurrent fold internally."
   [f history]
-  (->> history
-       h/oks
-       (keep f)
+  (->> (t/filter h/ok?)
+       (t/keep f)
+       (t/into [])
+       (h/tesser history)
        seq))
 
 (defn all-keys
