@@ -17,6 +17,7 @@
             [hiccup.core :as hiccup]
             [jepsen [history :as h]
                     [txn :as txn :refer [reduce-mops]]]
+            [jepsen.history [fold :refer [loopf]]]
             [jepsen.txn.micro-op :as mop]
             [slingshot.slingshot :refer [try+ throw+]]
             [tesser.core :as t])
@@ -227,27 +228,35 @@
   As a special case, if we have a key which only has a single append, we don't
   need a read: we can infer the sorted values it took on were simply [], [x]."
   [history]
-  (->> history
-       ; Build up a map of keys to sets of observed values for those keys
-       (reduce (fn [states op]
-                 (reduce (fn [states [f k v]]
+  (let [fold
+        (loopf {:name :sorted-values}
+               ; Reducer
+               ([states (transient {})]
+                [^Op op]
+                (recur
+                  (loopr [states states]
+                         [[f k v] (.value op)]
+                         (recur
                            (if (and (= :r f) (seq v))
                              ; Good, this is a read of something other than the
                              ; initial state
                              (-> states
                                  (get k #{})
                                  (conj v)
-                                 (->> (assoc states k)))
+                                 (->> (assoc! states k)))
                              ; Something else!
-                             states))
-                         states
-                         (:value op)))
-               {})
-       ; If we can't infer anything from reads, see if we can use a single
-       ; append operation to infer a value.
-       (merge (values-from-single-appends history))
-       ; And sort
-       (util/map-vals (comp vec (partial sort-by count)))))
+                             states))))
+                (persistent! states))
+               ; Combiner
+               ([states1 {}]
+                [states2]
+                (recur (merge-with set/union states1 states2))))]
+    (->> (h/fold history fold)
+         ; If we can't infer anything from reads, see if we can use a single
+         ; append operation to infer a value.
+         (merge (values-from-single-appends history))
+         ; And sort
+         (util/map-vals (comp vec (partial sort-by count))))))
 
 (defn incompatible-orders
   "Takes a map of keys to sorted observed values and verifies that for each key
