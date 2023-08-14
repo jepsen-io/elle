@@ -110,17 +110,17 @@
   [history]
   ; Build a map of keys to maps of failed elements to the ops that appended
   ; them.
-  (let [failed (ct/failed-writes #{:w} history)]
+  (let [failed (ct/failed-write-indices #{:w} history)]
     ; Look for ok ops with a read mop of a failed append
     (->> history
          h/oks
          ct/op-mops
-         (keep (fn [[op [f k v :as mop]]]
+         (keep (fn [[^Op op [f k v :as mop]]]
                  (when (= :r f)
-                   (when-let [writer (get-in failed [k v])]
+                   (when-let [writer-index (get-in failed [k v])]
                      {:op        op
                       :mop       mop
-                      :writer    writer}))))
+                      :writer    (h/get-index history writer-index)}))))
          seq)))
 
 (defn g1b-cases
@@ -134,21 +134,21 @@
   [history]
   ; Build a map of keys to maps of intermediate elements to the ops that wrote
   ; them
-  (let [im (ct/intermediate-writes #{:w} history)]
+  (let [im (ct/intermediate-write-indices #{:w} history)]
     ; Look for ok ops with a read mop of an intermediate append
     (->> history
          h/oks
          ct/op-mops
-         (keep (fn [[op [f k v :as mop]]]
+         (keep (fn [[^Op op [f k v :as mop]]]
                  (when (= :r f)
 									 ; We've got an illegal read if value came from an
 				           ; intermediate append.
-                   (when-let [writer (get-in im [k v])]
+                   (when-let [writer-index (get-in im [k v])]
                      ; Internal reads are OK!
-                     (when (not= op writer)
+                     (when (not= (.index op) writer-index)
                        {:op       op
                         :mop      mop
-                        :writer   writer})))))
+                        :writer   (h/get-index history writer-index)})))))
          seq)))
 
 (defn ext-index

@@ -150,6 +150,35 @@
                   [im']
                   (recur (merge-with merge im im'))))))
 
+(defn intermediate-write-indices
+  "Returns a map of keys to maps of intermediate write values to the :index's
+  of operations which wrote them. Used for detecting intermediate reads."
+  [write? history]
+  (h/fold history
+          (loopf {:name :intermediate-writes}
+                 ([im {}]
+                  [^Op op]
+                  ; Find intermediate writes for this particular txn by
+                  ; producing two maps: intermediate keys to values, and
+                  ; final keys to values in this txn. We shift elements
+                  ; from final to intermediate when they're overwritten.
+                  (recur (loopr [im'   im
+                                 final {}]
+                                [[f k v] (.value op)]
+                                (if (write? f)
+                                  (if-let [e (final k)]
+                                    ; We have a previous write of k
+                                    (recur (assoc-in im' [k e] (.index op))
+                                           (assoc final k v))
+                                    ; No previous write
+                                    (recur im' (assoc final k v)))
+                                  ; Something other than an append
+                                  (recur im' final))
+                                im')))
+                 ([im {}]
+                  [im']
+                  (recur (merge-with merge im im'))))))
+
 (defn lost-update-cases
   "Takes a function write? which returns true iff an operation is a write, and
   a history. Returns a seq of error maps describing any lost updates found.

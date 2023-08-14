@@ -28,7 +28,8 @@
                                ISet
                                IGraph
                                Set
-                               SortedMap)))
+                               SortedMap)
+           (jepsen.history Op)))
 
 (defn verify-mop-types
   "Takes a history where operation values are transactions. Verifies that the
@@ -115,21 +116,22 @@
   [history]
   ; Build a map of keys to maps of intermediate elements to the ops that wrote
   ; them
-  (let [im (ct/intermediate-writes #{:append} history)
+  (let [im (ct/intermediate-write-indices #{:append} history)
         ; Look for ok ops with a read mop of an intermediate append
         errs (->> (t/filter h/ok?)
                   (ct/keep-op-mops
-                    (fn g1b [op [f k v :as mop]]
+                    (fn g1b [^Op op [f k v :as mop]]
                       (when (identical? :r f)
                         ; We've got an illegal read if our last element came
                         ; from an intermediate append.
-                        (when-let [writer (get-in im [k (peek v)])]
+                        (when-let [writer-index (get-in im [k (peek v)])]
                           ; Internal reads are OK!
-                          (when (not= op writer)
-                            {:op       op
-                             :mop      mop
-                             :writer   writer
-                             :element  (peek v)})))))
+                          (when (not= (.index op) writer-index)
+                            (let [writer (h/get-index history writer-index)]
+                              {:op       op
+                               :mop      mop
+                               :writer   writer
+                               :element  (peek v)}))))))
                   (t/into [])
                   (h/tesser history))]
     (when (seq errs)
