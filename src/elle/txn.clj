@@ -99,6 +99,28 @@
                   [failed']
                   (recur (merge-with merge failed failed'))))))
 
+(defn failed-write-indices
+  "Returns a map of keys to maps of failed write values to the :index's of the
+  operations which wrote them. Used for detecting aborted reads. This version
+  is significantly more memory-efficient, since it does not require retaining
+  every failed operation for the entire pass."
+  [write? history]
+  (h/fold history
+          (loopf {:name :failed-writes}
+                 ([failed {}]
+                  [^Op op]
+                  (recur
+                    (if (h/fail? op)
+                      (loopr [failed' failed]
+                             [[f k v :as mop] (.value op)]
+                             (if (write? f)
+                               (recur (update failed' k assoc v (.index op)))
+                               (recur failed')))
+                      failed)))
+                 ([failed {}]
+                  [failed']
+                  (recur (merge-with merge failed failed'))))))
+
 (defn intermediate-writes
   "Returns a map of keys to maps of intermediate write values to the operations
   which wrote them. Used for detecting intermediate reads."

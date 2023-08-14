@@ -86,17 +86,17 @@
   [history]
   ; Build a map of keys to maps of failed elements to the ops that appended
   ; them.
-  (let [failed (ct/failed-writes #{:append} history)
+  (let [failed (ct/failed-write-indices #{:append} history)
         errs (->> (t/filter h/ok?)
                   (ct/keep-op-mops
                     (fn mop [op [f k v :as mop]]
                       (when (identical? :r f)
                         (when-let [failed (get failed k)]
                           (keep (fn per-element [e]
-                                  (when-let [writer (get failed e)]
+                                  (when-let [writer-idx (get failed e)]
                                     {:op        op
                                      :mop       mop
-                                     :writer    writer
+                                     :writer    (h/get-index history writer-idx)
                                      :element   e}))
                                 v)))))
                   (t/mapcat identity)
