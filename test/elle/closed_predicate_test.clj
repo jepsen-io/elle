@@ -101,7 +101,7 @@
     ; elle.txn to know about predicate edges.
     (is (= [:G2-item] (:anomaly-types res)))))
 
-(deftest g1c-predicate-read-unseen-universe-test
+(deftest g1c-predicate-read-unseen-universe-delete-test
   (let [[t1 t1' t2 t2' :as h]
         (h/history
           [; We begin with a universe where x and y are 0.
@@ -118,4 +118,63 @@
     ; T1 wr precedes T2, because T1 deleted x, and T2 (implicitly) selected
     ; that deleted version for its predicate read. Likewise, T2 -wr-> T1.
     (is (not (:valid? res)))
+    (is (= [:G1c] (:anomaly-types res)))))
+
+(deftest g1c-predicate-read-unseen-universe-write-test
+  (let [[t1 t1' t2 t2' :as h]
+        (h/history
+          [; We begin with a universe where x and y are 0.
+           {:process 0, :type :invoke, :f :init, :value {:x 0, :y 0}}
+           {:process 0, :type :ok,     :f :init, :value {:x 0, :y 0}}
+           ; T1 predicate reads everything 0, sees x = 0 (which implies y = 1) and sets x = 1.
+           {:process 0, :type :invoke, :f :txn, :value [[:rp [:= 0] nil]    [:w :x 1]]}
+           {:process 0, :type :ok,     :f :txn, :value [[:rp [:= 0] {:x 0}] [:w :x 1]]}
+           ; T2 predicate reads everything 0, sees y = 0 (which implies x = 1), and sets y = 1.
+           {:process 1, :type :invoke, :f :txn, :value [[:rp [:= 0] nil]     [:w :y 1]]}
+           {:process 1, :type :ok,     :f :txn, :value [[:rp [:= 0] {:y 0}]  [:w :y 1]]}])
+        res (check h)]
+    ; T1 wr precedes T2, because T1 deleted x, and T2 (implicitly) selected
+    ; that deleted version for its predicate read. Likewise, T2 -wr-> T1.
+    (is (not (:valid? res)))
+    (is (= [:G1c] (:anomaly-types res)))))
+
+(deftest g2-predicate-read-unseen-universe-write-test
+  (let [[t1 t1' t2 t2' :as h]
+        (h/history
+          [; We begin with a universe where x and y are 0.
+           {:process 0, :type :invoke, :f :init, :value {:x 0, :y 0}}
+           {:process 0, :type :ok,     :f :init, :value {:x 0, :y 0}}
+           ; T1 predicate reads everything 1, sees nothing (which implies y = 0) and sets x = 1.
+           {:process 0, :type :invoke, :f :txn, :value [[:rp [:= 1] nil] [:w :x 1]]}
+           {:process 0, :type :ok,     :f :txn, :value [[:rp [:= 1] {}]  [:w :x 1]]}
+           ; Same, but flip x and y
+           {:process 1, :type :invoke, :f :txn, :value [[:rp [:= 1] nil] [:w :y 1]]}
+           {:process 1, :type :ok,     :f :txn, :value [[:rp [:= 1] {}]  [:w :y 1]]}])
+        res (check h)]
+    ; T1 rw-predicate precedes T2, because T1 implicitly observed y = 0, and T2
+    ; wrote y = 1, which followed in the version order and also changed the
+    ; matches of the predicate.
+    (is (not (:valid? res)))
+    ; TODO: again, this is actually G2
+    (is (= [:G2-item] (:anomaly-types res)))))
+
+(deftest wr-g1c-item-test
+  ; A cycle of all write-read edges, forming G1c.
+  (let [[t1 t1' t2 t2' t3 t3' :as h]
+        (h/history
+          [; We begin with a universe where x is 0 and z is 0.
+           {:process 0, :type :invoke, :f :init, :value {:x 0 :z 0}}
+           {:process 0, :type :ok,     :f :init, :value {:x 0 :z 0}}
+           ; T1 reads z = 3 from T3 and deletes x.
+           {:process 0, :type :invoke, :f :txn, :value [[:r :z nil] [:delete :x]]}
+           {:process 0, :type :ok,     :f :txn, :value [[:r :z 3]   [:delete :x]]}
+           ; T2 reads x = nil (:dead) from T1 and inserts y = 2
+           {:process 1, :type :invoke, :f :txn, :value [[:r :x nil] [:insert :y 2]]}
+           {:process 1, :type :ok,     :f :txn, :value [[:r :x nil] [:insert :y 2]]}
+           ; T3 reads y = 2 from T2 and writes z = 3.
+           {:process 2, :type :invoke, :f :txn, :value [[:r :y nil] [:w :z 3]]}
+           {:process 2, :type :ok,     :f :txn, :value [[:r :y 2]   [:w :z 3]]}])
+        res (check h)]
+    (is (not (:valid? res)))
+    ; This is G1c.
     (is (= [:G1c] (:anomaly-types res)))))

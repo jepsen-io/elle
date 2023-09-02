@@ -37,10 +37,16 @@
   This allows us to infer a subset of VSet(P) *even when values are unread*.
   From this we can infer the additional dependency edges in the Adya formalism!
 
-  For this very silly proof of concept, we define our predicate as simply
-  `true`: every version except unborn and dead should be returned.
+  ## Predicates
 
-  # Operations
+  We need a structure to describe a predicate. These are:
+
+  :true. The trivial predicate, which matches everything. This is still
+  useful--predicates never match unborn or dead versions.
+
+  [:= 2]. Matches every object whose value which is equal to 2.
+
+  ## Operations
 
   We perform an initial *universe-constructing* operation which establishes the
   state of the universe. We're trusting the database positively, definitely has
@@ -80,7 +86,7 @@
   A predicate read. The predicate :true matches everything. This read observed
   key x's value as 1 and key y's value as 2.
 
-  # Representations
+  ## Representations
 
   We represent the unborn version as :elle/unborn, and the dead version as
   :elle/dead."
@@ -104,7 +110,7 @@
     (not b)
     (boolean b)))
 
-(defn ext-writes
+(defn ext-writes-txn
   "Given a transaction, returns a map of keys to values for its external
   writes."
   [txn]
@@ -117,6 +123,36 @@
              :delete  (assoc! ext k :elle/dead)
              ext))
          (persistent! ext)))
+
+(defn ext-writes
+  "Given a history, computes a map of keys to values to vectors of ops which
+  wrote those values. TODO: we never want multiple writers; we should just make
+  these single values."
+  [history]
+  (loopr [writes {}]
+         [op    (h/possible history)
+          [k v] (case (:f op)
+                  :init (:value op)
+                  :txn  (ext-writes-txn (:value op)))]
+         (recur (let [k-writes (get writes k {})
+                      v-writes (get k-writes v [])]
+                  (assoc writes k
+                         (assoc k-writes v
+                                (conj v-writes op)))))))
+
+(defn write-mop-index
+  "Takes a transaction, a key, and a value. Returns the index of the mop in
+  that transaction which set the key to that value, or -1 if not found."
+  [txn k v]
+  (loop [i 0]
+    (if (= i (count txn))
+      -1
+      (let [[f k v'] (nth txn i)]
+        (case f
+          :w      (if (= v v')                  i (recur (inc i)))
+          :insert (if (= v v')                  i (recur (inc i)))
+          :delete (if (identical? v :elle/dead) i (recur (inc i)))
+          (recur (inc i)))))))
 
 (defn conj-version
   "Takes an all-versions map of keys to vectors of versions those keys took on,
@@ -187,6 +223,26 @@
               (recur true)
               (recur found-a?))))))
 
+(defn resolve-version
+  "Both unborn and dead versions are returned by the database as `nil`.
+  However, if we know that a key never had a dead version, a nil read *must* be
+  unborn, and vice-versa. Takes an all-versions map, a key, and a value.
+  Returns the value if non-nil. If nil, tries to return :elle/unborn or
+  :elle/dead if we can prove it must have been one or the other. Otherwise,
+  returns nil."
+  [all-versions k v]
+  (if (nil? v)
+    (let [versions (get all-versions k [])
+          unborn?  (identical? :elle/unborn (first versions))
+          dead?    (identical? :elle/dead   (peek versions))]
+      (cond (and unborn? dead?) nil ; Can't tell
+            unborn?             :elle/unborn
+            dead?               :elle/dead
+            ; Weird. Let's assume unborn; this must be a case where we read
+            ; prior to the initial write.
+            true                :elle/unborn))
+    v))
+
 (defn eval-pred
   "Evaluates a predicate on a single version, returning true iff it matches."
   [pred version]
@@ -194,7 +250,11 @@
     :elle/unborn false
     :elle/dead   false
     (case pred
-      :true true)))
+      :true true
+      ; Assume our predicate is of the form [pred-type ...]
+      (case (first pred)
+        := (let [goal (second pred)]
+             (= goal version))))))
 
 (defn pred-mop?
   "Is this micro-operation a predicate operation?"
@@ -236,59 +296,10 @@
                          ; Ambiguous.
                          vset))))))))
 
-(defrecord WRPExplainer [all-versions]
-  elle/DataExplainer
-  (explain-pair-data [_ a b]
-    ; Slow, but just for a prototype...
-    (let [a-writes (ext-writes (:value a))]
-      (loopr []
-             [mop   (filter pred-mop? (:value b))
-              [k v] (version-set all-versions mop)]
-             (do (if (= v (get a-writes k))
-                   {:type  :wr
-                    :key   k
-                    :value v
-                    :predicate-read mop
-                    :a-mop-index (index-of (:value a) [:w k v])
-                    :b-mop-index (index-of (:value b) mop)}
-                   (recur))))))
-
-  (render-explanation [_ {:keys [key value predicate-read]} a-name b-name]
-    (str a-name " set key " (pr-str key) " to " (pr-str value) ", which was in the version set of predicate read " (pr-str predicate-read))))
-
-(defn wrp-graph
-  "Takes an analysis map and a history. Returns a graph of predicate write-read
-  dependencies. T1 -wrp-> T2 if T1 installs some version x1 and T2 performs a
-  predicate read [:rp pred ...] and x1 is in VSet(pred)."
-  [{:keys [all-versions ext-writes]} history]
-  {:graph (loopr [g (g/linear (g/digraph))]
-                 [op (h/oks history)
-                  [f :as mop] (:value op)]
-                 (recur
-                   (condp identical? f
-                     ; Predicate read
-                     :rp (loopr [g g]
-                                [[k v] (version-set all-versions mop)]
-                                (recur
-                                  (if (identical? v :elle/unborn)
-                                    ; Don't bother generating an edge; we don't
-                                    ; explicitly represent the Adya init txn.
-                                    g
-                                    ; What transaction wrote that version?
-                                    (let [writes (get-in ext-writes [k v])]
-                                      (assert (= 1 (count writes)))
-                                      (g/link g (first writes) op)))))
-                     ; Not a predicate read
-                     g))
-                 ; Later we should have our graph break out predicate vs
-                 ; non-predicate deps?
-                 (g/named-graph :wr (g/forked g)))
-   :explainer (WRPExplainer. all-versions)})
-
 (defrecord RWPExplainer [all-versions]
   elle/DataExplainer
   (explain-pair-data [_ a b]
-    (let [b-writes (ext-writes (:value b))]
+    (let [b-writes (ext-writes-txn (:value b))]
       ; Loop over predicate reads
       (loopr []
              [mop (filter pred-mop? (:value a))]
@@ -309,8 +320,7 @@
                                :value' v'
                                :predicate-read mop
                                :a-mop-index (index-of (:value a) mop)
-                               ; TODO: extend this to insert/delete
-                               :b-mop-index (index-of (:value b) [:w k v'])}
+                               :b-mop-index (write-mop-index (:value b) k v')}
                               (recur))))
                    ; Next predicate read
                    (recur))))))
@@ -356,11 +366,89 @@
           (g/named-graph :rw (g/forked g)))
    :explainer (RWPExplainer. all-versions)})
 
+(defrecord WRExplainer [all-versions]
+  elle/DataExplainer
+  (explain-pair-data [_ a b]
+    ; Try for an item dependency
+    (let [writes (ext-writes-txn (:value a))]
+      (or (loopr []
+                 [[f k v :as mop] (:value b)]
+                 (if-not (identical? f :r)
+                   (recur)
+                   (let [v (resolve-version all-versions k v)]
+                     (if-not (= v (get writes k))
+                       (recur)
+                       {:type        :wr
+                        :key         k
+                        :value       v
+                        :a-mop-index (write-mop-index (:value a) k v)
+                        :b-mop-index (index-of (:value b) mop)}))))
+          ; Barring that, a predicate dependency
+          (loopr []
+                 [mop   (filter pred-mop? (:value b))
+                  [k v] (version-set all-versions mop)]
+                 (do (if (= v (get writes k))
+                       {:type  :wr
+                        :key   k
+                        :value v
+                        :predicate-read mop
+                        :a-mop-index (index-of (:value a) [:w k v])
+                        :b-mop-index (index-of (:value b) mop)}
+                       (recur)))))))
+
+  (render-explanation [_ {:keys [key value predicate-read]} a-name b-name]
+    (if predicate-read
+      (str a-name " set key " (pr-str key) " to " (pr-str value)
+           ", which was in the version set of predicate read "
+           (pr-str predicate-read))
+      (str a-name " wrote " (pr-str key) " = " (pr-str value)
+           ", which was read by " b-name))))
+
+(defn wr-graph
+  "Takes an analysis map and a history. Returns a graph of both item and
+  predicate write-read edges. T1 -wr-> T2 if T1 installs some x that T2
+  performs a standard (e.g. non-predicate) read of. T1 -wrp-> T2 if T1 installs
+  some version x1 and T2 performs a predicate read [:rp pred ...] and x1 is in
+  VSet(pred)."
+  [{:keys [all-versions ext-writes]} history]
+  {:graph
+   (loopr [g (g/linear (g/digraph))]
+          [op               (h/oks history)
+           [f k v :as mop]  (:value op)]
+          (recur
+            (condp identical? f
+              ; Item read
+              :r (let [v                  (resolve-version all-versions k v)
+                       [write :as writes] (get-in ext-writes [k v])]
+                   (assert (= 1 (count writes)))
+                   ; Don't generate self-edges
+                   (if (= op write)
+                     g
+                     (g/link g write op)))
+              ; Predicate read
+              :rp (loopr [g g]
+                         [[k v] (version-set all-versions mop)]
+                         (recur
+                           (if (identical? v :elle/unborn)
+                             ; Don't bother generating an edge; we don't
+                             ; explicitly represent the Adya init txn.
+                             g
+                             ; What transaction wrote that version?
+                             (let [writes (get-in ext-writes [k v])
+                                   _ (assert (= 1 (count writes)))
+                                   write (first writes)]
+                               (if (= write op)
+                                 g ; No self-edges
+                                 (g/link g (first writes) op))))))
+              g))
+          (g/named-graph :wr (g/forked g)))
+   :explainer (WRExplainer. all-versions)})
+
 (defn graph
   "Given an analysis map (e.g. :all-versions, etc) and a history, computes a
   transaction dependency graph."
   [analysis history]
-  ((elle/combine (partial wrp-graph analysis)
+  ((elle/combine (partial wr-graph analysis)
                  (partial rwp-graph analysis)
                  )
    history))
@@ -374,8 +462,7 @@
   ([opts history]
    (let [history      (h/client-ops history)
          all-versions (all-versions history)
-         ext-writes   (rw-register/ext-index ext-writes
-                                             (h/possible history))
+         ext-writes   (ext-writes history)
          analysis     {:all-versions all-versions
                        :ext-writes   ext-writes}
          analyzers    (into [(partial graph analysis)]
@@ -387,3 +474,82 @@
      ;(println "cycles")
      ;(pprint cycles)
      (ct/result-map opts cycles))))
+
+(defn gen-key-type
+  "Is this key eligible for an :insert, :w, or :delete?"
+  [k]
+  (case (mod k 3)
+    0 :insert
+    1 :w
+    2 :delete))
+
+(defn gen-pred
+  "Generates a random predicate."
+  []
+  (case (rand-int 3)
+    0 [:= 0]
+    1 [:= 1]
+    2 :true))
+
+(defn gen
+  "Constructs a lazy sequence of operations for a closed predicate test. Begins
+  with an init operation, and then a series of transactions affecting various
+  keys. Stops when no more mutations are possible. Options:
+
+    :key-count            Number of total keys in the test. Default: 99.
+
+    :min-txn-length       Minimum number of operations per txn. Default: 1.
+
+    :max-txn-length       Maximum number of operations per txn. Default: 4."
+  ([opts]
+   (let [key-count      (:key-count opts 99)
+         min-txn-length (:min-txn-length opts 1)
+         max-txn-length (:max-txn-length opts 4)
+         ; Start with an init txn. We want to mix inserts, writes, and deletes,
+         ; but we only get to do one mutation per key. We do inserts on key mod
+         ; 0, writes on key mod 1, deletes on key mod 2. Here's a set of
+         ; mutable keys:
+         ks  (shuffle (range key-count))]
+     (cons {:type  :invoke
+            :f     :init
+            :value (zipmap
+                     (filter (comp #{:w :delete} gen-key-type) ks)
+                     ; Assign them random values, all 0 or 1.
+                     (repeatedly (partial rand-int 2)))}
+           (gen {:key-count      key-count
+                 :min-txn-length min-txn-length
+                 :max-txn-length max-txn-length}
+                {; Keys we can mutate
+                 :ks         ks
+                 ; Next value to write
+                 :next-write 2}))))
+  ([opts state]
+   (lazy-seq
+     (let [{:keys [key-count min-txn-length max-txn-length]} opts
+           {:keys [ks next-write]} state]
+       (when (seq ks)
+         (loop [i          (+ min-txn-length (rand-int max-txn-length))
+                ks         ks
+                next-write next-write
+                txn        (transient [])]
+           (if (or (zero? i) (empty? ks))
+             ; Done!
+             (cons {:type :invoke, :f :txn, :value (persistent! txn)}
+                   (gen opts {:ks ks, :next-write next-write}))
+             ; Read, predicate reads, or mutation?
+             (let [i' (dec i)]
+               (case (rand-int 3)
+                 ; Read
+                 0 (recur i' ks next-write
+                          (conj! txn [:r (rand-int key-count) nil]))
+                 ; Predicate read
+                 1 (recur i' ks next-write (conj! txn [:rp (gen-pred) nil]))
+                 ; Mutation
+                 2 (let [[k & ks'] ks]
+                     (case (gen-key-type k)
+                       :insert (recur i' ks' (inc next-write)
+                                      (conj! txn [:insert k next-write]))
+                       :w (recur i' ks' (inc next-write)
+                                 (conj! txn [:w k next-write]))
+                       :delete (recur i' ks' next-write
+                                      (conj! txn [:delete k])))))))))))))

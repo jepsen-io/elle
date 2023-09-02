@@ -158,7 +158,9 @@
   op2, ... are operations which externally wrote k=v.
 
   Right now we index only :ok ops. Later we should do :infos too, but we need
-  to think carefully about how to interpret the meaning of their nil reads."
+  to think carefully about how to interpret the meaning of their nil reads.
+
+  TODO: we fail to index external writes of type :info. That's bad."
   [ext-fn history]
   (->> history
        h/oks
