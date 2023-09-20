@@ -303,6 +303,8 @@
             ww        (:ww        type-freqs 0)
             wr        (:wr        type-freqs 0)
             rw        (:rw        type-freqs 0)
+            ; Any predicate edges?
+            predicate? (boolean (seq (filter :predicate? (:steps ex))))
             ; Are any pair of rw's together?
             rw-adj?   (->> (:steps ex)
                            (cons (last (:steps ex))) ; For last->first edge
@@ -314,7 +316,9 @@
             ; We compute a type based on data dependencies alone
             data-dep-type (cond (= 1 rw) "G-single"
                                 (< 1 rw) (if rw-adj?
-                                           "G2-item"
+                                           (if predicate?
+                                             "G2"
+                                             "G2-item")
                                            "G-nonadjacent")
                                 (< 0 wr) "G1c"
                                 (< 0 ww) "G0"
@@ -342,16 +346,19 @@
         :G-single
         :G-nonadjacent
         :G2-item
+        :G2
         :G0-process
         :G1c-process
         :G-single-process
         :G-nonadjacent-process
         :G2-item-process
+        :G2-process
         :G0-realtime
         :G1c-realtime
         :G-single-realtime
         :G-nonadjacent-realtime
-        :G2-item-realtime]
+        :G2-item-realtime
+        :G2-realtime]
        (map-indexed (fn [i t] [t i]))
        (into {})))
 
@@ -433,12 +440,14 @@
     ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
     ; insists on being G2, rather than G-single. Not bulletproof, but G-single
     ; is worse, so I'm OK with it.
-    ;
-    ; Note that right now we have no model for predicate dependencies, so
-    ; *everything* we find is G2-item.
     :G2-item   {:first-rels  #{:rw}
                 :rest-rels   #{:ww :wr :rw}
                 :filter-ex   (comp #{:G2-item} :type)}
+    ; G2 is identical, except we want a cycle explained as G2
+    ; specifically--it'll have at least one :predicate? edge.
+    :G2        {:first-rels #{:rw}
+                :rest-rels  #{:ww :wr :rw}
+                :filter-ex  (comp #{:G2} :type)}
 
     ; A process G0 can use any number of process and ww edges--process is
     ; acyclic, so there's got to be at least one ww edge. We also demand the
@@ -461,6 +470,10 @@
     :G2-item-process   {:first-rels  #{:rw}
                         :rest-rels   #{:ww :wr :rw :process}
                         :filter-ex   (comp #{:G2-item-process} :type)}
+    :G2-process        {:first-rels  #{:rw}
+                        :rest-rels   #{:ww :wr :rw :process}
+                        :filter-ex   (comp #{:G2-process} :type)}
+
 
     ; Ditto for realtime
     :G0-realtime        {:rels        #{:ww :realtime}
@@ -473,7 +486,10 @@
                          :filter-ex   (comp #{:G-single-realtime} :type)}
     :G2-item-realtime   {:first-rels  #{:rw}
                          :rest-rels   #{:ww :wr :rw :realtime}
-                         :filter-ex   (comp #{:G2-item-realtime} :type)}))
+                         :filter-ex   (comp #{:G2-item-realtime} :type)}
+    :G2-realtime        {:first-rels  #{:rw}
+                         :rest-rels   #{:ww :wr :rw :realtime}
+                         :filter-ex   (comp #{:G2-realtime} :type)}))
 
 (def cycle-types
   "All types of cycles we can detect."
@@ -703,6 +719,7 @@
   :G1c                ww, at least one wr edge
   :G-single           ww, wr, exactly one rw
   :G2-item            ww, wr, 2+ rw
+  :G2                 ww, wr, 2+ rw, with predicate edges
 
   :G0-process         G0, but with process edges
   ...

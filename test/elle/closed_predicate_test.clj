@@ -97,9 +97,7 @@
     ; y = 2 which followed y = unborn, and that also changed whether the
     ; predicate matched.
     (is (not (:valid? res)))
-    ; TODO: we call this G2-item, but it's actually G2. We have to extend
-    ; elle.txn to know about predicate edges.
-    (is (= [:G2-item] (:anomaly-types res)))))
+    (is (= [:G2] (:anomaly-types res)))))
 
 (deftest g1c-predicate-read-unseen-universe-delete-test
   (let [[t1 t1' t2 t2' :as h]
@@ -155,8 +153,7 @@
     ; wrote y = 1, which followed in the version order and also changed the
     ; matches of the predicate.
     (is (not (:valid? res)))
-    ; TODO: again, this is actually G2
-    (is (= [:G2-item] (:anomaly-types res)))))
+    (is (= [:G2] (:anomaly-types res)))))
 
 (deftest wr-g1c-item-test
   ; A cycle of all write-read edges, forming G1c.

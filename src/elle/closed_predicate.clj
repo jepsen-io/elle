@@ -368,14 +368,15 @@
                                          (version< all-versions k v v')
                                          (xor (eval-pred pred v)
                                               (eval-pred pred v')))
-                                  {:type   :rw
-                                   :key    k
-                                   :value  v
-                                   :value' v'
+                                  {:type           :rw
+                                   :key            k
+                                   :value          v
+                                   :value'         v'
+                                   :predicate?     true
                                    :predicate-read mop
-                                   :a-mop-index (index-of (:value a) mop)
-                                   :b-mop-index (write-mop-index (:value b)
-                                                                 k v')}
+                                   :a-mop-index    (index-of (:value a) mop)
+                                   :b-mop-index    (write-mop-index (:value b)
+                                                                    k v')}
                                   (recur))))
                        ; Next predicate read
                        (recur)))))))
