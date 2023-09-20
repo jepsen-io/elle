@@ -67,6 +67,26 @@
   (is (= [3 4] (versions-after {:x [1 2 3 4]} :x 2)))
   (is (= nil (versions-after {:x [1 2 3 4]} :x 4))))
 
+(deftest eval-pred-test
+  (testing "unborn"
+    (is (= false (eval-pred :true :elle/unborn))))
+
+  (testing "dead"
+    (is (= false (eval-pred :true :elle/dead))))
+
+  (testing "true"
+    (is (= true (eval-pred :true 5)))
+    (is (= true (eval-pred :true false))))
+
+  (testing "="
+    (is (= true (eval-pred [:= 5] 5)))
+    (is (= false (eval-pred [:= 5] 4))))
+
+  (testing "mod"
+    (is (= false (eval-pred [:mod 3 2] 4)))
+    (is (= true  (eval-pred [:mod 3 2] 5)))
+    (is (= false (eval-pred [:mod 3 2] 6)))))
+
 (deftest g1c-predicate-read-seen-test
   (let [[t1 t1' t2 t2' :as h]
         (h/history

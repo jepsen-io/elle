@@ -286,7 +286,10 @@
       ; Assume our predicate is of the form [pred-type ...]
       (case (first pred)
         := (let [goal (second pred)]
-             (= goal version))))))
+             (= goal version))
+
+        :mod (let [[_ modulus target] pred]
+               (= target (mod version modulus)))))))
 
 (defn pred-mop?
   "Is this micro-operation a predicate operation?"
@@ -628,8 +631,11 @@
   "Generates a random predicate."
   []
   (case (rand-int 3)
-    0 [:= 0]
-    1 [:= 1]
+    ; Equality: either 0 or 1, our initial values.
+    0 [:= (rand-int 2)]
+    ; Modulo: mod 2 should be either 0 or 1.
+    1 [:mod 2 (rand-int 2)]
+    ; Trivial
     2 :true))
 
 (defn gen
