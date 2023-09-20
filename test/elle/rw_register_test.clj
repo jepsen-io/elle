@@ -760,7 +760,7 @@
     (time
 			(ext-key-graph graph))))
 
-(deftest ^:focus ^:perf perfect-perf-test
+(deftest ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR DB.
   (let [n (long 1e5)
         ; Takes state and txn, returns [state' txn'].

@@ -46,6 +46,8 @@
 
   [:= 2]. Matches every object whose value which is equal to 2.
 
+  [:mod 2 0] Matches every object whose value, modulo two, is zero.
+
   ## Operations
 
   We perform an initial *universe-constructing* operation which establishes the
@@ -125,9 +127,8 @@
          (persistent! ext)))
 
 (defn ext-writes
-  "Given a history, computes a map of keys to values to vectors of ops which
-  wrote those values. TODO: we never want multiple writers; we should just make
-  these single values."
+  "Given a history, computes a map of keys to values to the op which wrote
+  that value."
   [history]
   (loopr [writes {}]
          [op    (h/possible history)
@@ -135,10 +136,14 @@
                   :init (:value op)
                   :txn  (ext-writes-txn (:value op)))]
          (recur (let [k-writes (get writes k {})
-                      v-writes (get k-writes v [])]
-                  (assoc writes k
-                         (assoc k-writes v
-                                (conj v-writes op)))))))
+                      v-write  (get k-writes v)]
+                  (if v-write
+                    (throw+ {:type ::multiple-writes-of-same-value
+                             :key   k
+                             :value v
+                             :op    op})
+                    (assoc writes k
+                           (assoc k-writes v op)))))))
 
 (defn write-mop-index
   "Takes a transaction, a key, and a value. Returns the index of the mop in
@@ -190,8 +195,35 @@
                              ;             [[k v] reads]
                              ;             (recur (update versions k conj v)))))))))))
                              ; Ignore reads. We're going to assume our writes
-                             ; tel us every version.
+                             ; tell us every version.
                              versions)))))))
+
+(defn version-before
+  "Takes an all-versions map of keys to vectors of versions, a key, and a
+  version. Returns the version immediately before the given version, or nil if
+  none is known."
+  ([all-versions k v]
+   (version-before (get all-versions k) v))
+  ([versions target-version]
+   (loopr [preceding nil]
+          [v versions]
+          (if (= v target-version)
+            preceding
+            (recur v)))))
+
+(defn version-after
+  "Takes an all-versions map of keys to vectors of versions, a key, and a
+  version. Returns the version immediately after the given version, or nil if
+  none is known."
+  ([all-versions k v]
+   (version-after (get all-versions k) v))
+  ([versions target-version]
+   (loopr [preceding nil]
+          [v versions]
+          (if (= preceding target-version)
+            v
+            (recur v)))))
+
 (defn versions-after
   "Takes an all-versions map of keys to vectors of versions, a key, and a
   version. Returns all versions of that key which follow the given version."
@@ -296,75 +328,127 @@
                          ; Ambiguous.
                          vset))))))))
 
-(defrecord RWPExplainer [all-versions]
+(defrecord RWExplainer [all-versions]
   elle/DataExplainer
   (explain-pair-data [_ a b]
     (let [b-writes (ext-writes-txn (:value b))]
-      ; Loop over predicate reads
-      (loopr []
-             [mop (filter pred-mop? (:value a))]
-             (let [[_ pred] mop
-                   vset     (version-set all-versions mop)]
-               ; Loop over b's external writes
-               (or (loopr []
-                          [[k v'] b-writes]
-                          (let [v (get vset k ::not-found)]
-                            ; Did b overwrite k and change the match of pred?
-                            (if (and (not= ::not-found v)
-                                     (version< all-versions k v v')
-                                     (xor (eval-pred pred v)
-                                          (eval-pred pred v')))
-                              {:type   :rw
-                               :key    k
-                               :value  v
-                               :value' v'
-                               :predicate-read mop
-                               :a-mop-index (index-of (:value a) mop)
-                               :b-mop-index (write-mop-index (:value b) k v')}
-                              (recur))))
-                   ; Next predicate read
-                   (recur))))))
+      ; First, try to find a kv link. Loop over kv reads in a, looking
+      ; for cases where b overwrote a's read.
+      (or (loopr []
+                 [[f k v :as mop] (filter (comp #{:r} first) (:value a))]
+                 (let [v (resolve-version all-versions k v)]
+                   ; Was there a value following this read?
+                   (if-let [v' (version-after all-versions k v)]
+                     ; And did b write it?
+                     (if (= v' (get b-writes k ::not-found))
+                       {:type :rw
+                        :key   k
+                        :value v
+                        :value' v'
+                        :a-mop-index (index-of (:value a) mop)
+                        :b-mop-index (write-mop-index (:value b) k v')}
+                       ; b wrote something else
+                       (recur))
+                     ; No next version
+                     (recur))))
+
+          ; Failing that, try a predicate relation. Loop over predicate reads
+          ; in a, looking for cases where b overwrote a's read.
+          (loopr []
+                 [mop (filter pred-mop? (:value a))]
+                 (let [[_ pred] mop
+                       vset     (version-set all-versions mop)]
+                   ; Loop over b's external writes
+                   (or (loopr []
+                              [[k v'] b-writes]
+                              (let [v (get vset k ::not-found)]
+                                ; Did b overwrite k and change the match of
+                                ; pred?
+                                (if (and (not= ::not-found v)
+                                         (version< all-versions k v v')
+                                         (xor (eval-pred pred v)
+                                              (eval-pred pred v')))
+                                  {:type   :rw
+                                   :key    k
+                                   :value  v
+                                   :value' v'
+                                   :predicate-read mop
+                                   :a-mop-index (index-of (:value a) mop)
+                                   :b-mop-index (write-mop-index (:value b)
+                                                                 k v')}
+                                  (recur))))
+                       ; Next predicate read
+                       (recur)))))))
 
   (render-explanation [_ {:keys [key value value' predicate-read]} a-name b-name]
-    (str a-name " performed a predicate read " (pr-str predicate-read) " of key " (pr-str key) " and selected version " (pr-str value) ", which was overwritten by " b-name "'s write of " value' ", which changed whether the predicate would have matched.")))
+    (if predicate-read
+      (str a-name " performed a predicate read " (pr-str predicate-read)
+           " of key " (pr-str key) " and selected version " (pr-str value)
+           ", which was overwritten by " b-name "'s write of " value'
+           ", which also changed whether the predicate would have matched.")
+      (str a-name " read key " (pr-str key) " = " (pr-str value)
+           ", which was overwritten by " b-name "'s write of " value'))))
 
-(defn rwp-graph
-  "Takes an analysis map and a history. Returns a graph of predicate read-write
-  dependencies. T1 -rwp-> T2 if T1 performs a predicate read P where VSet(P)
+(defn rw-graph
+  "Takes an analysis map and a history. Returns a graph of both item and
+  predicate read-write dependencies.
+
+  For items: T1 -rw-> T2 if T1 performs a read of x1 and T2 installs some x2,
+  and x1 directly precedes x2 in the version order.
+
+  For predicates: T1 -rw-> T2 if T1 performs a predicate read P where VSet(P)
   included version x1, and T2 installs some x2, and x1 << x2 in the version
   order, and T2 changed whether P matched: that is, P matches x1 but not x2, or
   P matches x2 but not x1."
   [{:keys [all-versions ext-writes]} history]
   {:graph
    (loopr [g (g/linear (g/digraph))]
-          [op (h/oks history)
-           [f pred :as mop] (:value op)]
+          [op          (h/oks history)
+           [f :as mop] (:value op)]
           (recur
             (condp identical? f
+              ; KV read
+              :r (let [[f k v] mop
+                       v       (resolve-version all-versions k v)]
+                   (if-let [v' (version-after all-versions k v)]
+                     (if-let [write (get-in ext-writes [k v'])]
+                       (if (= op write)
+                         ; Don't generate self-edges
+                         g
+                         ; write overwrote this op.
+                         (g/link g op write))
+                       ; Don't know who wrote the next version
+                       g)
+                     ; No known next version
+                     g))
+
               ; Predicate read
-              :rp (loopr [g g]
-                         ; For each version in the version set
-                         [[k v] (version-set all-versions mop)
-                          ; And every version following it in the version order
-                          v'    (versions-after all-versions k v)]
-                         ; Did v' change the predicate match?
-                         (recur (if (xor (eval-pred pred v)
-                                         (eval-pred pred v'))
-                                  ; Find txns that wrote it
-                                  (let [writes (get-in ext-writes [k v'])]
-                                    (assert (= 1 (count writes)))
-                                    ; Don't generate self-edges
-                                    (if (= op (first writes))
-                                      g
-                                      (g/link g op (first writes))))
-                                  ; Didn't change the predicate
-                                  g)))
-              ; Something else
-              g))
+              :rp (let [[f pred] mop]
+                    (loopr [g g]
+                           ; For each version in the version set
+                           [[k v] (version-set all-versions mop)
+                            ; And every version following it in the version
+                            ; order
+                            v'    (versions-after all-versions k v)]
+                           ; Did v' change the predicate match?
+                           (recur (if (xor (eval-pred pred v)
+                                           (eval-pred pred v'))
+                                    ; Find txns that wrote it
+                                    (if-let [write (get-in ext-writes [k v'])]
+                                      ; Don't generate self-edges
+                                      (if (= op write)
+                                        g
+                                        (g/link g op write))
+                                      ; No writer known
+                                      g)
+                                    ; Didn't change the predicate
+                                    g))))
+                    ; Some other kind of mop
+                    g))
           ; Later we should break out predicate vs non-predicate deps so we can
           ; distinguish G2 from G2-item?
           (g/named-graph :rw (g/forked g)))
-   :explainer (RWPExplainer. all-versions)})
+   :explainer (RWExplainer. all-versions)})
 
 (defrecord WRExplainer [all-versions]
   elle/DataExplainer
@@ -418,13 +502,14 @@
           (recur
             (condp identical? f
               ; Item read
-              :r (let [v                  (resolve-version all-versions k v)
-                       [write :as writes] (get-in ext-writes [k v])]
-                   (assert (= 1 (count writes)))
-                   ; Don't generate self-edges
-                   (if (= op write)
-                     g
-                     (g/link g write op)))
+              :r (let [v (resolve-version all-versions k v)]
+                   (if-let [write (get-in ext-writes [k v])]
+                     ; Don't generate self-edges
+                     (if (= op write)
+                       g
+                       (g/link g write op))
+                     ; No writer known
+                     g))
               ; Predicate read
               :rp (loopr [g g]
                          [[k v] (version-set all-versions mop)]
@@ -434,23 +519,78 @@
                              ; explicitly represent the Adya init txn.
                              g
                              ; What transaction wrote that version?
-                             (let [writes (get-in ext-writes [k v])
-                                   _ (assert (= 1 (count writes)))
-                                   write (first writes)]
+                             (if-let [write (get-in ext-writes [k v])]
                                (if (= write op)
                                  g ; No self-edges
-                                 (g/link g (first writes) op))))))
+                                 (g/link g write op))
+                               ; No writer known
+                               g))))
+              ; Some other mop
               g))
           (g/named-graph :wr (g/forked g)))
    :explainer (WRExplainer. all-versions)})
+
+(defrecord WWExplainer [all-versions]
+  elle/DataExplainer
+  (explain-pair-data [_ a b]
+    (let [a-writes (ext-writes-txn (:value a))
+          b-writes (ext-writes-txn (:value b))]
+      (loopr []
+             [[k v'] b-writes]
+             (if-let [v (version-before all-versions k v')]
+               ; We have a prior version
+               (if (= v (get a-writes k))
+                 ; Found it
+                 {:type  :ww
+                  :key    k
+                  :value  v
+                  :value' v'
+                  :a-mop-index (write-mop-index (:value a) k v)
+                  :b-mop-index (write-mop-index (:value b) k v')}
+                 ; Not the previous write
+                 (recur))
+               ; No prior version
+               (recur)))))
+
+  (render-explanation [_ {:keys [key value value']} a-name b-name]
+    (str a-name " set key " (pr-str key) " to " (pr-str value)
+         ", which " b-name " overwrote with " (pr-str value'))))
+
+(defn ww-graph
+  "Takes an analysis map and a history. Returns a graph of write-write edges.
+  T1 -ww-> T2 if T1 installs some x and T2 installs some x' such that x
+  directly precedes x' in the version order."
+  [{:keys [all-versions ext-writes]} history]
+  {:graph
+   (loopr [g (g/linear (g/digraph))]
+          [op (h/possible history)
+           [f k v :as mop] (:value op)]
+          (recur
+            (case f
+              (:insert :write :delete)
+              (let [v' (if (identical? f :delete) :elle/dead v)]
+                (if-let [v (version-before all-versions k v')]
+                  (if-let [write (get-in ext-writes [k v])]
+                    (if (= op write)
+                      g
+                      (g/link g write op))
+                    ; No writer known
+                    g)
+                  ; No prior version
+                  g))
+
+              ; Some other mop
+              g))
+          (g/named-graph :ww (g/forked g)))
+   :explainer (WWExplainer. all-versions)})
 
 (defn graph
   "Given an analysis map (e.g. :all-versions, etc) and a history, computes a
   transaction dependency graph."
   [analysis history]
-  ((elle/combine (partial wr-graph analysis)
-                 (partial rwp-graph analysis)
-                 )
+  ((elle/combine (partial ww-graph analysis)
+                 (partial wr-graph analysis)
+                 (partial rw-graph analysis))
    history))
 
 (defn check

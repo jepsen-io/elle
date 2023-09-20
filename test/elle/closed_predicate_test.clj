@@ -160,7 +160,7 @@
 
 (deftest wr-g1c-item-test
   ; A cycle of all write-read edges, forming G1c.
-  (let [[t1 t1' t2 t2' t3 t3' :as h]
+  (let [[t0 t0' t1 t1' t2 t2' t3 t3' :as h]
         (h/history
           [; We begin with a universe where x is 0 and z is 0.
            {:process 0, :type :invoke, :f :init, :value {:x 0 :z 0}}
@@ -168,7 +168,7 @@
            ; T1 reads z = 3 from T3 and deletes x.
            {:process 0, :type :invoke, :f :txn, :value [[:r :z nil] [:delete :x]]}
            {:process 0, :type :ok,     :f :txn, :value [[:r :z 3]   [:delete :x]]}
-           ; T2 reads x = nil (:dead) from T1 and inserts y = 2
+           ; T2 reads x = nil (which we can prove is :dead) from T1 and inserts y = 2
            {:process 1, :type :invoke, :f :txn, :value [[:r :x nil] [:insert :y 2]]}
            {:process 1, :type :ok,     :f :txn, :value [[:r :x nil] [:insert :y 2]]}
            ; T3 reads y = 2 from T2 and writes z = 3.
@@ -176,5 +176,24 @@
            {:process 2, :type :ok,     :f :txn, :value [[:r :y 2]   [:w :z 3]]}])
         res (check h)]
     (is (not (:valid? res)))
-    ; This is G1c.
-    (is (= [:G1c] (:anomaly-types res)))))
+    ; This is both G1c and G-Single.
+    (is (= #{:G-single :G1c} (set (:anomaly-types res))))))
+
+(deftest ww-wr-rw-item-test
+  ; Full ww cycles are impossible if every key is mutated at most once (since
+  ; all edges point from the init txn), but we *can* form loops including ww.
+  (let [[t0 t0' t1 t1' t2 t2' :as h]
+        (h/history
+          [; We begin with a universe where x is 0.
+           {:process 0, :type :invoke, :f :init, :value {:x 0 :z 0}}
+           {:process 0, :type :ok,     :f :init, :value {:x 0 :z 0}}
+           ; T1 deletes x, so T0 -ww-> T1. It inserts y.
+           {:process 0, :type :invoke, :f :txn, :value [[:delete :x] [:insert :y 1]]}
+           {:process 0, :type :ok,     :f :txn, :value [[:delete :x] [:insert :y 1]]}
+           ; T2 reads y, so T1  -> wr T2. However, it *fails* to observe z, which means T2 -rw-> T0
+           {:process 1, :type :invoke, :f :txn, :value [[:r :y nil] [:r :z nil]]}
+           {:process 1, :type :ok,     :f :txn, :value [[:r :y 1]   [:r :z nil]]}])
+        res (check h)]
+    (is (not (:valid? res)))
+    ; This is G-single.
+    (is (= [:G-single] (:anomaly-types res)))))
