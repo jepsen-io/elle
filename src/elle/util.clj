@@ -11,6 +11,12 @@
                                Map)
            (jepsen.history Op)))
 
+(defn empty->nil
+  "Takes a collection coll and returns coll iff it is non-empty; otherwise nil."
+  [coll]
+  (when (seq coll)
+    coll))
+
 (defn nanos->secs [nanos] (/ nanos 1e9))
 
 (defn maybe-interrupt

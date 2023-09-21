@@ -101,6 +101,7 @@
                   [rw-register :as rw-register]
                   [txn :as ct]
                   [util :as util :refer [index-of]]]
+            [tesser [core :as t]]
             [slingshot.slingshot :refer [try+ throw+]]
             [jepsen [history :as h]
                     [txn :as txn]]))
@@ -296,6 +297,36 @@
   [[f]]
   (or (identical? :rp f)))
 
+(defn pred-read-miss-cases
+  "Takes an all-versions map and a history. Runs through all predicate reads in
+  a history, and yields a seq (or nil) of error maps where a predicate read
+  *must* have observed something (e.g. because every known version of a key
+  matched the predicate), but that key didn't appear in the read set."
+  [all-versions history]
+  (->> (t/filter h/ok?)
+       (t/mapcat
+         (fn per-op [op]
+           ; For every predicate read, and every key in the universe...
+           (loopr [errs (transient [])]
+                  [[f pred v :as mop] (filter pred-mop? (:value op))
+                   [k versions] all-versions]
+                  (if (contains? v k)
+                    ; We read this key; it's fine
+                    (recur errs)
+                    (if (every? (partial eval-pred pred) versions)
+                      ; This predicate matched *every* version of this key;
+                      ; it should have appeared.
+                      (recur
+                        (conj! errs {:op        op
+                                     :mop       mop
+                                     :key       k
+                                     :versions  versions}))
+                      (recur errs)))
+                  (persistent! errs))))
+       (t/into [])
+       (h/tesser history)
+       util/empty->nil))
+
 (defn version-set
   "Takes all versions and a micro-operation (right now, just :rp) and returns a
   map of keys to versions we can show must have been in VSet(P)."
@@ -319,11 +350,16 @@
                        (condp = (count candidates)
                          ; Something's terribly wrong. If every version
                          ; matched, one should have appeared in the predicate
-                         ; read.
-                         0 (throw+ {:type ::predicate-read-should-have-seen-something
-                                    :mop        [f pred v]
-                                    :key        k
-                                    :versions   versions})
+                         ; read. We catch this explicitly in
+                         ; predicate-read-miss-cases. If it does happen, the
+                         ; most charitable interpretation is that we somehow
+                         ; chose the unborn version (even though the unborn
+                         ; version was never supposed to exist). It could also
+                         ; be outright data loss--a :dead version that was
+                         ; never generated, but :unborn feels more
+                         ; conservative, and will manifest as explicable
+                         ; cycles.
+                         0 (assoc vset k :elle/unborn)
                          ; Any other version would have appeared in the
                          ; predicate read, so we can prove this non-matching
                          ; version must have been in VSet(P).
@@ -604,20 +640,23 @@
   ([history]
    (check {} history))
   ([opts history]
-   (let [history      (h/client-ops history)
-         all-versions (all-versions history)
-         ext-writes   (ext-writes history)
+   (let [history        (h/client-ops history)
+         all-versions   (all-versions history)
+         ext-writes     (ext-writes history)
+         pred-read-miss (pred-read-miss-cases all-versions history)
          analysis     {:all-versions all-versions
                        :ext-writes   ext-writes}
          analyzers    (into [(partial graph analysis)]
                             (ct/additional-graphs opts))
          analyzer     (apply elle/combine analyzers)
-         cycles       (:anomalies (ct/cycles! opts analyzer history))]
+         cycles       (:anomalies (ct/cycles! opts analyzer history))
+         anomalies    (cond-> cycles
+                        pred-read-miss (assoc :predicate-read-miss pred-read-miss))]
      ;(println "versions")
      ;(pprint all-versions)
      ;(println "cycles")
      ;(pprint cycles)
-     (ct/result-map opts cycles))))
+     (ct/result-map opts anomalies))))
 
 (defn gen-key-type
   "Is this key eligible for an :insert, :w, or :delete?"

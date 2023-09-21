@@ -339,7 +339,12 @@
         :consistent-view           [:G1 :G-single]     ; Adya
         :forward-consistent-view   [:G1 :G-SIb]        ; Adya
         :parallel-snapshot-isolation [:internal :G1a]  ; Cerone (incomplete)
-        :PL-3                      [:G1 :G2]           ; Adya
+        :PL-3                      [:G1 :G2            ; Adya
+                                    ; We say a "predicate read miss" occurs
+                                    ; when a predicate read fails to observe a
+                                    ; version when *every* version in the
+                                    ; history matches the predicate.
+                                    :predicate-read-miss]
         :PL-2                      [:G1]               ; Adya
         :PL-1                      [:G0                ; Adya
                                     ; I don't think an Adya history can exist

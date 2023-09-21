@@ -214,3 +214,31 @@
     (is (not (:valid? res)))
     ; This is G-single.
     (is (= [:G-single] (:anomaly-types res)))))
+
+(deftest failure-to-observe-test
+  ; When a predicate read fails to see something we KNOW must have been there,
+  ; we report that separately.
+  (let [[t0 t0' t1 t1' :as h] (h/history
+            [
+             {:index 0, :type :invoke, :process 0, :f :init, :value {5 3}}
+             {:index 5, :type :ok, :process 0, :f :init, :value {5 3}}
+             {:index 8, :type :invoke, :process 1, :f :txn, :value [[:rp [:mod 2 1] nil] [:rp [:= 3] nil]]}
+             {:index 52, :type :ok, :process 1, :f :txn, :value [[:rp [:mod 2 1] {}] [:rp [:= 3] {}]]}
+             ])
+        res (check h)]
+    (is (= {:valid? false,
+            :anomaly-types [:predicate-read-miss],
+            :anomalies
+            {:predicate-read-miss
+             [{:op t1'
+               :mop [:rp [:mod 2 1] {}],
+               :key 5,
+               :versions [3]}
+              {:op t1'
+               :mop [:rp [:= 3] {}],
+               :key 5,
+               :versions [3]}]},
+            :not #{:serializable},
+            :also-not
+            #{:strong-serializable :strong-session-serializable}}
+           res))))
