@@ -294,13 +294,12 @@
 (deftest failure-to-observe-test
   ; When a predicate read fails to see something we KNOW must have been there,
   ; we report that separately.
-  (let [[t0 t0' t1 t1' :as h] (h/history
-            [
-             {:index 0, :type :invoke, :process 0, :f :init, :value {5 3}}
-             {:index 5, :type :ok, :process 0, :f :init, :value {5 3}}
-             {:index 8, :type :invoke, :process 1, :f :txn, :value [[:rp [:mod 2 1] nil] [:rp [:= 3] nil]]}
-             {:index 52, :type :ok, :process 1, :f :txn, :value [[:rp [:mod 2 1] {}] [:rp [:= 3] {}]]}
-             ])
+  (let [[t0 t0' t1 t1' :as h]
+        (h/history
+          [{:index 0, :type :invoke, :process 0, :f :init, :value {5 3}}
+           {:index 5, :type :ok, :process 0, :f :init, :value {5 3}}
+           {:index 8, :type :invoke, :process 1, :f :txn, :value [[:rp [:mod 2 1] nil] [:rp [:= 3] nil]]}
+           {:index 52, :type :ok, :process 1, :f :txn, :value [[:rp [:mod 2 1] {}] [:rp [:= 3] {}]]}])
         res (check h)]
     (is (= {:valid? false,
             :anomaly-types [:predicate-read-miss],
@@ -317,4 +316,48 @@
             :not #{:serializable},
             :also-not
             #{:strong-serializable :strong-session-serializable}}
+           res))))
+
+(deftest init-g-single-pred-test
+  ; This catches a bug in wr-explainer when a cycle involves the init txn.
+  (let [[t0 t0' t1 t1' :as h]
+        (h/history
+          ; T0 init creates key 7 = 1
+          [{:index 1, :type :invoke, :process 4, :f :init, :value {7 1}}
+           {:index 4, :type :ok, :process 4, :f :init, :value {7 1}}
+           ; T1 implicitly selects version 1 of 7 in its predicate read, since
+           ; there can't have been any other possible value. However, it also
+           ; fails to read key 7! This is G-single: wr / rw.
+           {:index 72, :type :invoke, :process 7, :f :txn, :value [[:rp [:mod 2 0] nil] [:r 7 nil]]}
+           {:index 82, :type :ok, :process 7, :f :txn, :value [[:rp [:mod 2 0] {}] [:r 7 nil]]}])
+        res (check {:directory "test-output/closed-predicate/init-g-single-pred"} h)]
+    (is (= {:valid? false,
+           :anomaly-types [:G-single],
+           :anomalies
+           {:G-single
+            [{:cycle [t1' t0' t1']
+              :steps
+              [{:type :rw,
+                :key 7,
+                :value :elle/unborn,
+                :value' 1,
+                :a-mop-index 1,
+                :b-mop-index 0}
+               {:type :wr,
+                :key 7,
+                :value 1,
+                :predicate-read [:rp [:mod 2 0] {}],
+                :a-mop-index 0,
+                :b-mop-index 0}],
+              :type :G-single}]},
+           :not #{:consistent-view},
+           :also-not
+           #{:forward-consistent-view
+             :serializable
+             :snapshot-isolation
+             :strong-serializable
+             :strong-session-serializable
+             :strong-session-snapshot-isolation
+             :strong-snapshot-isolation
+             :update-serializable}}
            res))))

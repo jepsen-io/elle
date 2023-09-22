@@ -246,8 +246,7 @@
      (loopr [preceding nil]
             [v versions]
             (if (= preceding target-version)
-              (do (info :early-return v)
-                  v)
+              v
               (recur v))
             nil))))
 
@@ -548,7 +547,7 @@
                         :key   k
                         :value v
                         :predicate-read mop
-                        :a-mop-index (index-of (:value a) [:w k v])
+                        :a-mop-index (write-mop-index a k v)
                         :b-mop-index (index-of (:value b) mop)}
                        (recur)))))))
 
