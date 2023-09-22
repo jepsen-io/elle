@@ -127,15 +127,21 @@
              ext))
          (persistent! ext)))
 
+(defn ext-writes-op
+  "Given an init or txn operation, returns a map of keys to values for its
+  external writes."
+  [op]
+  (case (:f op)
+    :init (:value op)
+    :txn  (ext-writes-txn (:value op))))
+
 (defn ext-writes
   "Given a history, computes a map of keys to values to the op which wrote
   that value."
   [history]
   (loopr [writes {}]
          [op    (h/possible history)
-          [k v] (case (:f op)
-                  :init (:value op)
-                  :txn  (ext-writes-txn (:value op)))]
+          [k v] (ext-writes-op op)]
          (recur (let [k-writes (get writes k {})
                       v-write  (get k-writes v)]
                   (if v-write
@@ -147,18 +153,24 @@
                            (assoc k-writes v op)))))))
 
 (defn write-mop-index
-  "Takes a transaction, a key, and a value. Returns the index of the mop in
-  that transaction which set the key to that value, or -1 if not found."
-  [txn k v]
-  (loop [i 0]
-    (if (= i (count txn))
-      -1
-      (let [[f k v'] (nth txn i)]
-        (case f
-          :w      (if (= v v')                  i (recur (inc i)))
-          :insert (if (= v v')                  i (recur (inc i)))
-          :delete (if (identical? v :elle/dead) i (recur (inc i)))
-          (recur (inc i)))))))
+  "Takes an operation, a key, and a value. Returns the index of the mop in that
+  transaction which set the key to that value, or -1 if not found. For init
+  ops, the index is always 0 iff the init op wrote that value."
+  [op k v]
+  (case (:f op)
+    :init (if (= v (get (:value op) k ::not-found))
+            0
+            -1)
+    :txn (let [txn (:value op)]
+           (loop [i 0]
+             (if (= i (count txn))
+               -1
+               (let [[f k v'] (nth txn i)]
+                 (case f
+                   :w      (if (= v v')                  i (recur (inc i)))
+                   :insert (if (= v v')                  i (recur (inc i)))
+                   :delete (if (identical? v :elle/dead) i (recur (inc i)))
+                   (recur (inc i)))))))))
 
 (defn conj-version
   "Takes an all-versions map of keys to vectors of versions those keys took on,
@@ -215,22 +227,43 @@
 (defn version-after
   "Takes an all-versions map of keys to vectors of versions, a key, and a
   version. Returns the version immediately after the given version, or nil if
-  none is known."
+  none is known.
+
+  We may be asked for the version after the unborn version, even when the
+  unborn version is *not* in the version order--for instance, because we
+  assumed its existence due to init. When this happens, we return the first
+  version in the order."
   ([all-versions k v]
    (version-after (get all-versions k) v))
   ([versions target-version]
-   (loopr [preceding nil]
-          [v versions]
-          (if (= preceding target-version)
-            v
-            (recur v)))))
+   (if (identical? :elle/unborn target-version)
+     ; Unborn must be one of the first two versions
+     (let [[v0 v1] versions]
+       (if (identical? :elle/unborn v0)
+         v1
+         v0))
+     ; Some non-unborn version
+     (loopr [preceding nil]
+            [v versions]
+            (if (= preceding target-version)
+              (do (info :early-return v)
+                  v)
+              (recur v))
+            nil))))
 
 (defn versions-after
   "Takes an all-versions map of keys to vectors of versions, a key, and a
-  version. Returns all versions of that key which follow the given version."
+  version. Returns all versions of that key which follow the given version.
+  Every version follows :elle/unborn."
   ([all-versions k v]
    (versions-after (get all-versions k) v))
   ([versions target-version]
+   ; Special handling for unborn
+   (if (identical? :elle/unborn target-version)
+     (if (identical? :elle/unborn (first versions))
+       (subvec versions 1)
+       versions))
+   ; Some non-unborn version
    (loop [i 0]
      ; Stop when there are no versions that could follow
      (when (< i (dec (count versions)))
@@ -370,7 +403,7 @@
 (defrecord RWExplainer [all-versions]
   elle/DataExplainer
   (explain-pair-data [_ a b]
-    (let [b-writes (ext-writes-txn (:value b))]
+    (let [b-writes (ext-writes-op b)]
       ; First, try to find a kv link. Loop over kv reads in a, looking
       ; for cases where b overwrote a's read.
       (or (loopr []
@@ -385,7 +418,7 @@
                         :value v
                         :value' v'
                         :a-mop-index (index-of (:value a) mop)
-                        :b-mop-index (write-mop-index (:value b) k v')}
+                        :b-mop-index (write-mop-index b k v')}
                        ; b wrote something else
                        (recur))
                      ; No next version
@@ -414,8 +447,7 @@
                                    :predicate?     true
                                    :predicate-read mop
                                    :a-mop-index    (index-of (:value a) mop)
-                                   :b-mop-index    (write-mop-index (:value b)
-                                                                    k v')}
+                                   :b-mop-index    (write-mop-index b k v')}
                                   (recur))))
                        ; Next predicate read
                        (recur)))))))
@@ -425,7 +457,7 @@
       (str a-name " performed a predicate read " (pr-str predicate-read)
            " of key " (pr-str key) " and selected version " (pr-str value)
            ", which was overwritten by " b-name "'s write of " value'
-           ", which also changed whether the predicate would have matched.")
+           ", which also changed whether the predicate would have matched")
       (str a-name " read key " (pr-str key) " = " (pr-str value)
            ", which was overwritten by " b-name "'s write of " value'))))
 
@@ -494,7 +526,7 @@
   elle/DataExplainer
   (explain-pair-data [_ a b]
     ; Try for an item dependency
-    (let [writes (ext-writes-txn (:value a))]
+    (let [writes (ext-writes-op a)]
       (or (loopr []
                  [[f k v :as mop] (:value b)]
                  (if-not (identical? f :r)
@@ -505,7 +537,7 @@
                        {:type        :wr
                         :key         k
                         :value       v
-                        :a-mop-index (write-mop-index (:value a) k v)
+                        :a-mop-index (write-mop-index a k v)
                         :b-mop-index (index-of (:value b) mop)}))))
           ; Barring that, a predicate dependency
           (loopr []
@@ -573,8 +605,8 @@
 (defrecord WWExplainer [all-versions]
   elle/DataExplainer
   (explain-pair-data [_ a b]
-    (let [a-writes (ext-writes-txn (:value a))
-          b-writes (ext-writes-txn (:value b))]
+    (let [a-writes (ext-writes-op a)
+          b-writes (ext-writes-op b)]
       (loopr []
              [[k v'] b-writes]
              (if-let [v (version-before all-versions k v')]
@@ -585,8 +617,8 @@
                   :key    k
                   :value  v
                   :value' v'
-                  :a-mop-index (write-mop-index (:value a) k v)
-                  :b-mop-index (write-mop-index (:value b) k v')}
+                  :a-mop-index (write-mop-index a k v)
+                  :b-mop-index (write-mop-index b k v')}
                  ; Not the previous write
                  (recur))
                ; No prior version

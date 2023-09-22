@@ -62,21 +62,23 @@
   "Short names for common operations"
   [f]
   (case f
-    :append :a
-    f))
+    :append "a"
+    (if (instance? clojure.lang.Named f)
+      (name f)
+      (str f))))
 
 (defn mop->str
   "Converts a micro-op to a short string"
   [[f k v]]
-  (str (name (short-f f)) " " k " " (pr-str v)))
+  (str (short-f f) " " (pr-str k) " " (pr-str v)))
 
 (defn short-rel
   "Short names for relations"
   [rel]
   (case rel
-    :realtime :rt
-    :process  :p
-    rel))
+    :realtime "rt"
+    :process  "p"
+    (str rel)))
 
 (defn rel->color
   "Colors for each type of relationship in a graph."
@@ -110,17 +112,21 @@
    (->> (sort-by rel-priority rels)
         (map (fn [rel]
                (str "<font color=\"" (rel->color rel) "\">"
-                    (name (short-rel rel))
+                    (short-rel rel)
                     "</font>")))
         (str/join ","))])
 
 (defn op->node
   "Turns an operation into a node descriptor ast."
-  [node-idx op]
+  [node-idx {:keys [f value] :as op}]
   [:node (node-idx op)
    {:height     0.4
     :shape      :record
-    :label      [:record-label (map mop->str (:value op))]
+    :label      (case f
+                  ; Inits are special; their value is a single op.
+                  :init [:record-label [(str "init " (pr-str value))]]
+                  ; Otherwise, assume a txn of micro-ops
+                  [:record-label (map mop->str value)])
     :color      (type->color (:type op))
     :fontcolor  (type->color (:type op))}])
 
@@ -144,7 +150,7 @@
                     (str bn ":f" bmi)
                     bn)]
     [:edge an bn
-     {:label      (name (short-rel (:type ex)))
+     {:label      (short-rel (:type ex))
       :fontcolor  (rel->color (:type ex))
       :color      (rel->color (:type ex))}]))
 

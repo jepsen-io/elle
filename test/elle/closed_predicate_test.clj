@@ -67,6 +67,10 @@
   (is (= [3 4] (versions-after {:x [1 2 3 4]} :x 2)))
   (is (= nil (versions-after {:x [1 2 3 4]} :x 4))))
 
+(deftest version-after-test
+  (is (= 2 (version-after {:x [1 2]} :x 1)))
+  (is (= nil (version-after {:x [1 2]} :x 2))))
+
 (deftest eval-pred-test
   (testing "unborn"
     (is (= false (eval-pred :true :elle/unborn))))
@@ -168,7 +172,7 @@
            ; Same, but flip x and y
            {:process 1, :type :invoke, :f :txn, :value [[:rp [:= 1] nil] [:w :y 1]]}
            {:process 1, :type :ok,     :f :txn, :value [[:rp [:= 1] {}]  [:w :y 1]]}])
-        res (check h)]
+        res (check {:directory "test-output/closed-predicate/g2-predicate-read-unseen-universe-write"} h)]
     ; T1 rw-predicate precedes T2, because T1 implicitly observed y = 0, and T2
     ; wrote y = 1, which followed in the version order and also changed the
     ; matches of the predicate.
@@ -191,10 +195,48 @@
            ; T3 reads y = 2 from T2 and writes z = 3.
            {:process 2, :type :invoke, :f :txn, :value [[:r :y nil] [:w :z 3]]}
            {:process 2, :type :ok,     :f :txn, :value [[:r :y 2]   [:w :z 3]]}])
-        res (check h)]
+        res (check {:directory "test-output/closed-predicate/wr-g1c-item"} h)]
     (is (not (:valid? res)))
-    ; This is both G1c and G-Single.
-    (is (= #{:G-single :G1c} (set (:anomaly-types res))))))
+    ; This is G1c.
+    (is (= {:valid? false,
+            :anomaly-types [:G1c],
+           :anomalies
+           {:G1c
+            [{:cycle [t2' t3' t1' t2']
+              :steps
+              [{:type :wr,
+                :key :y,
+                :value 2,
+                :a-mop-index 1,
+                :b-mop-index 0}
+               {:type :wr,
+                :key :z,
+                :value 3,
+                :a-mop-index 1,
+                :b-mop-index 0}
+               {:type :wr,
+                :key :x,
+                :value :elle/dead,
+                :a-mop-index 1,
+                :b-mop-index 0}],
+              :type :G1c}]},
+           :not #{:read-committed},
+           :also-not
+           #{:consistent-view
+             :cursor-stability
+             :forward-consistent-view
+             :monotonic-atomic-view
+             :monotonic-snapshot-read
+             :monotonic-view
+             :repeatable-read
+             :serializable
+             :snapshot-isolation
+             :strong-serializable
+             :strong-session-serializable
+             :strong-session-snapshot-isolation
+             :strong-snapshot-isolation
+             :update-serializable}}
+           res))))
 
 (deftest ww-wr-rw-item-test
   ; Full ww cycles are impossible if every key is mutated at most once (since
@@ -210,8 +252,42 @@
            ; T2 reads y, so T1  -> wr T2. However, it *fails* to observe z, which means T2 -rw-> T0
            {:process 1, :type :invoke, :f :txn, :value [[:r :y nil] [:r :z nil]]}
            {:process 1, :type :ok,     :f :txn, :value [[:r :y 1]   [:r :z nil]]}])
-        res (check h)]
-    (is (not (:valid? res)))
+        res (check {:directory "test-output/closed-predicate/ww-wr-rw-item"} h)]
+    (is (= {:valid? false,
+           :anomaly-types [:G-single],
+           :anomalies
+           {:G-single
+            [{:cycle [t2' t0' t1' t2']
+              :steps
+              [{:type :rw,
+                :key :z,
+                :value :elle/unborn,
+                :value' 0,
+                :a-mop-index 1,
+                :b-mop-index 0}
+               {:type :ww,
+                :key :x,
+                :value 0,
+                :value' :elle/dead,
+                :a-mop-index 0,
+                :b-mop-index 0}
+               {:type :wr,
+                :key :y,
+                :value 1,
+                :a-mop-index 1,
+                :b-mop-index 0}],
+              :type :G-single}]},
+           :not #{:consistent-view},
+           :also-not
+           #{:forward-consistent-view
+             :serializable
+             :snapshot-isolation
+             :strong-serializable
+             :strong-session-serializable
+             :strong-session-snapshot-isolation
+             :strong-snapshot-isolation
+             :update-serializable}}
+           res))
     ; This is G-single.
     (is (= [:G-single] (:anomaly-types res)))))
 
