@@ -248,7 +248,9 @@
             (if (= preceding target-version)
               v
               (recur v))
-            nil))))
+            ; Work around a bug in dom-top--fixed now; we can remove this in
+            ; the next release.
+            (do nil)))))
 
 (defn versions-after
   "Takes an all-versions map of keys to vectors of versions, a key, and a
@@ -673,6 +675,7 @@
   ([opts history]
    (let [history        (h/client-ops history)
          all-versions   (all-versions history)
+         ;_              (info :all-versions (with-out-str (pprint all-versions)))
          ext-writes     (ext-writes history)
          pred-read-miss (pred-read-miss-cases all-versions history)
          analysis     {:all-versions all-versions

@@ -361,3 +361,11 @@
              :strong-snapshot-isolation
              :update-serializable}}
            res))))
+
+;(deftest ^:focus unknown-test
+;  (let [[t0 t0' t1 t1' :as h]
+;        (h/history
+;          [])
+;        res (check {:directory "test-output/closed-predicate/unknown"} h)]
+;    (is (= {:valid? false}
+;           res))))
