@@ -696,12 +696,16 @@
      (ct/result-map opts anomalies))))
 
 (defn gen-key-type
-  "Is this key eligible for an :insert, :w, or :delete?"
-  [k]
-  (case (mod k 3)
-    0 :insert
-    1 :w
-    2 :delete))
+  "Is this key eligible for an :insert, :w, or :delete? Options:
+
+    :insert-only? If true, all keys are of type :insert."
+  [opts k]
+  (if (:insert-only? opts)
+    :insert
+    (case (mod k 3)
+      0 :insert
+      1 :w
+      2 :delete)))
 
 (defn gen-pred
   "Generates a random predicate."
@@ -719,29 +723,35 @@
   with an init operation, and then a series of transactions affecting various
   keys. Stops when no more mutations are possible. Options:
 
-    :key-count            Number of total keys in the test. Default: 99.
+    :insert-only?         If true, init creates nothing; the only writes
+                          possible are inserts. This might be helpful when you
+                          suspect anomalies are a consequence of reading state
+                          prior to the init txn. Default: false.
+
+    :key-count            Number of total keys in the test. Default: 50.
 
     :min-txn-length       Minimum number of operations per txn. Default: 1.
 
     :max-txn-length       Maximum number of operations per txn. Default: 4."
   ([opts]
-   (let [key-count      (:key-count opts 99)
+   (let [key-count      (:key-count opts 50)
          min-txn-length (:min-txn-length opts 1)
          max-txn-length (:max-txn-length opts 4)
          ; Start with an init txn. We want to mix inserts, writes, and deletes,
-         ; but we only get to do one mutation per key. We do inserts on key mod
-         ; 0, writes on key mod 1, deletes on key mod 2. Here's a set of
-         ; mutable keys:
-         ks  (shuffle (range key-count))]
+         ; but we only get to do one mutation per key. Ask gen-key-type what
+         ; kind of operation we'll do on each key, and create an init txn for
+         ; keys with writes and deletes.
+         ks  (shuffle (range key-count))
+         init-ks (filter (comp #{:w :delete} (partial gen-key-type opts)) ks)]
      (cons {:type  :invoke
             :f     :init
-            :value (zipmap
-                     (filter (comp #{:w :delete} gen-key-type) ks)
-                     ; Assign them random values, all 0 or 1.
-                     (repeatedly (partial rand-int 2)))}
+            :value (zipmap init-ks
+                           ; Assign them random values, all 0 or 1.
+                           (repeatedly (partial rand-int 2)))}
            (gen {:key-count      key-count
                  :min-txn-length min-txn-length
-                 :max-txn-length max-txn-length}
+                 :max-txn-length max-txn-length
+                 :insert-only?   (:insert-only? opts)}
                 {; Keys we can mutate
                  :ks         ks
                  ; Next value to write
@@ -769,7 +779,7 @@
                  1 (recur i' ks next-write (conj! txn [:rp (gen-pred) nil]))
                  ; Mutation
                  2 (let [[k & ks'] ks]
-                     (case (gen-key-type k)
+                     (case (gen-key-type opts k)
                        :insert (recur i' ks' (inc next-write)
                                       (conj! txn [:insert k next-write]))
                        :w (recur i' ks' (inc next-write)
