@@ -165,12 +165,16 @@
            (loop [i 0]
              (if (= i (count txn))
                -1
-               (let [[f k v'] (nth txn i)]
-                 (case f
-                   :w      (if (= v v')                  i (recur (inc i)))
-                   :insert (if (= v v')                  i (recur (inc i)))
-                   :delete (if (identical? v :elle/dead) i (recur (inc i)))
-                   (recur (inc i)))))))))
+               (let [[f k' v'] (nth txn i)]
+                 (if (not= k k')
+                   ; Wrong key
+                   (recur (inc i))
+                   ; Right key
+                   (case f
+                     :w      (if (= v v')                  i (recur (inc i)))
+                     :insert (if (= v v')                  i (recur (inc i)))
+                     :delete (if (identical? v :elle/dead) i (recur (inc i)))
+                     (recur (inc i))))))))))
 
 (defn conj-version
   "Takes an all-versions map of keys to vectors of versions those keys took on,
@@ -546,14 +550,14 @@
           (loopr []
                  [mop   (filter pred-mop? (:value b))
                   [k v] (version-set all-versions mop)]
-                 (do (if (= v (get writes k))
-                       {:type  :wr
-                        :key   k
-                        :value v
-                        :predicate-read mop
-                        :a-mop-index (write-mop-index a k v)
-                        :b-mop-index (index-of (:value b) mop)}
-                       (recur)))))))
+                 (if (= v (get writes k))
+                   {:type  :wr
+                    :key   k
+                    :value v
+                    :predicate-read mop
+                    :a-mop-index (write-mop-index a k v)
+                    :b-mop-index (index-of (:value b) mop)}
+                   (recur))))))
 
   (render-explanation [_ {:keys [key value predicate-read]} a-name b-name]
     (if predicate-read

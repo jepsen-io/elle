@@ -91,6 +91,13 @@
     (is (= true  (eval-pred [:mod 3 2] 5)))
     (is (= false (eval-pred [:mod 3 2] 6)))))
 
+(deftest write-mop-index-test
+  (let [op {:f :txn, :value [[:delete 38 nil] [:w 31 8] [:delete 26 nil] [:insert 40 9]]}]
+    (is (= 0 (write-mop-index op 38 :elle/dead)))
+    (is (= 1 (write-mop-index op 31 8)))
+    (is (= 2 (write-mop-index op 26 :elle/dead)))
+    (is (= 3 (write-mop-index op 40 9)))))
+
 (deftest g1c-predicate-read-seen-test
   (let [[t1 t1' t2 t2' :as h]
         (h/history
@@ -362,10 +369,47 @@
              :update-serializable}}
            res))))
 
-;(deftest ^:focus unknown-test
-;  (let [[t0 t0' t1 t1' :as h]
-;        (h/history
-;          [])
-;        res (check {:directory "test-output/closed-predicate/unknown"} h)]
-;    (is (= {:valid? false}
-;           res))))
+(deftest g1c-multi-key-delete-test
+  ; A G1c cycle where T2 deletes two keys (38 and 26), and the delete of 38
+  ; occurs after T1's predicate read, but the delete of 26 occurs *before* it.
+  (let [[t0 t0' t1 t1' t2 t2' :as h]
+        (h/history
+          [{:type :invoke, :process 2, :f :init, :value {26 0, 31 0, 38 0}}
+           {:type :ok, :process 2, :f :init, :value {26 0, 38 0}}
+           {:type :invoke, :process 2, :f :txn, :value [[:delete 38] [:w 31 8] [:delete 26] [:w 40 9]]}
+           {:type :ok, :process 2, :f :txn, :value [[:delete 38 nil] [:w 31 8] [:delete 26 nil] [:w 40 9]]}
+           {:type :invoke, :process 3, :f :txn, :value [[:rp :true nil]]}
+           {:type :ok, :process 3, :f :txn, :value [[:rp :true {31 0, 38 0}]]}])
+        res (check {:directory "test-output/closed-predicate/g1c-multi-key-delete-test"} h)]
+    (is (= {:valid? false,
+           :anomaly-types [:G-single],
+           :anomalies
+           {:G-single
+            [{:cycle [t2' t1' t2']
+              :steps
+              [{:type :rw,
+                :key 38,
+                :value 0,
+                :value' :elle/dead,
+                :predicate? true,
+                :predicate-read [:rp :true {31 0, 38 0}],
+                :a-mop-index 0,
+                :b-mop-index 0}
+               {:type :wr,
+                :key 26,
+                :value :elle/dead,
+                :predicate-read [:rp :true {31 0, 38 0}],
+                :a-mop-index 2,
+                :b-mop-index 0}],
+              :type :G-single}]},
+           :not #{:consistent-view},
+           :also-not
+           #{:forward-consistent-view
+             :serializable
+             :snapshot-isolation
+             :strong-serializable
+             :strong-session-serializable
+             :strong-session-snapshot-isolation
+             :strong-snapshot-isolation
+             :update-serializable}}
+           res))))
