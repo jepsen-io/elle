@@ -458,7 +458,9 @@
       (str a-name " performed a predicate read " (pr-str predicate-read)
            " of key " (pr-str key) " and selected version " (pr-str value)
            ", which was overwritten by " b-name "'s write of " value'
-           ", which also changed whether the predicate would have matched")
+           ", which also changed whether the predicate would have matched. "
+           "Note that key " (pr-str key) "'s version order was "
+           (pr-str (get all-versions key)))
       (str a-name " read key " (pr-str key) " = " (pr-str value)
            ", which was overwritten by " b-name "'s write of " value'))))
 
@@ -557,7 +559,8 @@
     (if predicate-read
       (str a-name " set key " (pr-str key) " to " (pr-str value)
            ", which was in the version set of predicate read "
-           (pr-str predicate-read))
+           (pr-str predicate-read) ". Note that the version order of key "
+           (pr-str key) " was " (pr-str (get all-versions key)))
       (str a-name " wrote " (pr-str key) " = " (pr-str value)
            ", which was read by " b-name))))
 
