@@ -749,9 +749,10 @@
          init-ks (filter (comp #{:w :delete} (partial gen-key-type opts)) ks)]
      (cons {:type  :invoke
             :f     :init
-            :value (zipmap init-ks
-                           ; Assign them random values, all 0 or 1.
-                           (repeatedly (partial rand-int 2)))}
+            :value (into (sorted-map)
+                         (zipmap init-ks
+                                 ; Assign them random values, all 0 or 1.
+                                 (repeatedly (partial rand-int 2))))}
            (gen {:key-count      key-count
                  :min-txn-length min-txn-length
                  :max-txn-length max-txn-length
