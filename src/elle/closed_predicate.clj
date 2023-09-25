@@ -101,7 +101,6 @@
                   [rw-register :as rw-register]
                   [txn :as ct]
                   [util :as util :refer [index-of]]]
-            [tesser [core :as t]]
             [slingshot.slingshot :refer [try+ throw+]]
             [jepsen [history :as h]
                     [txn :as txn]]))
@@ -341,8 +340,9 @@
   *must* have observed something (e.g. because every known version of a key
   matched the predicate), but that key didn't appear in the read set."
   [all-versions history]
-  (->> (t/filter h/ok?)
-       (t/mapcat
+  (->> history
+       h/oks
+       (mapcat
          (fn per-op [op]
            ; For every predicate read, and every key in the universe...
            (loopr [errs (transient [])]
@@ -361,8 +361,6 @@
                                      :versions  versions}))
                       (recur errs)))
                   (persistent! errs))))
-       (t/into [])
-       (h/tesser history)
        util/empty->nil))
 
 (defn version-set
@@ -405,7 +403,19 @@
                          ; Ambiguous.
                          vset))))))))
 
-(defrecord RWExplainer [all-versions]
+(defn version-sets
+  "We need to use the version sets of predicate reads repeatedly. To speed
+  this up, we construct a cache which maps micro-operations to version sets."
+  [all-versions history]
+  (loopr [vsets (transient {})]
+         [op  (->> history h/oks (h/filter-f :txn))
+          mop (filter pred-mop? (:value op))]
+         (recur (if (contains? vsets mop)
+                  vsets
+                  (assoc! vsets mop (version-set all-versions mop))))
+         (persistent! vsets)))
+
+(defrecord RWExplainer [all-versions vsets]
   elle/DataExplainer
   (explain-pair-data [_ a b]
     (let [b-writes (ext-writes-op b)]
@@ -434,7 +444,7 @@
           (loopr []
                  [mop (filter pred-mop? (:value a))]
                  (let [[_ pred] mop
-                       vset     (version-set all-versions mop)]
+                       vset     (vsets mop)]
                    ; Loop over b's external writes
                    (or (loopr []
                               [[k v'] b-writes]
@@ -479,7 +489,7 @@
   included version x1, and T2 installs some x2, and x1 << x2 in the version
   order, and T2 changed whether P matched: that is, P matches x1 but not x2, or
   P matches x2 but not x1."
-  [{:keys [all-versions ext-writes]} history]
+  [{:keys [all-versions vsets ext-writes]} history]
   {:graph
    (loopr [g (g/linear (g/digraph))]
           [op          (h/oks history)
@@ -505,7 +515,7 @@
               :rp (let [[f pred] mop]
                     (loopr [g g]
                            ; For each version in the version set
-                           [[k v] (version-set all-versions mop)
+                           [[k v] (vsets mop)
                             ; And every version following it in the version
                             ; order
                             v'    (versions-after all-versions k v)]
@@ -527,9 +537,9 @@
           ; Later we should break out predicate vs non-predicate deps so we can
           ; distinguish G2 from G2-item?
           (g/named-graph :rw (g/forked g)))
-   :explainer (RWExplainer. all-versions)})
+   :explainer (RWExplainer. all-versions vsets)})
 
-(defrecord WRExplainer [all-versions]
+(defrecord WRExplainer [all-versions vsets]
   elle/DataExplainer
   (explain-pair-data [_ a b]
     ; Try for an item dependency
@@ -549,7 +559,7 @@
           ; Barring that, a predicate dependency
           (loopr []
                  [mop   (filter pred-mop? (:value b))
-                  [k v] (version-set all-versions mop)]
+                  [k v] (vsets mop)]
                  (if (= v (get writes k))
                    {:type  :wr
                     :key   k
@@ -574,7 +584,7 @@
   performs a standard (e.g. non-predicate) read of. T1 -wrp-> T2 if T1 installs
   some version x1 and T2 performs a predicate read [:rp pred ...] and x1 is in
   VSet(pred)."
-  [{:keys [all-versions ext-writes]} history]
+  [{:keys [all-versions vsets ext-writes]} history]
   {:graph
    (loopr [g (g/linear (g/digraph))]
           [op               (h/oks history)
@@ -592,7 +602,7 @@
                      g))
               ; Predicate read
               :rp (loopr [g g]
-                         [[k v] (version-set all-versions mop)]
+                         [[k v] (vsets mop)]
                          (recur
                            (if (identical? v :elle/unborn)
                              ; Don't bother generating an edge; we don't
@@ -608,7 +618,7 @@
               ; Some other mop
               g))
           (g/named-graph :wr (g/forked g)))
-   :explainer (WRExplainer. all-versions)})
+   :explainer (WRExplainer. all-versions vsets)})
 
 (defrecord WWExplainer [all-versions]
   elle/DataExplainer
@@ -683,9 +693,11 @@
    (let [history        (h/client-ops history)
          all-versions   (all-versions history)
          ;_              (info :all-versions (with-out-str (pprint all-versions)))
+         vsets          (version-sets all-versions history)
          ext-writes     (ext-writes history)
          pred-read-miss (pred-read-miss-cases all-versions history)
          analysis     {:all-versions all-versions
+                       :vsets        vsets
                        :ext-writes   ext-writes}
          analyzers    (into [(partial graph analysis)]
                             (ct/additional-graphs opts))
