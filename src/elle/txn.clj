@@ -841,7 +841,7 @@
 (defn fresh-key
   "Takes a key and a vector of active keys. Returns the vector with that key
   replaced by a fresh key."
-  [^java.util.Collection active-keys k]
+  [^java.util.List active-keys k]
   (let [i (.indexOf active-keys k)
         k' (inc (reduce max active-keys))]
     (assoc active-keys i k')))

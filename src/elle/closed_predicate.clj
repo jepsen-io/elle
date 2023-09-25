@@ -718,7 +718,7 @@
   [opts k]
   (if (:insert-only? opts)
     :insert
-    (case (mod k 3)
+    (case (long (mod k 3))
       0 :insert
       1 :w
       2 :delete)))
@@ -726,7 +726,7 @@
 (defn gen-pred
   "Generates a random predicate."
   []
-  (case (rand-int 3)
+  (case (long (rand-int 3))
     ; Equality: either 0 or 1, our initial values.
     0 [:= (rand-int 2)]
     ; Modulo: mod 2 should be either 0 or 1.
@@ -788,7 +788,7 @@
                    (gen opts {:ks ks, :next-write next-write}))
              ; Read, predicate reads, or mutation?
              (let [i' (dec i)]
-               (case (rand-int 3)
+               (case (long (rand-int 3))
                  ; Read
                  0 (recur i' ks next-write
                           (conj! txn [:r (rand-int key-count) nil]))
