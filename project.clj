@@ -1,4 +1,4 @@
-(defproject elle "0.1.8-SNAPSHOT"
+(defproject elle "0.1.8"
   :description "Black-box transactional consistency checker, based on cycle detection"
   :url "https://github.com/jepsen-io/elle"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
