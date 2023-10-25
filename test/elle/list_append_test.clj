@@ -389,12 +389,12 @@
               :anomalies      {:empty-transaction-graph true}
               ; Right now, it'll see that it's not RC/RA, though it won't tell
               ; you WHY.
-              :not #{:read-atomic :read-committed}}
+              :not #{:read-committed}}
              (c {:consistency-models [:read-uncommitted]} h)))
       ; Read-committed will, of course
       (is (= {:valid? false
               :anomaly-types  [:G1a :empty-transaction-graph]
-              :not            #{:read-committed :read-atomic}
+              :not            #{:read-committed}
               :anomalies {:empty-transaction-graph true
                           :G1a [{:op      t2
                                  :writer  t1
@@ -408,13 +408,13 @@
               :anomalies {:empty-transaction-graph true}
               ; Right now, it'll see that it's not RC/RA, though it won't tell
               ; you WHY.
-              :not #{:read-atomic :read-committed}}
+              :not #{:read-committed}}
              (c {:consistency-models nil, :anomalies [:G2]} h)))
       ; But a repeatable-read checker will see it, because they prohibit both
       ; G1 and G2-item.
       (is (= {:valid? false
               :anomaly-types  [:G1a :empty-transaction-graph]
-              :not            #{:read-committed :read-atomic}
+              :not            #{:read-committed}
               :anomalies {:empty-transaction-graph true
                           :G1a [{:op      t2
                                  :writer  t1
@@ -714,7 +714,7 @@
           (h/history (h/strip-indices [t1 t2 t3 t4 t5]))]
       (is (= {:valid? false
               :anomaly-types [:G1c :incompatible-order]
-              :not           #{:read-committed :read-atomic}
+              :not           #{:read-committed}
               :anomalies
               {:incompatible-order [{:key :x, :values [[1 3] [1 2 3]]}]
                :G1c [{:cycle [t3 t1 t2 t3]
@@ -757,7 +757,7 @@
                                          (op 2 :ok   "rx12")])]
         (is (= {:valid? false
                 :anomaly-types [:dirty-update]
-                :not           #{:read-committed :read-atomic}
+                :not           #{:read-committed}
                 :anomalies {:dirty-update [{:key        :x
                                             :values     [1 2]
                                             :txns       [t1 '... t2]}]}}
@@ -771,7 +771,7 @@
                         (op 3 :ok   "rx123")])]
         (is (= {:valid? false
                 :anomaly-types [:dirty-update]
-                :not           #{:read-committed :read-atomic}
+                :not           #{:read-committed}
                 :anomalies {:dirty-update [{:key        :x
                                             :values     [1 2 3]
                                             :txns       [t1 '... t3]}]}}
@@ -817,7 +817,7 @@
       (is (= {:valid?         false
               :anomaly-types  [:internal]
               ; Read-atomic ruled out by internal, read-uncommitted by the G0.
-              :not            #{:read-atomic :read-uncommitted}
+              :not            #{:read-uncommitted}
               :anomalies      {:internal [{:op t2
                                            :mop [:r :x [1 2 3 4]]
                                            :expected '[... 3]}]}}

@@ -242,7 +242,12 @@
              :strong-session-serializable
              :strong-session-snapshot-isolation
              :strong-snapshot-isolation
-             :update-serializable}}
+             :update-serializable
+             :ROLA
+             :causal-cerone
+             :parallel-snapshot-isolation
+             :prefix
+             :read-atomic}}
            res))))
 
 (deftest ww-wr-rw-item-test

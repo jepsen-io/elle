@@ -152,8 +152,10 @@
                         ; I think long fork explicitly looks like inconsistent
                         ; version orders. Then again, it's not so much that the
                         ; version orders themselves are inconsistent, as the
-                        ; transactions using those orders are.
-                        ; :parallel-snapshot-isolation
+                        ; transactions using those orders are. OTOH, if we've
+                        ; invalidated read committed, then we've also broken
+                        ; read atomic, and that covers the various SIs!
+                        :parallel-snapshot-isolation
                         :repeatable-read
                         :serializable
                         :strong-serializable
@@ -166,7 +168,12 @@
                         :monotonic-view
                         :strong-session-serializable
                         :strong-session-snapshot-isolation
-                        :strong-snapshot-isolation}}
+                        :strong-snapshot-isolation
+                        :ROLA
+                        :causal-cerone
+                        :prefix
+                        :read-atomic
+                        }}
            (friendly-boundary [:cyclic-versions]))))
 
   (testing "internal"
@@ -184,8 +191,9 @@
            (friendly-boundary [:internal]))))
 
   (testing "G1a"
-    (is (= {:not      #{:read-atomic :read-committed}
-            :also-not #{:ROLA :causal-cerone :consistent-view :cursor-stability
+    (is (= {:not      #{:read-committed}
+            :also-not #{:read-atomic
+                        :ROLA :causal-cerone :consistent-view :cursor-stability
                         :forward-consistent-view :monotonic-atomic-view
                         :monotonic-snapshot-read :monotonic-view
                         :parallel-snapshot-isolation :prefix :repeatable-read

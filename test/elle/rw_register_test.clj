@@ -396,7 +396,7 @@
             [t2 t1 :as h] (h/history [t2 t1])]
         (is (= {:valid? false
                 :anomaly-types [:G1a :empty-transaction-graph]
-                :not           #{:read-atomic :read-committed}
+                :not           #{:read-committed}
                 :anomalies {:empty-transaction-graph true
                             :G1a [{:op      t2
                                    :writer  t1

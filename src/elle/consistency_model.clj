@@ -31,6 +31,8 @@
 
   - Cahill, 'Serializable Isolation for Snapshot Databases' (http://hdl.handle.net/2123/5353)
 
+  - Elnikety, Pedone, Zwaenepoel, 'Generalized Snapshot Isolation and a Prefix-Consistent Implementation' (https://www.inf.usi.ch/faculty/pedone/Paper/2004/IC_TECH_REPORT_200421.pdf)
+
   ## Choices
 
   -  When we say 'serializability', we follow Bernstein et al in meaning
@@ -213,6 +215,10 @@
         :monotonic-snapshot-read [:PL-2]                      ; Adya
         :parallel-snapshot-isolation [:causal-cerone]         ; Cerone, ROLA
         :prefix                 [:causal-cerone]              ; Cerone
+        :read-atomic            [; EXT guarantees atomic visibility, and
+                                 ; monotonicity within the txn is trivially
+                                 ; satisfied by INT
+                                 :monotonic-atomic-view]      ; Cerone
         :read-committed         [:read-uncommitted]           ; SQL
         :repeatable-read        [:cursor-stability            ; Adya
                                  :monotonic-atomic-view]      ; Bailis
@@ -333,7 +339,7 @@
   (->> {
         :causal-cerone             [:internal :G1a]    ; Cerone (incomplete)
         :cursor-stability          [:G1 :G-cursor      ; Adya
-                                    :lost-update]      ; Bailis
+                                    :lost-update]      ; Adya, Bailis
         :monotonic-view            [:G1 :G-monotonic]  ; Adya
         :monotonic-snapshot-read   [:G1 :G-MSR]        ; Adya
         :consistent-view           [:G1 :G-single]     ; Adya
