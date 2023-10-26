@@ -56,7 +56,8 @@
   aborted reads. If G1a is present, so is G1, because G1 is defined as the
   union of G1a, G1b, and G1c."
   (g/map->bdigraph
-    {:G0          [:G1c] ; Adya
+    {:G0          [:G1c ; Adya
+                   :G0-process] ; G0 is a trivial G0-process
      ; Since processes are singlethreaded
      :G0-process  [:G1c-process :G0-realtime]
      :G0-realtime [:G1c-realtime]
@@ -64,10 +65,13 @@
      ; G1 is defined in terms of these three anomalies.
      :G1a [:G1]
      :G1b [:G1]
-     :G1c [:G1]
+     :G1c [:G1           ; Adya
+           :G1c-process] ; G1c is a trivial G1c-process]
+
      ; Since processes are singlethreaded
      :G1c-process  [:G1c-realtime :G1-process]
      :G1c-realtime [:G1-realtime]
+     :G1           [:G1-process] ; Trivial
      :G1-process   [:G1-realtime]
 
      ; G-single is a special case of G-nonadjacent
@@ -75,17 +79,19 @@
                          ; Adya; if there's a cycle with one rw edge in DSG,
                          ; must be one in SSG as well. Not sure about
                          ; process/RT variants of this.
-                         :GSIb]
+                         :GSIb
+                         :G-single-process] ; Trivial
      :G-single-process  [:G-nonadjacent-process :G-single-realtime]
      :G-single-realtime [:G-nonadjacent-realtime]
 
-     ; And G-nonadjacent is, in turn, a special case of G2
-     :G-nonadjacent           [:G2]
+     :G-nonadjacent           [:G2                     ; Adya
+                               :G-nonadjacent-process] ; Trivial
      :G-nonadjacent-process   [:G2-process :G-nonadjacent-realtime]
      :G-nonadjacent-realtime  [:G2-realtime]
 
-     ; Every G2-item is also a G2, by definition
-     :G2-item           [:G2]
+     :G2                [:G2-process]      ; Trivial
+     :G2-item           [:G2               ; Adya
+                         :G2-item-process] ; Trivially
      :G2-item-process   [:G2-process :G2-item-realtime]
      :G2-item-realtime  [:G2-realtime]
 

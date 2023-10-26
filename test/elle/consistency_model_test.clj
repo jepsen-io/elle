@@ -65,7 +65,8 @@
                :G0
                :cyclic-versions
                :duplicate-elements
-               :incompatible-order}
+               :incompatible-order
+               :future-read}
              (as [:read-committed]))))
 
   (testing "unknown anomaly"
