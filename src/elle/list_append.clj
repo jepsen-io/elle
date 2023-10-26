@@ -2,7 +2,9 @@
   "Detects cycles in histories where operations are transactions over named
   lists lists, and operations are either appends or reads."
   (:refer-clojure :exclude [test])
-  (:require [clojure [pprint :refer [pprint]]
+  (:require [bifurcan-clj [core :as b]
+                          [map :as bm]]
+            [clojure [pprint :refer [pprint]]
                      [set :as set]
                      [string :as str]]
             [clojure.core.reducers :as r]
@@ -142,49 +144,91 @@
   "A marker we use in a list to identify an unknown prefix."
   '...)
 
-(defn op-internal-case
-  "Given an op, returns a map describing internal consistency violations, or
-  nil otherwise. Our maps are:
+(defn op-int-case
+  "Given an op, returns a map describing an internal consistency violation, or
+  nil otherwise.
 
       {:op        The operation which went wrong
        :mop       The micro-operation which went wrong
        :expected  The state we expected to observe. Either a definite list
                   like [1 2 3] or a postfix like ['... 3]}"
-  [op]
+  [^Op op]
   ; We maintain a map of keys to expected states.
-  (->> (:value op)
-       (reduce (fn [[state error] [f k v :as mop]]
-                 (case f
-                   :append [(assoc! state k
-                                    (conj (or (get state k [unknown-prefix]) []) v))
-                            error]
-                   :r      (let [s (get state k)]
-                             (if (and s ; We have an expected state
-                                      (if (= unknown-prefix (first s))
-                                        ; We don't know the prefix.
-                                        (let [i (- (inc (count v)) (count s))]
-                                          (or (neg? i) ; Bounds check
-                                              (not= (subvec s 1) ; Postfix =
-                                                    (subvec v i))))
-                                        ; We do know the full state for k
-                                        (not= s v)))
-                               ; Not equal!
-                               (reduced [state
-                                         {:op       op
-                                          :mop      mop
-                                          :expected s}])
-                               ; OK, or we just don't know
-                               [(assoc! state k v) error]))))
-               [(transient {}) nil])
-       second))
+  (loopr [state (transient {})]
+         [[f k v :as mop] (.value op)]
+         (case f
+           :append
+           (recur (assoc! state k
+                          (conj (or (get state k [unknown-prefix]) []) v)))
+
+           :r
+           (let [s (get state k)]
+             (if (and s ; We have an expected state
+                      (if (= unknown-prefix (first s))
+                        ; We don't know the prefix.
+                        (let [i (- (inc (count v)) (count s))]
+                          (or (neg? i) ; Bounds check
+                              (not= (subvec s 1) ; Postfix =
+                                    (subvec v i))))
+                        ; We do know the full state for k
+                        (not= s v)))
+               ; Not equal!
+               {:op       op
+                :mop      mop
+                :expected s}
+               ; OK, or we just don't know
+               (recur (assoc! state k v)))))
+         nil))
+
+(defn op-future-read-case
+  "Given an op, returns a map describing a future read, or nil otherwise.
+
+      {:op      The operation which went wrong
+       :mop     The micro-operation (a read) which observed a future write
+       :element The specific element we'll later write}"
+  [^Op op]
+  (loopr [reads (b/linear bm/empty)] ; k -> element -> read-mop
+         [[f k v :as mop] (.value op)]
+         (case f
+           :append ; Did we read this before writing it?
+           (if-let [read (-> reads (bm/get k bm/empty) (bm/get v nil))]
+             {:op      op
+              :mop     read
+              :element v}
+             (recur reads))
+
+           :r
+           (recur
+             (loopr [k-reads (bm/get reads k (b/linear bm/empty))]
+                    [element v]
+                    (recur (bm/put k-reads element mop (fn [a b] a)))
+                    (bm/put reads k k-reads))))
+         nil))
 
 (defn internal-cases
-  "Given a history, finds operations which exhibit internal consistency
-  violations: e.g. some read [:r k v] in the transaction fails to observe a v
-  consistent with that transaction's previous append operations, including
-  whatever (initially unknown) state k began with."
+  "Given a history, finds operations which exhibit consistency violations
+  detectable within a single transaction. Returns a map with up to two keys,
+  each containing a sequence of anomaly maps.
+
+  :internal    A straightforward adaptation of Cerone, Bernardi, and Gotsman's
+               axiom INT, from 'A Framework for Transactional Consistency
+               Models with Atomic Visibility'. A transaction reads a value
+               which is inconsistent with its own most recent read or write to
+               that key.
+
+  :future-read A transaction observes a write it will later perform. This is
+               not a violation of INT! in Cerone et al it is, I believe, a
+               violation of EXT."
   [history]
-  (ct/ok-keep op-internal-case history))
+  (let [{:keys [internal future-read]}
+        (->> (t/filter h/ok?)
+                  (t/fuse
+                    {:internal    (t/into [] (t/keep op-int-case))
+                     :future-read (t/into [] (t/keep op-future-read-case))})
+                  (h/tesser history))]
+    (cond-> {}
+      (seq internal)    (assoc :internal internal)
+      (seq future-read) (assoc :future-read future-read))))
 
 (defn prefix?
   "Given two sequences, returns true iff A is a prefix of B."
@@ -911,7 +955,7 @@
          anomalies (cond-> cycles
                      @dups          (assoc :duplicate-elements @dups)
                      @incmp-order   (assoc :incompatible-order @incmp-order)
-                     @internal      (assoc :internal @internal)
+                     @internal      (merge @internal)
                      @dirty-update  (assoc :dirty-update @dirty-update)
                      @g1a           (assoc :G1a @g1a)
                      @g1b           (assoc :G1b @g1b)

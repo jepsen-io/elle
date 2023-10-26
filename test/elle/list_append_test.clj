@@ -263,17 +263,17 @@
 
 (deftest internal-cases-test
   (testing "empty"
-    (is (= nil (internal-cases (h/history [])))))
+    (is (= {} (internal-cases (h/history [])))))
 
   (testing "good"
-    (is (= nil (internal-cases (h/history
-                                 [{:process 0,
-                                   :type :ok,
-                                   :value [[:r :y [5 6]]
-                                           [:append :x 3]
-                                           [:r :x [1 2 3]]
-                                           [:append :x 4]
-                                           [:r :x [1 2 3 4]]]}])))))
+    (is (= {} (internal-cases (h/history
+                                [{:process 0,
+                                  :type :ok,
+                                  :value [[:r :y [5 6]]
+                                          [:append :x 3]
+                                          [:r :x [1 2 3]]
+                                          [:append :x 4]
+                                          [:r :x [1 2 3 4]]]}])))))
 
   (testing "read-append-read"
     (let [[stale bad-prefix extension short-read :as h]
@@ -289,18 +289,18 @@
                       {:process 0, :type :ok, :value [[:r :x [1 2]]
                                                       [:append :x 3]
                                                       [:r :x [1]]]}])]
-    (is (= [{:op stale
-             :mop [:r :x [1 2]]
-             :expected [1 2 3]}
-            {:op bad-prefix
-             :mop [:r :x [0 2 3]]
-             :expected [1 2 3]}
-            {:op extension
-             :mop [:r :x [1 2 3 4]]
-             :expected [1 2 3]}
-            {:op short-read
-             :mop [:r :x [1]]
-             :expected [1 2 3]}]
+      (is (= {:internal [{:op stale
+                          :mop [:r :x [1 2]]
+                          :expected [1 2 3]}
+                         {:op bad-prefix
+                          :mop [:r :x [0 2 3]]
+                          :expected [1 2 3]}
+                         {:op extension
+                          :mop [:r :x [1 2 3 4]]
+                          :expected [1 2 3]}
+                         {:op short-read
+                          :mop [:r :x [1]]
+                          :expected [1 2 3]}]}
            (internal-cases h)))))
 
   (testing "append-read"
@@ -309,12 +309,12 @@
                                                       [:r :x [1 2 3 4]]]}
                       {:process 0, :type :ok, :value [[:append :x 3]
                                                       [:r :x []]]}])]
-    (is (= [{:op disagreement
-             :mop [:r :x [1 2 3 4]]
-             :expected ['... 3]}
-            {:op short-read
-             :mop [:r :x []]
-             :expected ['... 3]}]
+      (is (= {:internal [{:op disagreement
+                          :mop [:r :x [1 2 3 4]]
+                          :expected ['... 3]}
+                         {:op short-read
+                          :mop [:r :x []]
+                          :expected ['... 3]}]}
            (internal-cases h)))))
 
   (testing "FaunaDB example"
@@ -324,9 +324,24 @@
               :process 1, :index 20, :time 1}
              {:type :ok, :f :txn, :value [[:append 0 6] [:r 0 nil]]
               :process 1, :index 21, :time 2}])]
-      (is (= [{:expected '[... 6],
-               :mop [:r 0 nil],
-               :op t2}]
+      (is (= {:internal [{:expected '[... 6],
+                          :mop [:r 0 nil],
+                          :op t2}]}
+             (internal-cases h)))))
+
+  (testing "future read external"
+    (let [[t1 t1' :as h]
+          (h/history (pair (op "rx012ax1")))]
+      (is (= {:future-read [{:op t1'
+                             :mop [:r :x [0 1 2]]
+                             :element 1}]}
+             (internal-cases h)))))
+
+  (testing "future read internal"
+    (let [[t1 t1' :as h] (h/history (pair (op "ax1rx01ax0ax3")))]
+      (is (= {:future-read [{:op t1'
+                             :mop [:r :x [0 1]]
+                             :element 0}]}
              (internal-cases h))))))
 
 (defn c
@@ -1060,6 +1075,25 @@
            :not #{:strong-session-snapshot-isolation
                   :strong-session-serializable}}
            (c {:consistency-models [:strong-session-snapshot-isolation]} h)))))
+
+(deftest future-read-test
+  ; When a transaction performs an external read of its own external writes, we
+  ; consider that also a violation of internal consistency. Why? Writes are
+  ; unique.
+  (let [[t0 t0' :as h]
+        (h/history
+          [{:process 0, :type :invoke, :f :txn, :value [[:r :x [1]] [:append :x 1]]}
+           {:process 0, :type :ok,     :f :txn, :value [[:r :x [1]] [:append :x 1]]}])]
+  (is (= {:valid? false
+          :anomaly-types [:empty-transaction-graph :future-read],
+          :anomalies
+          {:empty-transaction-graph true
+           :future-read
+           [{:op t0'
+             :mop [:r :x [1]]
+             :element 1}]}
+          :not #{:read-committed}}
+         (c {:consistency-models [:read-committed]} h)))))
 
 (deftest ^:perf scc-search-perf-test
   ; A case where even small SCCs caused the cycle search to time out

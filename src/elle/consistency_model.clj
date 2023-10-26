@@ -109,6 +109,13 @@
      ; from the same timeline. This implies a dirty read.
      :incompatible-order [:G1a]
 
+     ; Our dependency graphs never contain self-edges. However, a future read
+     ; is essentially a trivial cycle in which T1 -wr-> T1. The degenerate case
+     ; is that it externally reads one of its own external effects. It's also
+     ; possible to perform an internal read which observes internal writes from
+     ; later in the transaction. Both of these are essentially G1c.
+     :future-read [:G1c]
+
      ; Because we work in a richer data model than Adya, we have an extra class
      ; of anomaly that Adya doesn't: a dirty update. Dirty update is basically
      ; like a dirty read, except it affects writes as well. We say it implies a
@@ -388,7 +395,14 @@
                                     :G-nonadjacent
                                     ]
         :read-atomic               [:internal          ; Cerone (incomplete)
-                                    :G1a]              ; Cerone (incomplete)
+                                    :G1a               ; Cerone (incomplete)
+                                    ; Future read implies a violation of EXT,
+                                    ; because a read observed a value that was
+                                    ; written by the same transaction later,
+                                    ; which means it did *not* observe the
+                                    ; value from the previous txn in the
+                                    ; visibility order.
+                                    :future-read]       ; Cerone (incomplete)
         :repeatable-read           [:G1 :G2-item       ; Adya
                                     :lost-update]      ; Bailis
         :ROLA                      [:lost-update]      ; ROLA
@@ -403,9 +417,11 @@
         ; (G-single-realtime), and since we actually formalize this in SI as
         ; G-nonadjacent rather than just G-single, I'm going to include
         ; G-nonadjacent's realtime and process variants here too.
-        :strong-session-snapshot-isolation [:G1-process
+        :strong-session-snapshot-isolation [:internal
+                                            :G1-process
                                             :G-nonadjacent-process]
-        :strong-snapshot-isolation         [:G1-realtime
+        :strong-snapshot-isolation         [:internal
+                                            :G1-realtime
                                             :G-nonadjacent-realtime]
         :strong-session-serializable [:G1-process      ; Daudjee
                                       :G2-process]     ; Daudjee
