@@ -65,7 +65,10 @@
      :G1a [:G1]
      :G1b [:G1]
      :G1c [:G1]
-     :G1c-process  [:G1c-realtime]
+     ; Since processes are singlethreaded
+     :G1c-process  [:G1c-realtime :G1-process]
+     :G1c-realtime [:G1-realtime]
+     :G1-process   [:G1-realtime]
 
      ; G-single is a special case of G-nonadjacent
      :G-single          [:G-nonadjacent
@@ -400,9 +403,11 @@
         ; (G-single-realtime), and since we actually formalize this in SI as
         ; G-nonadjacent rather than just G-single, I'm going to include
         ; G-nonadjacent's realtime and process variants here too.
-        :strong-session-snapshot-isolation [:G-nonadjacent-process]
-        :strong-snapshot-isolation         [:G-nonadjacent-realtime]
-        :strong-session-serializable [:G1c-process     ; Daudjee
+        :strong-session-snapshot-isolation [:G1-process
+                                            :G-nonadjacent-process]
+        :strong-snapshot-isolation         [:G1-realtime
+                                            :G-nonadjacent-realtime]
+        :strong-session-serializable [:G1-process      ; Daudjee
                                       :G2-process]     ; Daudjee
         :update-serializable       [:G1 :G-update]     ; Adya
 

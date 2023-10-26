@@ -1027,9 +1027,39 @@
       (is (= {:valid? true}
              (c {} h))))))
 
-; Example of checking a file, for later
-;(deftest dirty-update-1-test
-;  (cf {} "histories/dirty-update-1.edn")))
+(deftest wr-process-test
+  ; An anomaly reported in https://github.com/jepsen-io/elle/issues/21. Elle
+  ; detected this as a violation of strong serializability, but did not
+  ; originally consider it a violation of strong session SI
+  (let [[t0 t0' t1 t1' t2 t2' :as h]
+        (h/history
+          [{:process 1, :type :invoke, :f :txn, :value [[:r :x] [:append :y 1]], :index 0}
+           {:process 1, :type :ok, :f :txn, :value [[:r :x [1]] [:append :y 1]], :index 1}
+           {:process 2, :type :invoke, :f :txn, :value [[:r :y]], :index 2}
+           {:process 2, :type :ok, :f :txn, :value [[:r :y [1]]], :index 3}
+           {:process 2, :type :invoke, :f :txn, :value [[:append :x 1]], :index 4}
+           {:process 2, :type :ok, :f :txn, :value [[:append :x 1]], :index 5}])]
+    (is (= {:valid? false
+            :anomaly-types [:G1c-process],
+           :anomalies
+           {:G1c-process
+            [{:cycle [t0' t1' t2' t0']
+              :steps
+              [{:type :wr,
+                :key :y,
+                :value 1,
+                :a-mop-index 1,
+                :b-mop-index 0}
+               {:type :process, :process 2}
+               {:type :wr,
+                :key :x,
+                :value 1,
+                :a-mop-index 0,
+                :b-mop-index 0}],
+              :type :G1c-process}]},
+           :not #{:strong-session-snapshot-isolation
+                  :strong-session-serializable}}
+           (c {:consistency-models [:strong-session-snapshot-isolation]} h)))))
 
 (deftest ^:perf scc-search-perf-test
   ; A case where even small SCCs caused the cycle search to time out
@@ -1086,4 +1116,8 @@
     (println (format "list-append-perf-test: %d ops run in %.2f s (%.2f ops/sec); checked in %.2f s (%.2f ops/sec)"
                      n run-time (/ n run-time)
                      check-time (/ n check-time)))))
+
+; Example of checking a file, for later
+;(deftest dirty-update-1-test
+;  (cf {} "histories/dirty-update-1.edn")))
 
