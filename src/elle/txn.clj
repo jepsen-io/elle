@@ -1,6 +1,9 @@
 (ns elle.txn
   "Functions for cycle analysis over transactional workloads."
-  (:require [clojure [pprint :refer [pprint]]
+  (:require [bifurcan-clj [core :as b]
+                          [graph :as bg]
+                          [set :as bs]]
+            [clojure [pprint :refer [pprint]]
                       [set :as set]]
             [clojure.tools.logging :refer [info warn]]
             [clojure.java.io :as io]
@@ -592,9 +595,10 @@
   1000)
 
 (defn cycle-cases-in-scc-fallback
-  "This finds SOME cycle via DFS in an SCC as a fallback, in case our BFS gets
-  stuck. We invoke this if our search times out."
-  [g fg pair-explainer scc]
+  "This finds SOME cycle via DFS in a graph (guaranteed to be strongly
+  connected), as a fallback in case our BFS gets stuck. We invoke this if our
+  search times out."
+  [g fg pair-explainer]
   (let [c (loop [rels [#{:ww}
                        #{:ww :realtime :process}
                        #{:ww :wr}
@@ -604,16 +608,15 @@
             (if-not (seq rels)
               ; Out of projections; fall back to the total scc, which
               ; MUST have a cycle.
-              (g/fallback-cycle g scc)
+              (g/fallback-cycle g)
 
               ; Try the graph which has just those relationships and
               ; that particular SCC
               (if-let [sub-scc (-> ^IGraph (fg (first rels))
-                                   (.select (g/->bset scc))
                                    (g/strongly-connected-components)
                                    first)]
                 ; Hey, we've got a smaller SCC to focus on!
-                (g/fallback-cycle g sub-scc)
+                (g/fallback-cycle g)
                 ; No dice
                 (recur (next rels)))))]
     (elle/explain-cycle cycle-explainer
@@ -621,8 +624,9 @@
                         c)))
 
 (defn cycle-cases-in-scc
-  "Searches a single SCC for cycle anomalies. See cycle-cases."
-  [opts g fg pair-explainer scc]
+  "Searches a graph restricted to single SCC for cycle anomalies. See
+  cycle-cases."
+  [opts g fg pair-explainer]
   (let [; We're going to do a partial search which can time out. If that
         ; happens, we want to preserve as many of the cycles that we found as
         ; possible, and offer an informative error message. These two variables
@@ -634,7 +638,7 @@
       ; If we time out...
       (let [types  @types
             cycles @cycles]
-        (info "Timing out search for" (peek types) "in SCC of" (count scc)
+        (info "Timing out search for" (peek types) "in SCC of" (b/size g)
               "transactions (checked" types ")")
         ;(info :scc
         ;      (with-out-str (pprint scc)))
@@ -644,8 +648,8 @@
         (concat [{:type               :cycle-search-timeout
                   :anomaly-spec-type  (peek types)
                   :does-not-contain   (drop-last types)
-                  :scc-size           (count scc)}
-                 (cycle-cases-in-scc-fallback g fg pair-explainer scc)]
+                  :scc-size           (b/size g)}
+                 (cycle-cases-in-scc-fallback g fg pair-explainer)]
                 ; Then any cycles we already found.
                 cycles))
       ; Now, try each type of cycle we can search for
@@ -662,7 +666,7 @@
       ; check for special-case anomalies before general ones, and only check for
       ; the general ones if we can't find special-case ones. e.g. if we find a
       ; g-single, there's no need to look for g-nonadjacent.
-      ;(info "Checking scc of size" (count scc))
+      ;(info "Checking scc of size" (b/size g))
       (doseq [[type spec] cycle-anomaly-specs]
         ; (info "Checking for" type)
         ; For timeout reporting, we keep track of what type of anomaly
@@ -682,16 +686,15 @@
               cycle (cond (:with spec)
                           (g/find-cycle-with (:with spec)
                                              (:filter-path-state spec)
-                                             g scc)
+                                             g)
 
                           (:rels spec)
-                          (g/find-cycle g scc)
+                          (g/find-cycle g)
 
                           true
                           (g/find-cycle-starting-with
                             (fg (:first-rels spec))
-                            (fg (:rest-rels spec))
-                            scc))]
+                            (fg (:rest-rels spec))))]
           ;_ (info "Done with cycle search")
           (when cycle
             ; (info "Explaining cycle")
@@ -708,16 +711,15 @@
               (swap! cycles conj ex)))))
       @cycles)))
 
-(defn cycle-cases
-  "We take the unified graph, a pair explainer that can justify relationships
-  between pairs of transactions, and a collection of strongly connected
-  components in the unified graph. We proceed to find allllll kinds of cycles,
-  returning a map of anomaly names to sequences of cycle explanations for each.
-  We find:
+(defn cycle-cases-in-graph
+  "Takes a search options map (see cycles), a pair explainer that
+  can justify relationships between pairs of transactions, and a graph. Returns
+  a map of anomaly names to sequences of cycle explanations for each. We find:
 
   :G0                 ww edges only
   :G1c                ww, at least one wr edge
   :G-single           ww, wr, exactly one rw
+  :G-nonadjacent      ww, wr, 2+ nonadjacent rw
   :G2-item            ww, wr, 2+ rw
   :G2                 ww, wr, 2+ rw, with predicate edges
 
@@ -725,12 +727,16 @@
   ...
 
   :G0-realtime        G0, but with realtime edges
-  ..."
-  [opts graph pair-explainer sccs]
+  ...
+
+  Note that while this works for any transaction graph, including the full
+  graph, we call this function with independent SCCs from the full graph.
+  There's no point in exploring beyond the bounds of a single SCC; there can't
+  possibly be a cycle out there. This means we can avoid materializing filtered
+  graphs and searching the entire graph."
+  [opts pair-explainer graph]
   (let [fg (-> (filtered-graphs graph) warm-filtered-graphs!)]
-    (->> sccs
-         (mapcat (partial cycle-cases-in-scc opts graph fg pair-explainer))
-         ; And group them by type
+    (->> (cycle-cases-in-scc opts graph fg pair-explainer)
          (group-by :type))))
 
 (defn cycles
@@ -739,13 +745,23 @@
   and a history. Analyzes the history and yields the analysis, plus an anomaly
   map like {:G1c [...]}."
   [opts analyzer history]
-  (let [; Analyze the history
+  (let [; Analyze the history.
         {:keys [graph explainer sccs] :as analysis}
         (elle/check- analyzer history)
+        ; TODO: just call (analyzer (h/client-ops history)) directly; we don't
+        ; need elle's core mechanism here.
 
-        ; Find anomalies
-        anomalies (cycle-cases opts graph explainer sccs)]
-    ;(prn :cycles)
+        ; Spawn a task to check each SCC
+        scc-tasks (mapv (fn per-scc [scc]
+                          (let [g (bg/select graph (bs/from scc))]
+                            (h/task history cycle-cases-in-graph []
+                                    (cycle-cases-in-graph opts explainer g))))
+                        sccs)
+
+        ; And merge together
+        anomalies (reduce (partial merge-with into)
+                          {}
+                          (map deref scc-tasks))]
     ;(pprint anomalies)
     ; Merge our cases into the existing anomalies map.
     (update analysis :anomalies merge anomalies)))

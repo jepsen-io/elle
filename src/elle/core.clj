@@ -25,7 +25,10 @@
   checker runs that function, identifies strongly-connected components in the
   resulting graph, and decides whether the history is valid based on whether
   the graph has any strongly connected components--e.g. cycles."
-  (:require [clojure.tools.logging :refer [info error warn]]
+  (:require [bifurcan-clj [core :as b]
+                          [graph :as bg]
+                          [set :as bs]]
+            [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
             [clojure [pprint :refer [pprint]]
                      [set :as set]
@@ -467,7 +470,8 @@
   component (a collection of ops) in that graph. Using those graphs, constructs
   a string explaining the cycle."
   [graph cycle-explainer pair-explainer scc]
-  (->> (g/find-cycle graph scc)
+  (->> (bg/select graph (bs/from scc))
+       g/find-cycle
        (explain-cycle cycle-explainer pair-explainer)
        (render-cycle-explanation cycle-explainer pair-explainer)))
 

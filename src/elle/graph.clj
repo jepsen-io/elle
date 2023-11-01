@@ -5,7 +5,10 @@
   We perform as much of our heavy lifting as possible in Bifurcan structures,
   then coerce them back to Clojure data structures for analysis, serialization,
   pretty-printing, etc."
-  (:require [clojure.tools.logging :refer [info error warn]]
+  (:require [bifurcan-clj [core :as b]
+                          [graph :as bg]
+                          [set :as bs]]
+            [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
             [dom-top.core :refer [loopr]]
             [elle.util :refer [map-vals maybe-interrupt]]
@@ -425,6 +428,47 @@
                (transient (vec (repeat (count mapping) nil)))
                mapping))]))
 
+(defn out+
+  "Like graph/out, but returns nil when the vertex does not exist, rather than
+  throwing."
+  [graph vertex]
+  ; TODO: if this is slow, consider trying bg/out directly and catching the
+  ; not-found case. My *guess* is that the double lookup is going to be
+  ; relatively fast and stay in cache, but the exception handler might be
+  ; cheaper.
+  (when (bs/contains? (bg/vertices graph) vertex)
+    (bg/out graph vertex)))
+
+(defn ^IGraph sequential-composition
+  "The sequential composition of two graphs A; B. Returns a graph C such
+  that iff x -> y in A, and y -> z in B, then x -> z in C. This is equivalent
+  to relational composition, treating each graph as a set of [in-vert out-vert]
+  pairs.
+
+  For now, we simply destroy edge values; it's not clear what the right
+  representation is."
+  [a b]
+  (loopr [c (b/linear (bg/digraph))]
+         [x->y (bg/edges a)
+          z    (out+ b (bg/edge-to x->y))]
+         (recur (bg/link c (bg/edge-from x->y) z))
+         (b/forked c)))
+
+(defn ^IGraph sequential-expansion
+  "Takes two graphs A and B. Returns A U (A; B): the union of A with the
+  sequential composition of A and B. In other words, takes A and expands it
+  with edges that represent a step through A, then a step through B.
+
+  This operation is particularly helpful in finding nonadjacent cycles: it
+  produces a graph where cycles are mostly in A, but can take non-adjacent
+  jumps through B."
+  [a b]
+  (loopr [c (b/linear (b/forked a))]
+         [x->y (bg/edges a)
+          z    (out+ b (bg/edge-to x->y))]
+         (recur (bg/link c (bg/edge-from x->y) z))
+         (b/forked c)))
+
 ; Advanced graph search
 ;
 ; Given a graph and a strongly connected component in it, we're interested in
@@ -543,10 +587,8 @@
   particular type. This fuction works like find-cycle, but allows you to pass
   *two* graphs: an initial graph, which is used for the first step, and a
   remaining graph, which is used for later steps."
-  [^IGraph initial-graph ^IGraph remaining-graph scc]
-  (let [scc   (->bset scc)
-        rg    (.select remaining-graph scc)
-        ; Think about the structure of these two graphs
+  [^IGraph initial-graph ^IGraph remaining-graph]
+  (let [; Think about the structure of these two graphs
         ;
         ;  I        R
         ; ┌── d ┆
@@ -570,7 +612,7 @@
         ; cycle. We therefore know that the first two vertices must be elements
         ; of both I *and* R. To encode this, we restrict I to only vertices
         ; present in R.
-        ig  (.select initial-graph (.vertices rg))]
+        ig  (.select initial-graph (.vertices remaining-graph))]
     ;(info :start-search)
     ; Start with a vertex in the initial graph
     (->> (.vertices ig)
@@ -579,7 +621,7 @@
                  ; Expand this vertex out one step using the initial graph
                  (->> (grow-paths ig [[start]])
                       ; Then expand those paths into surrounding shells
-                      (path-shells rg)
+                      (path-shells remaining-graph)
                       ; Flatten those into a list of paths
                       (mapcat identity)
                       (filter loop?)
@@ -602,11 +644,10 @@
       (cons x (unchunk (rest coll))))))
 
 (defn find-cycle-with-
-  "Searches for a cycle in a graph, given a set of strongly connected vertices
-  `scc`, along which path a state machine holds. The state machine is given as
-  a transition function f.
+  "Searches for a cycle in a graph, along which path a state machine holds. The
+  state machine is given as a transition function f.
 
-  (f vertex) gives the initial state for a path which consists of just
+  (transition vertex) gives the initial state for a path which consists of just
   [vertex].
 
   (transition state path relationship vertex) yields the state when we append
@@ -621,10 +662,9 @@
   that a cycle must contain at least two edges of a certain type.
 
   Returns the resulting PathState."
-  [transition pred ^IGraph graph scc]
+  [transition pred ^IGraph g]
   ; First, restrict the graph to the SCC.
-  (let [g     (.select graph (->bset scc))
-        ; Renumber the subgraph to speed up equality comparison
+  (let [; Renumber the graph to speed up equality comparison
         ; TODO: this means we pass weird numeric vertices to transition, which
         ; is OK right now because our transition fns don't CARE about vertices,
         ; but... later we should maybe ensure the history is indexed and use
@@ -648,15 +688,13 @@
 
 (defn find-cycle-with
   "Like find-cycle-with-, but just returns the cycle, not the full PathState."
-  [transition pred g scc]
-  (:path (find-cycle-with- transition pred g scc)))
+  [transition pred g]
+  (:path (find-cycle-with- transition pred g)))
 
 (defn find-cycle
-  "Given a graph and a strongly connected component within it, finds a short
-  cycle in that component."
-  [^IGraph graph scc]
-  (let [g             (.select graph (->bset scc))
-        ; Just to speed up equality checks here, we'll construct an isomorphic
+  "Given a strongly connected graph, finds a short cycle in it."
+  [^IGraph g]
+  (let [; Just to speed up equality checks here, we'll construct an isomorphic
         ; graph with integers standing for our ops, find a cycle in THAT, then
         ; map back to our own space.
         [gn mapping]  (renumber-graph g)]
@@ -670,11 +708,10 @@
          first)))
 
 (defn fallback-cycle
-  "A DFS algorithm which finds ANY cycle in an SCC. We use this as a
-  fallback when BFS is too slow."
-  [^IGraph graph scc]
-  (let [g     (.select graph (->bset scc))
-        start (first scc)]
+  "A DFS algorithm which finds ANY cycle in a graph guaranteed to be strongly
+  connected. We use this as a fallback when BFS is too slow."
+  [^IGraph g]
+  (let [start (first (bg/vertices g))]
     (loop [path [start]
            seen {start 0}]
       (let [vs        (->clj (out g (peek path)))

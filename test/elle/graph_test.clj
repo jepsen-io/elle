@@ -1,5 +1,8 @@
 (ns elle.graph-test
-  (:require [clojure [pprint :refer [pprint]]]
+  (:require [bifurcan-clj [core :as b]
+                          [graph :as bg]
+                          [set :as bs]]
+            [clojure [pprint :refer [pprint]]]
             [elle.graph :refer :all]
             [jepsen.txn :as txn]
             [clojure.test :refer :all]
@@ -114,36 +117,32 @@
                           4 [0 2]})]
     (testing "basic cycle"
       (is (= [0 1 4 0]
-             (find-cycle g (->clj (.vertices g))))))
+             (find-cycle g))))
 
     ; We may restrict a graph to a particular relationship and look for cycles
     ; in an SCC found in a larger graph; this should still work.
     (testing "scc without cycle in graph"
       (is (= nil
-             (find-cycle g #{0 2 4}))))
+             (find-cycle (bg/select g (bs/from #{0 2 4}))))))
 
     (testing "cycle in restricted scc"
       (is (= [0 1 4 0]
-             (find-cycle g #{0 1 4}))))))
+             (find-cycle g))))))
 
 (deftest find-cycle-starting-with-test
   (let [initial   (map->bdigraph {0 [1 2]})
         ; Remaining HAS a cycle, but we don't want to find it.
         remaining (map->bdigraph {1 [3]
                                   3 [1 0]})]
-    (testing "without 0"
-      (is (= nil (find-cycle-starting-with initial remaining #{1 2 3}))))
-    (testing "with 0"
-      (is (= [0 1 3 0]
-             (find-cycle-starting-with initial remaining #{0 1 2 3}))))))
+    (is (= [0 1 3 0]
+           (find-cycle-starting-with initial remaining)))))
 
 (deftest fallback-cycle-test
   (is (= [2 3 4 2] (fallback-cycle
                      (map->bdigraph {1 [2]
                                      2 [3]
                                      3 [4]
-                                     4 [2]})
-                     [1 2 3 4]))))
+                                     4 [2]})))))
 
 (deftest find-cycle-satisfying-test
   ; This transition function considers every path legal.
@@ -173,12 +172,13 @@
 
     (testing "empty graph"
       (is (= nil (find-cycle-with- trivial always
-                                   (map->bdigraph {}) []))))
+                                   (map->bdigraph {})))))
 
     (testing "singleton scc"
-      (is (= nil (find-cycle-with- trivial
+      (is (= (->PathState [1 1] :trivial)
+             (find-cycle-with- trivial
                                    always
-                                   (map->bdigraph {1 [2], 2 [1]}) [1]))))
+                                   (map->bdigraph {1 [1]})))))
 
     (testing "basic cycle"
       (is (= (->PathState [2 3 2] :trivial)
@@ -186,8 +186,7 @@
                                always
                                (map->bdigraph {1 [2]
                                                2 [3]
-                                               3 [2]})
-                               [1 2 3]))))
+                                               3 [2]})))))
 
     (testing "non-adjacent"
       (testing "double rw"
@@ -195,16 +194,14 @@
                                     always
                                     (-> (digraph)
                                         (link 1 2 :rw)
-                                        (link 2 1 :rw))
-                                    [1 2]))))
+                                        (link 2 1 :rw))))))
       (testing "rw, rw+ww"
         (is (= [2 1 2] (find-cycle-with nonadjacent
                                         always
                                         (-> (digraph)
                                             (link 1 2 :rw)
                                             (link 2 1 :rw)
-                                            (link 2 1 :ww))
-                                        [1 2]))))
+                                            (link 2 1 :ww))))))
 
       (testing "rw, ww, rw"
         (is (= nil (find-cycle-with nonadjacent
@@ -212,8 +209,7 @@
                                     (-> (digraph)
                                         (link 1 2 :rw)
                                         (link 2 3 :ww)
-                                        (link 3 1 :rw))
-                                    [1 2 3]))))
+                                        (link 3 1 :rw))))))
 
       (testing "rw, ww, rw, ww"
         (is (= [2 3 4 1 2] (find-cycle-with nonadjacent
@@ -222,8 +218,7 @@
                                                 (link 1 2 :rw)
                                                 (link 2 3 :ww)
                                                 (link 3 4 :rw)
-                                                (link 4 1 :ww))
-                                            [1 2 3 4])))))))
+                                                (link 4 1 :ww)))))))))
 
 (deftest renumber-graph-test
   (is (= [{} []]
@@ -294,3 +289,20 @@
     (is (= #{2 3 4} (->clj (.out g 1))))
     (is (thrown? IllegalArgumentException (->clj (.out g 0))))
     (is (= #{6} (->clj (.out g 5))))))
+
+(deftest sequential-composition-test
+  (let [a (-> (bg/digraph)
+              (bg/link :x1 :y1)
+              (bg/link :x1 :y2)
+              (bg/link :r  :s))
+        b (-> (bg/digraph)
+              (bg/link :y1 :z1)
+              (bg/link :y1 :z2)
+              (bg/link :y2 :z3)
+              (bg/link :r  :q)
+              (bg/link :q  :r))]
+    (is (= (-> (bg/digraph)
+               (bg/link :x1 :z1)
+               (bg/link :x1 :z2)
+               (bg/link :x1 :z3))
+           (sequential-composition a b)))))
