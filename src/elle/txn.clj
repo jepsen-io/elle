@@ -586,8 +586,7 @@
        (mapcat (juxt :rels :first-rels :rest-rels))
        (remove nil?)
        set
-       (pmap fg)
-       dorun)
+       (mapv fg))
   fg)
 
 (def cycle-search-timeout
