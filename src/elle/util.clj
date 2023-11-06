@@ -79,3 +79,21 @@
             (swap! cache add-cache index res)
             res)
           res)))))
+
+(defn fand
+  "Functional and. Takes a collection of unary functions and returns a single
+  function which calls each f and returns the first non-truthy return value, or
+  the last return value."
+  [fs]
+  (condp = (count fs)
+    0 (constantly true)
+    1 (first fs)
+    2 (let [[f2 f1] fs]
+        (fn binary [x]
+          (and (f1 x) (f2 x))))
+    (fn nary [x]
+      (reduce (fn [_ f]
+                (let [r (f x)]
+                  (if r r (reduced r))))
+              nil
+              fs))))

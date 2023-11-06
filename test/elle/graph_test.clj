@@ -175,13 +175,13 @@
                                    (map->bdigraph {})))))
 
     (testing "singleton scc"
-      (is (= (->PathState [1 1] :trivial)
+      (is (= (->PathState [1 1] [nil] :trivial)
              (find-cycle-with- trivial
                                    always
                                    (map->bdigraph {1 [1]})))))
 
     (testing "basic cycle"
-      (is (= (->PathState [2 3 2] :trivial)
+      (is (= (->PathState [2 3 2] [nil nil] :trivial)
              (find-cycle-with- trivial
                                always
                                (map->bdigraph {1 [2]

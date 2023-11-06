@@ -455,19 +455,17 @@
          (b/forked c)))
 
 (defn ^IGraph sequential-expansion
-  "Takes two graphs A and B. Returns A U (A; B): the union of A with the
+  "Takes two RelGraphs A and B. Returns A U (A; B): the union of A with the
   sequential composition of A and B. In other words, takes A and expands it
   with edges that represent a step through A, then a step through B.
 
   This operation is particularly helpful in finding nonadjacent cycles: it
   produces a graph where cycles are mostly in A, but can take non-adjacent
   jumps through B."
-  [a b]
-  (loopr [c (b/linear (b/forked a))]
-         [x->y (bg/edges a)
-          z    (out+ b (bg/edge-to x->y))]
-         (recur (bg/link c (bg/edge-from x->y) z))
-         (b/forked c)))
+  [^RelGraph a, ^RelGraph b]
+  ; Rather than add to a piecemeal, we union it with a new NamedGraph--that's
+  ; constant time.
+  (.union a (NamedGraph. ::seq-comp (sequential-composition a b))))
 
 ; Advanced graph search
 ;
@@ -481,16 +479,17 @@
 ; explore paths which would satisfy the target cycle requirements.
 ;
 ; To do this, we define a PathState as a sequence of adjacent vertices in the
-; graph, *plus* an arbitrary state. As a part of our search, we take a state
-; machine transition function (f state path edge-value vertex), which evaluates
-; whether we can append that vertex to the given path. A search for G-single
-; could say, for instance "this state tells me we already saw a rw edge, so we
-; can't add another to this particular path.
+; graph, a sequence of the edges between those vertices, and an arbitrary
+; state. As a part of our search, we take a state machine transition function
+; (f state path edge-value vertex), which evaluates whether we can append that
+; vertex to the given path. A search for G-single could say, for instance "this
+; state tells me we already saw a rw edge, so we can't add another to this
+; particular path.
 ;
 ; f returns a new state if it is possible to extend the path to that vertex, or
 ; ::invalid if it is not possible.
 
-(defrecord PathState [path state])
+(defrecord PathState [path edges state])
 
 (defn prune-alternate-path-states
   "If we have two paths [a b e] and [a c d e], and they have the same state, we
@@ -525,7 +524,7 @@
   it to all vertices t can reach, such that (f state path edge next-vertex)
   returns anything but ::invalid."
   [f g path-states]
-  (mapcat (fn grow-path-state [ps]
+  (mapcat (fn grow-path-state [^PathState ps]
             (maybe-interrupt)
             (let [path    (:path ps)
                   tip     (peek path)
@@ -534,7 +533,9 @@
                       (let [edge   (edge g tip tip')
                             state' (f state path edge tip')]
                         (when-not (= ::invalid state')
-                          (PathState. (conj path tip') state'))))
+                          (PathState. (conj path tip')
+                                      (conj (.edges ps) edge)
+                                      state'))))
                     (out g tip))))
           path-states))
 
@@ -632,8 +633,10 @@
   "We try to do as much of our search as possible over Longs, rather than ops,
   which are expensive to compare. Given a function mapping integers to ops, and
   a PathState, we remap the path in the PathState from integers back to ops."
-  [mapping path-state]
-  (PathState. (mapv mapping (:path path-state)) (:state path-state)))
+  [mapping ^PathState path-state]
+  (PathState. (mapv mapping (.path path-state))
+              (.edges path-state)
+              (.state path-state)))
 
 (defn unchunk
   "Unchunks a possible chunked collection. We do this to avoid finding more
@@ -673,7 +676,7 @@
         cycle (->> (vertices gn)
                    (keep (fn [start]
                            (let [state (transition start)
-                                 init-path-state (PathState. [start] state)]
+                                 init-path-state (PathState. [start] [] state)]
                              (when (not= ::invalid? init-path-state)
                                (->> (path-state-shells transition gn
                                                        [init-path-state])

@@ -3,8 +3,9 @@
   (:require [bifurcan-clj [core :as b]
                           [graph :as bg]
                           [set :as bs]]
-            [clojure [pprint :refer [pprint]]
-                      [set :as set]]
+            [clojure [datafy :refer [datafy]]
+                     [pprint :refer [pprint]]
+                     [set :as set]]
             [clojure.tools.logging :refer [info warn]]
             [clojure.java.io :as io]
             [dom-top.core :refer [loopr]]
@@ -18,7 +19,8 @@
             [jepsen.history.fold :refer [loopf]]
             [tesser.core :as t]
             [unilog.config :refer [start-logging!]])
-  (:import (io.lacuna.bifurcan IGraph
+  (:import (elle.graph PathState)
+           (io.lacuna.bifurcan IGraph
                                LinearMap
                                Map)
            (jepsen.history Op)))
@@ -341,6 +343,77 @@
       (elle/render-cycle-explanation
         elle/cycle-explainer pair-explainer ex))))
 
+(defn trivial-path-transition
+  "A path transition function which is always legal."
+  ([vertex] nil)
+  ([_ path edge vertex'] nil))
+
+(defn first-path-transition
+  "Takes a set of relationships like #{:rw}. Constructs a path transition
+  function for use with g/find-cycle-with. Ensures that the first edge, and no
+  later edge, is a subset of rels."
+  [rels]
+  (let [rels (bs/from rels)]
+    (fn transition
+      ([v] true) ; Our state is true if we're starting, false otherwise.
+      ([starting? path edge v']
+       (let [match? (bs/contains-all? rels edge)]
+         (if starting?
+           (if match? false :elle.graph/invalid)
+           (if match? :elle.graph/invalid false)))))))
+
+(defn nonadjacent-path-transition
+  "Takes a set of relationships like #{:rw}. Constructs a function suitable for
+  use with g/find-cycle-with. Ensures that no pair of adjacent edges can both
+  be subsets of rels.
+
+  This fn ensures that no :rw is next to another by testing successive edge
+  types. In addition, we ensure that the first edge in the cycle is not an rw.
+  Cycles must have at least two edges, and in order for no two rw edges to be
+  adjacent, there must be at least one non-rw edge among them. This constraint
+  ensures a sort of boundary condition for the first and last nodes--even if
+  the last edge is rw, we don't have to worry about violating the nonadjacency
+  property when we jump to the first."
+  [rels]
+  (let [rels (bs/from rels)]
+    (fn transition
+      ([v] true) ; Our accumulator here is a boolean: whether our last edge was (potentially? rw).
+      ([last-matched? path edge v']
+       ; It's fine to follow *non* rw links, but if you've only
+       ; got rw, and we just did one, this path is invalid.
+       (let [match? (bs/contains-all? rels edge)]
+         (if (and last-matched? match?)
+           :elle.graph/invalid
+           match?))))))
+
+(defn multiple-path-state-pred
+  "Takes a graph and a set of rels. Constructs a predicate over PathStates
+  which returns true iff multiple edges are subsets of rels."
+  [g rels]
+  (let [rels (bs/from rels)]
+    (fn pred? [^PathState ps]
+      (loopr [seen? false]
+             [edge (.edges ps)]
+             (if (bs/contains-all? rels edge)
+               (if seen? ; We have two; done
+                 true
+                 (recur true))
+               (recur seen?))
+             false))))
+
+(defn required-path-state-pred
+  "Takes a graph and a collection of rels. Constructs a predicate over
+  PathStates which returns true iff at least one edge is a subset of rels."
+  [g rels]
+  (let [rels (bs/from rels)]
+    (fn pred? [^PathState ps]
+      (loopr []
+             [edge (.edges ps)]
+             (if (bs/contains-all? rels edge)
+               true
+               (recur))
+             false))))
+
 (def cycle-type-priorities
   "A map of cycle types to approximately how bad they are; low numbers are more
   interesting/severe anomalies"
@@ -365,142 +438,93 @@
        (map-indexed (fn [i t] [t i]))
        (into {})))
 
-(defn nonadjacent-rw
-  "This fn ensures that no :rw is next to another by testing successive edge
-  types. In addition, we ensure that the first edge in the cycle is not an rw.
-  Cycles must have at least two edges, and in order for no two rw edges to be
-  adjacent, there must be at least one non-rw edge among them. This constraint
-  ensures a sort of boundary condition for the first and last nodes--even if
-  the last edge is rw, we don't have to worry about violating the nonadjacency
-  property when we jump to the first."
-  ([v] [0 true]) ; Our accumulator here is a map of rw-count, last-was-rw.
-  ([[n last-was-rw?] path rel v']
-   ; It's fine to follow *non* rw links, but if you've only
-   ; got rw, and we just did one, this path is invalid.
-   (let [rw? (= (g/bset :rw) rel)]
-     (if (and last-was-rw? rw?)
-       :elle.graph/invalid
-       [(if rw? (inc n) n) rw?]))))
-
-(defn nonadjacent-rw-filter-path-state
-  "We need more than one RW edge for us to call something G-nonadjacent
-  specifically."
-  [ps]
-  (< 1 (first (:state ps))))
-
-(def cycle-anomaly-specs
+(def base-cycle-anomaly-specs
   "We define a specification language for different anomaly types, and a small
    interpreter to search for them. An anomaly is specified by a map including:
 
-     :rels         A set of relationships which must intersect with every
-                   edge in the cycle
+     :rels         A set of relationships which can be used as edges in the
+                   cycle.
 
-     - or -
+   There may also be supplementary relationships which may be used in addition
+   to rels:
 
-     :first-rels   A set of relationships which must intersect with the first
-                   edge in the cycle.
-     :rest-rels    A set of relationships which must intersect with remaining
-                   edges.
+     :nonadjacent-rels  If present, a set of relationships which must may be
+                        used for non-adjacent edges.
 
-     - and optionally -
+     :single-rels    Edges intersecting this set must appear exactly once in
+                     this cycle.
 
-     :filter-ex    A predicate over a cycle explanation. We use this
-                   to restrict cycles to e.g. *just* G2 instead of G-single."
+     :multiple-rels  Edges intersecting this set must appear more than once in
+                     the cycle.
+
+     :required-rels  Edges intersecting this set must appear at least once in
+                     the cycle.
+
+   And optionally:
+
+     :realtime?    If present, at least one edge must be :realtime.
+
+     :process?     If present, at least one edge must be :process.
+
+     :type         If present, the cycle explainer must tell us any cycle is of
+                   this :type specifically."
   (sorted-map-by
     (fn [a b] (compare (cycle-type-priorities a 100)
                        (cycle-type-priorities b 100)))
     :G0        {:rels #{:ww}}
-    ; We want at least one wr edge, so we specify that as first-rels.
-    :G1c       {:first-rels #{:wr}
-                :rest-rels  #{:ww :wr}}
-    ; Likewise, G-single starts with the anti-dependency edge. This anomaly is
-    ; read skew, and is proscribed by SI.
-    :G-single  {:first-rels  #{:rw}
-                :rest-rels   #{:ww :wr}}
-
-    ; Per Cerone & Gotsman
-    ; (http://software.imdea.org/~gotsman/papers/si-podc16.pdf), strong session
-    ; SI is equivalent to allowing only cycles with 2+ adjacent rw edges.
-    ; G-single is a special case, where there is exactly one such edge. We
-    ; define a more general form of G-single, which we call G-nonadjacent: a
-    ; cycle which has rw edges, and no pair of rw edges are adjacent.
-    :G-nonadjacent {:rels              #{:ww :wr :rw}
-                    :with              nonadjacent-rw
-                    ; We need more than one rw edge for this to count;
-                    ; otherwise it's G-single.
-                    :filter-path-state nonadjacent-rw-filter-path-state}
-    :G-nonadjacent-process
-    {:rels               #{:ww :wr :rw :process}
-     :with               nonadjacent-rw
-     :filter-path-state  nonadjacent-rw-filter-path-state
-     :filter-ex          (comp #{:G-nonadjacent-process} :type)}
-    :G-nonadjacent-realtime
-    {:rels              #{:ww :wr :rw :realtime}
-     :with              nonadjacent-rw
-     :filter-path-state nonadjacent-rw-filter-path-state
-     :filter-ex         (comp #{:G-nonadjacent-realtime} :type)}
-
+    ; G1c has at least a wr edge, and can take either ww or wr.
+    :G1c       {:rels          #{:ww :wr}
+                :required-rels #{:wr}}
+    ; G-single takes ww/wr normally, but has exactly one rw.
+    :G-single  {:rels        #{:ww :wr}
+                :single-rels #{:rw}}
+    ; G-nonadjacent is the more general form of G-single: it has multiple
+    ; nonadjacent rw edges.
+    :G-nonadjacent {:rels             #{:ww :wr}
+                    :nonadjacent-rels #{:rw}
+                    :multiple-rels    #{:rw}}
     ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
     ; insists on being G2, rather than G-single. Not bulletproof, but G-single
     ; is worse, so I'm OK with it.
-    :G2-item   {:first-rels  #{:rw}
-                :rest-rels   #{:ww :wr :rw}
-                :filter-ex   (comp #{:G2-item} :type)}
+    :G2-item   {:rels          #{:ww :wr :rw}
+                :multiple-rels #{:rw} ; A single rw rel is trivially G-Single
+                :type         :G2-item}
     ; G2 is identical, except we want a cycle explained as G2
     ; specifically--it'll have at least one :predicate? edge.
-    :G2        {:first-rels #{:rw}
-                :rest-rels  #{:ww :wr :rw}
-                :filter-ex  (comp #{:G2} :type)}
+    :G2        {:rels          #{:ww :wr :rw}
+                :multiple-rels #{:rw}
+                :type          :G2}))
 
-    ; A process G0 can use any number of process and ww edges--process is
-    ; acyclic, so there's got to be at least one ww edge. We also demand the
-    ; resulting cycle be G0-process, to filter out plain old G0s.
-    :G0-process        {:rels        #{:ww :process}
-                        :filter-ex   (comp #{:G0-process} :type)}
-    ; G1c-process needs at least one wr-edge to distinguish itself from
-    ; G0-process.
-    :G1c-process       {:first-rels  #{:wr}
-                        :rest-rels   #{:ww :wr :process}
-                        :filter-ex   (comp #{:G1c-process} :type)}
-    ; G-single-process starts with an anti-dep edge and can use processes from
-    ; there.
-    :G-single-process  {:first-rels  #{:rw}
-                        :rest-rels   #{:ww :wr :process}
-                        :filter-ex   (comp #{:G-single-process} :type)}
-    ; G2-process starts with an anti-dep edge, and allows anything from there.
-    ; Plus it's gotta be G2-process, so we don't report G2s or G-single-process
-    ; etc.
-    :G2-item-process   {:first-rels  #{:rw}
-                        :rest-rels   #{:ww :wr :rw :process}
-                        :filter-ex   (comp #{:G2-item-process} :type)}
-    :G2-process        {:first-rels  #{:rw}
-                        :rest-rels   #{:ww :wr :rw :process}
-                        :filter-ex   (comp #{:G2-process} :type)}
+(defn cycle-anomaly-spec-variant
+  "Takes a variant (:process or :realtime) and a cycle anomaly pair of name and
+  spec map, as in base-cycle-anomaly-specs. Returns a new [name' spec'] pair
+  for the process/realtime variant of that spec."
+  [variant [anomaly-name spec]]
+  (let [; You can take variant edges any time
+        spec' (update spec :rels conj variant)
+        ; And must include the appropriate realtime/process flag
+        spec' (assoc spec' (case variant
+                             :realtime :realtime?
+                             :process  :process?)
+                     variant)
+        ; If there's a type, we need to match its variant.
+        spec' (if-let [t (:type spec)]
+                (assoc spec' :type (keyword (str (name anomaly-name) "-"
+                                                 (name variant))))
+                spec')]
+    [(keyword (str (name anomaly-name) "-" (name variant))) spec']))
 
-
-    ; Ditto for realtime
-    :G0-realtime        {:rels        #{:ww :realtime}
-                         :filter-ex   (comp #{:G0-realtime} :type)}
-    :G1c-realtime       {:first-rels  #{:wr}
-                         :rest-rels   #{:ww :wr :realtime}
-                         :filter-ex   (comp #{:G1c-realtime} :type)}
-    :G-single-realtime  {:first-rels  #{:rw}
-                         :rest-rels   #{:ww :wr :realtime}
-                         :filter-ex   (comp #{:G-single-realtime} :type)}
-    :G2-item-realtime   {:first-rels  #{:rw}
-                         :rest-rels   #{:ww :wr :rw :realtime}
-                         :filter-ex   (comp #{:G2-item-realtime} :type)}
-    :G2-realtime        {:first-rels  #{:rw}
-                         :rest-rels   #{:ww :wr :rw :realtime}
-                         :filter-ex   (comp #{:G2-realtime} :type)}))
+(def cycle-anomaly-specs
+  "Like base-cycle-anomaly-specs, but with realtime and process variants."
+  (into base-cycle-anomaly-specs
+        (mapcat (juxt identity
+                      (partial cycle-anomaly-spec-variant :process)
+                      (partial cycle-anomaly-spec-variant :realtime))
+                base-cycle-anomaly-specs)))
 
 (def cycle-types
   "All types of cycles we can detect."
-  (into (set (keys cycle-anomaly-specs))
-        ; We don't explicitly specify these, but the explainer will spit them
-        ; out. I don't know whether we should count them as REAL exactly, so...
-        #{:G-nonadjacent-process
-          :G-nonadjacent-realtime}))
+  (set (keys cycle-anomaly-specs)))
 
 (def process-anomaly-types
   "Anomaly types involving process edges."
@@ -562,14 +586,7 @@
 
 (defn filtered-graphs
   "Takes a graph g. Returns a function that takes a set of relationships, and
-  yields g filtered to just those relationships. Memoized.
-
-  This means keeping around a fair bit of redundant materialized
-  information; I can forsee this causing memory pressure later. It might be
-  worthwhile to materialize just one or two of these graphs, do a search for a
-  particular kind of cycle across ALL SCCs, then move on to the next graph,
-  etc, so we can keep only the graphs we need in memory. On the other hand,
-  that might waste more time doing SCC-specific precomputation. Not sure."
+  yields g filtered to just those relationships. Memoized."
   [graph]
   (memoize (fn [rels] (g/project-relationships rels graph))))
 
@@ -622,6 +639,83 @@
                         pair-explainer
                         c)))
 
+(defn cycle-in-scc-of-type
+  "Takes a graph, a filtered-graph function, a pair explainer, and a cycle
+  anomaly type specification from cycle-anomaly-specs. Tries to find a cycle
+  matching that specification in the graph. Returns the explained cycle, or
+  nil if none found."
+  [opts g fg pair-explainer
+   [type {:keys [rels nonadjacent-rels single-rels multiple-rels required-rels
+                 realtime? process?]
+          :as spec}]]
+  ; First pass: look for a candidate
+  (let [; Build up path predicates based on known constraints
+        ; TODO: we can compile these once and re-use them
+        preds (cond-> []
+                ; Note: you may be asking "hang on, what if we insist on two
+                ; different kinds of required edges, and it just so happens
+                ; that we choose the *same* edge for both required passes?
+                ; Thankfully this does not happen: required edges admit no
+                ; other possibilities, and our requirements never intersect. An
+                ; #{:rt :ww} edge never satisfies an :rt requirement: only
+                ; #{:rt} can do that.
+                multiple-rels (conj (multiple-path-state-pred g multiple-rels))
+                required-rels (conj (required-path-state-pred g required-rels))
+                process?      (conj (required-path-state-pred g #{:process}))
+                realtime?     (conj (required-path-state-pred g #{:realtime})))
+        pred (util/fand preds)
+
+        ; And the path transition function
+        transition (cond
+                     single-rels      (first-path-transition single-rels)
+                     nonadjacent-rels (nonadjacent-path-transition
+                                        nonadjacent-rels)
+                     true             trivial-path-transition)
+        ;_ (info :spec spec)
+        ;_ (info ":preds\n" (with-out-str (pprint preds)))
+        ;_ (info :transition transition)
+
+        ; Now search for a candidate cycle
+        cycle
+        (cond ; We have predicate constraints or nonadjacents; gotta use the
+              ; full state machine search. Our graph will include *everything*
+              ; possible.
+              (or (seq preds) nonadjacent-rels)
+              (g/find-cycle-with transition pred
+                                 (fg (set/union rels nonadjacent-rels
+                                                required-rels single-rels
+                                                multiple-rels)))
+
+              ; No predicates, no nonadjacents. If there's a single rels
+              ; constraint, we can start our search there and jump back into
+              ; the rels graph.
+              single-rels
+              (g/find-cycle-starting-with (fg single-rels) (fg rels))
+
+              ; Rels only, nothing else. Straightforward search. This is super
+              ; fast for stuff like G0/G1c, which we check first.
+              true
+              (g/find-cycle (fg rels)))]
+    (when cycle
+      ;(info "Cycle:\n" (with-out-str (pprint cycle)))
+      (let [ex (elle/explain-cycle cycle-explainer pair-explainer cycle)]
+            ; Our cycle spec here isn't QUITE complete: the explainer might
+            ; declare it (e.g.) g2-item vs g2. If there's a type constraint, we
+            ; explain the cycle and check the type matches.
+            ;(when (not= type (:type ex))
+            ;  (info "Was looking for" type "but found a" (:type ex)
+            ;        (with-out-str
+            ;          (prn)
+            ;          (pprint spec)
+            ;          (prn)
+            ;          (pprint ex))))
+            (if (:type spec)
+              (do ; _ (info "Filtering explanation")
+                  ; _ (prn :explanation ex)
+                  (when (= (:type spec) (:type ex))
+                    ex))
+              ex)))))
+
 (defn cycle-cases-in-scc
   "Searches a graph restricted to single SCC for cycle anomalies. See
   cycle-cases."
@@ -638,76 +732,32 @@
       (let [types  @types
             cycles @cycles]
         (info "Timing out search for" (peek types) "in SCC of" (b/size g)
-              "transactions (checked" types ")")
+              "transactions (checked" (str (pr-str (butlast types))")"))
         ;(info :scc
         ;      (with-out-str (pprint scc)))
         ; We generate two types of anomalies no matter what. First, an anomaly
         ; that lets us know we failed to complete the search. Second, a
         ; fallback cycle so there's SOMETHING from this SCC.
-        (concat [{:type               :cycle-search-timeout
-                  :anomaly-spec-type  (peek types)
-                  :does-not-contain   (drop-last types)
-                  :scc-size           (b/size g)}
-                 (cycle-cases-in-scc-fallback g fg pair-explainer)]
-                ; Then any cycles we already found.
-                cycles))
+        (into [{:type               :cycle-search-timeout
+                :anomaly-spec-type  (peek types)
+                :does-not-contain   (drop-last types)
+                :scc-size           (b/size g)}
+               (cycle-cases-in-scc-fallback g fg pair-explainer)]
+              ; Then any cycles we already found.
+              cycles))
       ; Now, try each type of cycle we can search for
-      ;
-      ; This is basically a miniature interpreter for the anomaly specification
-      ; language we defined above. It's... clean, but it also duplicates a lot
-      ; of work--for instance, a G1c cycle will be detected three times, by
-      ; G1c, G1c-process, and G1c-realtime; we then have to ignore 2 of those
-      ; in the filter step. I don't think this is super expensive, but future
-      ; self, if you're looking at a profiler and trying to find constant
-      ; factors to optimize, this might be a good spot to start.
       ;
       ; TODO: many anomalies imply others. We should use the dependency graph to
       ; check for special-case anomalies before general ones, and only check for
       ; the general ones if we can't find special-case ones. e.g. if we find a
       ; g-single, there's no need to look for g-nonadjacent.
       ;(info "Checking scc of size" (b/size g))
-      (doseq [[type spec] cycle-anomaly-specs]
+      (doseq [type+spec cycle-anomaly-specs]
         ; (info "Checking for" type)
-        ; For timeout reporting, we keep track of what type of anomaly
-        ; we're looking for.
-        (swap! types conj type)
-
-        ; First, find a cycle using the spec.
-        (let [;_      (prn)
-              ; _      (prn :spec type spec)
-              ; Restrict the graph to certain relationships, if necessary.
-              g     (if-let [rels (:rels spec)]
-                      (do ;(info "getting restricted graph")
-                          (fg rels))
-                      g)
-              ; Now, we have three cycle-finding strategies...
-              ;_     (info "Finding cycle")
-              cycle (cond (:with spec)
-                          (g/find-cycle-with (:with spec)
-                                             (:filter-path-state spec)
-                                             g)
-
-                          (:rels spec)
-                          (g/find-cycle g)
-
-                          true
-                          (g/find-cycle-starting-with
-                            (fg (:first-rels spec))
-                            (fg (:rest-rels spec))))]
-          ;_ (info "Done with cycle search")
-          (when cycle
-            ; (info "Explaining cycle")
-            ; Explain the cycle
-            (let [ex (elle/explain-cycle cycle-explainer pair-explainer
-                                         cycle)
-                  ; _ (info "Filtering explanation")
-                  ; _ (prn :explanation ex)
-                  ; Make sure it passes the filter, if we have one.
-                  ex (if-let [p (:filter-ex spec)]
-                       (when (p ex) ex)
-                       ex)]
-              ; And record that we found it
-              (swap! cycles conj ex)))))
+        (swap! types conj (first type+spec))
+        (when-let [cycle (cycle-in-scc-of-type opts g fg pair-explainer
+                                               type+spec)]
+          (swap! cycles conj cycle)))
       @cycles)))
 
 (defn cycle-cases-in-graph

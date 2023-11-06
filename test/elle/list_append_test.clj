@@ -905,9 +905,9 @@
                (dissoc :also-not))))))
 
 (deftest repeatable-read-test
-  ; This is a long fork, which is also G2-item, by virtue of its only cycle
-  ; being two anti-dependency edges. We shouldn't be able to detect this with
-  ; read-committed, but repeatable-read should fail.
+  ; This is a G2-item, by virtue of its only cycle being two anti-dependency
+  ; edges. We shouldn't be able to detect this with read-committed, but
+  ; repeatable-read should fail.
   (let [t1 (op "rxay1")
         t2 (op "ryax1")
         [t1 t2 :as h] (h/history [t1 t2])]
@@ -938,9 +938,6 @@
   (let [r (cf {} "histories/huge-scc.edn")]
     ; There's a full explanation here but... it's long, and all we care about
     ; is that we can fall back to saying SOMETHING about this enormous SCC.
-    ;
-    ; TODO: might be worth modifying graph/fallback-cycle so it tries to follow
-    ; minimal edges first. Might help generate worse anomalies.
     (is (not (:valid? r)))
     (is (= #{:strong-serializable} (:not r)))
     (is (= [:G2-item-realtime :cycle-search-timeout]
@@ -1097,8 +1094,8 @@
 
 (deftest ^:perf scc-search-perf-test
   ; A case where even small SCCs caused the cycle search to time out
-  (cf {:consistency-models [:strong-snapshot-isolation]}
-      "histories/small-slow-scc.edn"))
+  (time (cf {:consistency-models [:strong-snapshot-isolation]}
+            "histories/small-slow-scc.edn")))
 
 (deftest ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system
