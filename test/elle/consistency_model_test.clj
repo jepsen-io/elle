@@ -2,9 +2,18 @@
   "Elle finds anomalies in histories. This namespace helps turn those anomalies
   into claims about what kind of consistency models are supported by, or ruled
   out by, a given history."
-  (:require [clojure [pprint :refer [pprint]]
+  (:require [bifurcan-clj [graph :as bg]]
+            [clojure [pprint :refer [pprint]]
                      [test :refer :all]]
             [elle.consistency-model :refer :all]))
+
+(deftest implied-anomalies-test
+  (is (every? keyword? (bg/vertices implied-anomalies))))
+
+(deftest all-anomalies-test
+  ; Note: these are in implication & severity order
+  (is (= [:G-MSR :G-SI :G-SIb :G-cursor :G-monotonic :G-update :G0 :G1b :GSIa :cyclic-versions :dirty-update :duplicate-elements :future-read :incompatible-order :internal :lost-update :predicate-read-miss :G1a :G1c :write-skew :G-single :G1 :G2-item :G-nonadjacent :GSIb :G2 :GSI :G0-process :G1c-process :G-single-process :G1-process :G2-item-process :G-nonadjacent-process :G2-process :G0-realtime :G1c-realtime :G-single-realtime :G1-realtime :G2-item-realtime :G-nonadjacent-realtime :G2-realtime]
+         (vec all-anomalies))))
 
 (deftest all-implied-anomalies-test
   (is (= [:G-SI] (seq (all-implied-anomalies [:G-SI])))))
@@ -244,4 +253,5 @@
 ; anything.
 (deftest plot-test
   (plot-models!)
-  (plot-anomalies!))
+  (plot-anomalies!)
+  (plot-severity!))

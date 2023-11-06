@@ -40,9 +40,11 @@
 
   - Our snapshot isolation mixes (perhaps incorrectly) a variety of
   formalizations."
-  (:require [elle [graph :as g]
+  (:require [bifurcan-clj [graph :as bg]]
+            [elle [graph :as g]
                   [util :as util :refer [map-vals]]]
-            [clojure [set :as set]]
+            [clojure [set :as set]
+                     [pprint :refer [pprint]]]
             [clojure.tools.logging :refer [info warn]]
             [dom-top.core :refer [assert+]]
             [rhizome [dot :refer [graph->dot]]
@@ -55,7 +57,7 @@
   example, when we detect an :internal anomaly, that's *also* a sign of G1a:
   aborted reads. If G1a is present, so is G1, because G1 is defined as the
   union of G1a, G1b, and G1c."
-  (g/map->bdigraph
+  (g/map->dag
     {:G0          [:G1c ; Adya
                    :G0-process] ; G0 is a trivial G0-process
      ; Since processes are singlethreaded
@@ -135,6 +137,23 @@
      :lost-update [:write-skew :G2-item]
      ; And write skew is a special case of G2, per Hermitage
      :write-skew  [:G2]}))
+
+(def anomaly-severity-graph
+  "G0 doesn't imply G-Single, but G0 is usually \"worse\" than G-Single. This
+  graph encodes that extra severity information. We use this to order anomalies
+  by severity, which aids us in searching for the worst anomalies first."
+  (g/map->dag
+    {:G0           [:G1c]
+     :G0-process   [:G1c-process]
+     :G0-realtime  [:G1c-realtime]
+     :G1c          [:G-single :G2-item]
+     :G1c-process  [:G-single-process :G2-item-process]
+     :G1c-realtime [:G-single-realtime :G2-item-realtime]
+     ; Process anomalies are not as bad as pure data violations
+     :G2           [:G0-process]
+     ; And we only start caring about realtime once we've exhausted the most
+     ; subtle process anomaly
+     :G2-process   [:G0-realtime]}))
 
 (defn all-anomalies-implying
   "Takes a collection of anomalies, and yields a set of anomalies which would
@@ -281,7 +300,7 @@
         :PRAM                  [:monotonic-reads             ; Bailis
                                 :monotonic-writes            ; Bailis
                                 :read-your-writes]}          ; Bailis
-       (g/map->bdigraph)
+       g/map->dag
        (g/map-vertices canonical-model-name)))
 
 (def all-models
@@ -434,8 +453,40 @@
         :update-serializable       [:G1 :G-update]     ; Adya
 
         }
-       (g/map->bdigraph)
-       (g/map-vertices canonical-model-name)))
+       (map (fn [[k v]] [(canonical-model-name k) v]))
+       g/map->dag))
+
+(def anomaly-depths
+  "A map of anomaly names to their depth in the anomaly dependency tree. Depth
+  0 are anomalies which aren't implied by any other. You can sort by this depth
+  to perform a topological traversal of anomalies."
+  (merge-with max
+              (g/topo-depths (bg/merge implied-anomalies
+                                       anomaly-severity-graph
+                                       (constantly nil)))
+              ; Basically treating the graph as a map and getting
+              ; vals out
+              (zipmap (->> direct-proscribed-anomalies
+                           bg/top
+                           (mapcat (partial g/out
+                                            direct-proscribed-anomalies)))
+                      (repeat 0))))
+
+(defn anomaly-depth-compare
+  "Takes two anomalies and compares them by depth, fewer deps first."
+  [a b]
+  (let [d (compare (get anomaly-depths a)
+                   (get anomaly-depths b))]
+    (if (= 0 d)
+      (if (= a b)
+        0
+        (compare a b))
+      d)))
+
+(def all-anomalies
+  "A set of all known anomalies. Sorted by depth."
+  (into (sorted-set-by anomaly-depth-compare)
+        (keys anomaly-depths)))
 
 (defn anomalies-prohibited-by
   "Takes a collection of consistency models, and returns a set of anomalies
@@ -502,6 +553,12 @@
         img (rv/dot->image dot)]
     ;(rv/view-image img)
     (rv/save-image img filename)))
+
+(defn plot-severity!
+  []
+  (plot-graph! (bg/merge implied-anomalies anomaly-severity-graph
+                         (constantly nil))
+               "images/severity.png"))
 
 (defn plot-models!
   []

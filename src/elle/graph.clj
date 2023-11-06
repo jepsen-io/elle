@@ -16,6 +16,7 @@
   (:import (elle NamedGraph
                  RelGraph)
            (io.lacuna.bifurcan DirectedGraph
+                               DirectedAcyclicGraph
                                Graphs
                                ICollection
                                IEdge
@@ -347,13 +348,21 @@
   "Turns a sequence of [node, successors] pairs (e.g. a map) into a bifurcan
   directed graph"
   [m]
-  (reduce (fn [^DirectedGraph g [node succs]]
-            (reduce (fn [graph succ]
-                      (link graph node succ))
-                    g
-                    succs))
-          (.linear (DirectedGraph.))
-          m))
+  (loopr [g (b/linear (bg/digraph))]
+         [[node succs]  m
+          succ          succs]
+         (recur (bg/link g node succ))
+         (b/forked g)))
+
+(defn map->dag
+  "Turns a sequence of [node, successors] pairs (e.g. a map) into a bifurcan
+  directed acyclic graph."
+  [m]
+  (loopr [g (b/linear (bg/directed-acyclic-graph))]
+         [[node succs]  m
+          succ          succs]
+         (recur (bg/link g node succ))
+         (b/forked g)))
 
 (defn ^NamedGraph named-graph-union
   "Unions two named graphs together."
@@ -727,3 +736,23 @@
           ; Keep exploring
           (let [v (first (remove seen vs))]
             (recur (conj path v) (assoc seen v (count path)))))))))
+
+(defn topo-depths
+  "Takes a graph. Returns a map of vertices to topological depths. The top
+  vertices in the graph--those with no inbound edges--have depth 0. Their
+  immediate descendants have depth 1, their descendants have depth 2, and so
+  on."
+  ([g]
+   (topo-depths (b/forked g) 0 (transient {})))
+  ([g depth m]
+   (let [top (b/forked (bg/top g))]
+     (if (= 0 (b/size top))
+       ; Done!
+       (persistent! m)
+       (recur (-> (reduce bg/remove g top)
+                  ; Work around https://github.com/lacuna/bifurcan/issues/46 by
+                  ; recreating the entire DAG.
+                  .directedGraph
+                  DirectedAcyclicGraph/from)
+              (inc depth)
+              (reduce #(assoc! %1 %2 depth) m top))))))

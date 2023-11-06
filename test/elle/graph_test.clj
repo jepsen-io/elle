@@ -306,3 +306,11 @@
                (bg/link :x1 :z2)
                (bg/link :x1 :z3))
            (sequential-composition a b)))))
+
+(deftest topo-depths-test
+  (is (= {:a1 0 :a2 0
+          :b1 1
+          :c1 2 :c2 2}
+         (topo-depths (map->dag {:a1 [:b1]
+                                 :a2 [:b1]
+                                 :b1 [:c1 :c2]})))))
