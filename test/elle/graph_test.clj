@@ -4,12 +4,30 @@
                           [set :as bs]]
             [clojure [pprint :refer [pprint]]]
             [elle.graph :refer :all]
-            [jepsen.txn :as txn]
+            [jepsen [history :as h]
+                    [txn :as txn]]
             [clojure.test :refer :all]
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan IMap
                                Map)
            (elle RelGraph)))
+
+(defn op
+  "Takes a number, returns an Op with that as its index."
+  [index]
+  (h/op {:index index}))
+
+(defn op-graph
+  "Takes a graph of integers and lifts them into a graph of Ops where the
+  integers are their index fields. We do this because our graph search is
+  optimized for Ops, but we don't want to write a zillion ops in testing."
+  [g]
+  (map-vertices op g))
+
+(defn indices
+  "Takes a collection of Ops and extracts their indexes."
+  [ops]
+  (mapv :index ops))
 
 (deftest tarjan-test
   (let [tarjan (comp set tarjan)]
@@ -116,26 +134,23 @@
                           3 [4]
                           4 [0 2]})]
     (testing "basic cycle"
-      (is (= [0 1 4 0]
-             (find-cycle g))))
+      (is (= [3 4 2 3]
+             (indices (find-cycle (op-graph g))))))
 
     ; We may restrict a graph to a particular relationship and look for cycles
     ; in an SCC found in a larger graph; this should still work.
     (testing "scc without cycle in graph"
       (is (= nil
-             (find-cycle (bg/select g (bs/from #{0 2 4}))))))
-
-    (testing "cycle in restricted scc"
-      (is (= [0 1 4 0]
-             (find-cycle g))))))
+             (find-cycle (op-graph (bg/select g (bs/from #{0 2 4})))))))))
 
 (deftest find-cycle-starting-with-test
-  (let [initial   (map->bdigraph {0 [1 2]})
+  (let [initial   (op-graph (map->bdigraph {0 [1 2]}))
         ; Remaining HAS a cycle, but we don't want to find it.
-        remaining (map->bdigraph {1 [3]
-                                  3 [1 0]})]
+        remaining (op-graph (map->bdigraph {1 [3]
+                                            3 [1 0]}))]
     (is (= [0 1 3 0]
-           (find-cycle-starting-with initial remaining)))))
+           (indices
+             (find-cycle-starting-with initial remaining))))))
 
 (deftest fallback-cycle-test
   (is (= [2 3 4 2] (fallback-cycle
@@ -172,21 +187,24 @@
 
     (testing "empty graph"
       (is (= nil (find-cycle-with- trivial always
-                                   (map->bdigraph {})))))
+                                   (op-graph
+                                     (map->bdigraph {}))))))
 
     (testing "singleton scc"
-      (is (= (->PathState [1 1] [nil] :trivial)
+      (is (= (->PathState (mapv op [1 1]) [nil] :trivial)
              (find-cycle-with- trivial
                                    always
-                                   (map->bdigraph {1 [1]})))))
+                                   (op-graph
+                                     (map->bdigraph {1 [1]}))))))
 
     (testing "basic cycle"
-      (is (= (->PathState [2 3 2] [nil nil] :trivial)
+      (is (= (->PathState (mapv op [3 2 3]) [nil nil] :trivial)
              (find-cycle-with- trivial
                                always
-                               (map->bdigraph {1 [2]
-                                               2 [3]
-                                               3 [2]})))))
+                               (op-graph
+                                 (map->bdigraph {1 [2]
+                                                 2 [3]
+                                                 3 [2]}))))))
 
     (testing "non-adjacent"
       (testing "double rw"
@@ -194,14 +212,17 @@
                                     always
                                     (-> (digraph)
                                         (link 1 2 :rw)
-                                        (link 2 1 :rw))))))
+                                        (link 2 1 :rw)
+                                        op-graph)))))
       (testing "rw, rw+ww"
-        (is (= [2 1 2] (find-cycle-with nonadjacent
-                                        always
-                                        (-> (digraph)
-                                            (link 1 2 :rw)
-                                            (link 2 1 :rw)
-                                            (link 2 1 :ww))))))
+        (is (= [2 1 2]
+               (indices (find-cycle-with nonadjacent
+                                         always
+                                         (-> (digraph)
+                                             (link 1 2 :rw)
+                                             (link 2 1 :rw)
+                                             (link 2 1 :ww)
+                                             op-graph))))))
 
       (testing "rw, ww, rw"
         (is (= nil (find-cycle-with nonadjacent
@@ -209,30 +230,19 @@
                                     (-> (digraph)
                                         (link 1 2 :rw)
                                         (link 2 3 :ww)
-                                        (link 3 1 :rw))))))
+                                        (link 3 1 :rw)
+                                        op-graph)))))
 
       (testing "rw, ww, rw, ww"
-        (is (= [2 3 4 1 2] (find-cycle-with nonadjacent
+        (is (= [2 3 4 1 2] (indices
+                             (find-cycle-with nonadjacent
                                             always
                                             (-> (digraph)
                                                 (link 1 2 :rw)
                                                 (link 2 3 :ww)
                                                 (link 3 4 :rw)
-                                                (link 4 1 :ww)))))))))
-
-(deftest renumber-graph-test
-  (is (= [{} []]
-         (update (renumber-graph (map->bdigraph {})) 0 ->clj)))
-  (is (= [{0 #{1 3}
-           1 #{0}
-           2 #{0}
-           3 #{}}
-          [:y :t :x :z]]
-         (update (renumber-graph (map->bdigraph {:x #{:y}
-                                                 :y #{:z :t}
-                                                 :z #{}
-                                                 :t #{:y}}))
-                 0 ->clj))))
+                                                (link 4 1 :ww)
+                                                op-graph)))))))))
 
 (deftest link-test
   (let [g (-> (digraph)

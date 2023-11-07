@@ -442,22 +442,6 @@
             (linear (digraph))
             (edges g))))
 
-(defn renumber-graph
-  "Takes a Graph and rewrites each vertex to a unique integer, returning the
-  rewritten Graph, and a vector of the original vertexes for reconstruction."
-  [g]
-  (let [mapping (persistent!
-                  (reduce (fn [mapping v]
-                            (assoc! mapping v (count mapping)))
-                          (transient {})
-                          (vertices g)))]
-    [(map-vertices mapping g)
-     (persistent!
-       (reduce (fn [vertices [vertex index]]
-                 (assoc! vertices index vertex))
-               (transient (vec (repeat (count mapping) nil)))
-               mapping))]))
-
 (defn out+
   "Like graph/out, but returns nil when the vertex does not exist, rather than
   throwing."
@@ -602,11 +586,11 @@
                  starting-paths)))
 
 (defn loop?
-  "Does the given vector begin and end with identical elements, and is longer
-  than 1?"
+  "Does the given vector of Ops begin and end with identical elements, and is
+  it longer than 1?"
   [v]
   (and (< 1 (count v))
-       (= (first v) (peek v))))
+       (h/index= (first v) (peek v))))
 
 (defn path-state-loop?
   "Is the given PathState a loop?"
@@ -659,15 +643,6 @@
                       first)))
          first)))
 
-(defn map-path-state
-  "We try to do as much of our search as possible over Longs, rather than ops,
-  which are expensive to compare. Given a function mapping integers to ops, and
-  a PathState, we remap the path in the PathState from integers back to ops."
-  [mapping ^PathState path-state]
-  (PathState. (mapv mapping (.path path-state))
-              (.edges path-state)
-              (.state path-state)))
-
 (defn unchunk
   "Unchunks a possible chunked collection. We do this to avoid finding more
   solutions than necessary during graph search."
@@ -697,23 +672,16 @@
   Returns the resulting PathState."
   [transition pred ^IGraph g]
   ; First, restrict the graph to the SCC.
-  (let [; Renumber the graph to speed up equality comparison
-        ; TODO: this means we pass weird numeric vertices to transition, which
-        ; is OK right now because our transition fns don't CARE about vertices,
-        ; but... later we should maybe ensure the history is indexed and use
-        ; that for equality comparison instead? Something else fast?
-        [gn mapping] (renumber-graph g)
-        cycle (->> (vertices gn)
+  (let [cycle (->> (vertices g)
                    (keep (fn [start]
                            (let [state (transition start)
                                  init-path-state (PathState. [start] [] state)]
                              (when (not= ::invalid? init-path-state)
-                               (->> (path-state-shells transition gn
+                               (->> (path-state-shells transition g
                                                        [init-path-state])
                                     (mapcat identity)
                                     unchunk
                                     (filter path-state-loop?)
-                                    (map (partial map-path-state mapping))
                                     (filter pred)
                                     first)))))
                    first)]
@@ -727,18 +695,13 @@
 (defn find-cycle
   "Given a strongly connected graph, finds a short cycle in it."
   [^IGraph g]
-  (let [; Just to speed up equality checks here, we'll construct an isomorphic
-        ; graph with integers standing for our ops, find a cycle in THAT, then
-        ; map back to our own space.
-        [gn mapping]  (renumber-graph g)]
-    (->> (vertices gn)
-         (keep (fn [start]
-                 (when-let [cycle (->> (path-shells gn [[start]])
-                                       (mapcat identity)
-                                       (filter loop?)
-                                       first)]
-                     (mapv mapping cycle))))
-         first)))
+  (->> (vertices g)
+       (keep (fn [start]
+               (->> (path-shells g [[start]])
+                    (mapcat identity)
+                    (filter loop?)
+                    first)))
+       first))
 
 (defn fallback-cycle
   "A DFS algorithm which finds ANY cycle in a graph guaranteed to be strongly

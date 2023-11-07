@@ -370,9 +370,11 @@
            ; this op will fail or crash--we might not actually NEED edges to
            ; failures, but I don't think they'll hurt. We *do* need edges to
            ; crashed ops, because they may complete later on.
-           :invoke (let [op' (h/completion history op)
-                         g   (g/link-all-to g oks op')]
-                     (recur oks g))
+           :invoke ; NB: we might get a partial history without completions
+           (if-let [op' (h/completion history op)]
+             (recur oks (g/link-all-to g oks op'))
+             (recur oks g))
+
            ; An operation has completed. Add it to the oks buffer, and remove
            ; oks that this ok implies must have completed.
            :ok     (let [implied (g/in g op)
