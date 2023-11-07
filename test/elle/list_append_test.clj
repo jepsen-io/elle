@@ -7,7 +7,7 @@
             [clojure.test.check [generators :as gen]]
             [com.gfredericks.test.chuck.clojure-test :refer
              [checking for-all]]
-            [dom-top.core :refer [loopr]]
+            [dom-top.core :refer [loopr real-pmap]]
             [elle [core :as elle]
                   [core-test :refer [read-history]]
                   [list-append :refer :all]
@@ -15,7 +15,9 @@
                   [util :refer [map-vals]]]
             [jepsen [history :as h]
                     [txn :as txn]]
-            [slingshot.slingshot :refer [try+ throw+]]))
+            [slingshot.slingshot :refer [try+ throw+]])
+  (:import (java.util ArrayList
+                      HashMap)))
 
 (defn just-graph
   "Takes ops, makes a history, uses the given analyzer function to construct a
@@ -1097,6 +1099,24 @@
   (time (cf {:consistency-models [:strong-snapshot-isolation]}
             "histories/small-slow-scc.edn")))
 
+;; Perf testing
+
+(defn perf-check
+  "Takes a test name, the time it started generating the history, and the
+  history. Checks it for strict-1SR and prints out perf statistics. Returns
+  analysis."
+  [test-name t0 h]
+  (let [n  (/ (count h) 2)
+        t1 (System/nanoTime)
+        analysis (check h)
+        t2 (System/nanoTime)
+        run-time   (/ (- t1 t0) 1e9)
+        check-time (/ (- t2 t1) 1e9)]
+    (println (format "%s: %d ops run in %.2f s (%.2f ops/sec); checked in %.2f s (%.2f ops/sec)"
+                     test-name n run-time (/ n run-time)
+                     check-time (/ n check-time)))
+    analysis))
+
 (deftest ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system
   (let [n (long 1e6)
@@ -1136,17 +1156,82 @@
                  (h/history (persistent! history)
                             {:dense-indices? true
                              :have-indices? true
-                             :already-ops? true}))
-        t1 (System/nanoTime)
-        _ (is (= (* 2 n) (count h)))
-        analysis (check h)
-        t2 (System/nanoTime)
-        run-time   (/ (- t1 t0) 1e9)
-        check-time (/ (- t2 t1) 1e9)]
-    (is (= true (:valid? analysis)))
-    (println (format "list-append-perf-test: %d ops run in %.2f s (%.2f ops/sec); checked in %.2f s (%.2f ops/sec)"
-                     n run-time (/ n run-time)
-                     check-time (/ n check-time)))))
+                             :already-ops? true}))]
+    (is (= (* 2 n) (count h)))
+    (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
+
+(deftest ^:perf ^:focus sloppy-perf-test
+  ; An end-to-end performance test based on a sloppy database which takes
+  ; locks... sometimes.
+  (let [n           (long 1e6)
+        concurrency 4
+        ; Our state is all mutated in place using a global lock.
+        lock        (Object.)
+        state       (HashMap.)
+        apply-txn!
+        (fn apply-txn! [txn]
+          ; Whoops! Sometimes we forget the global lock!
+          (let [lock? (< 0.05 (rand))]
+            (try
+              (when lock? (monitor-enter lock))
+              (loopr [txn' (transient [])]
+                     [[f k v :as mop] txn]
+                     (case f
+                       :r
+                       (recur (conj! txn' [f k (vec (.get state k))]))
+
+                       :append
+                       (let [; Ensure we have a list of elements
+                             vs (or (.get state k)
+                                    (locking state ; prevent races in HashMap
+                                      (let [l (ArrayList.)]
+                                        (.put state k l)
+                                        l)))]
+                         ; Mutate it in place
+                         (locking vs (.add vs v)) ; prevent races in ArrayList
+                         (recur (conj! txn' mop))))
+                     (persistent! txn'))
+              (finally
+                (when lock? (monitor-exit lock))))))
+        ; Build history
+        ops      (atom (take n (gen)))
+        take-op! (fn poll-op! []
+                   (let [opv (volatile! nil)]
+                     (swap! ops (fn [ops]
+                                  (if-let [op (first ops)]
+                                    (do (vreset! opv op)
+                                        (next ops))
+                                    ; Exhausted
+                                    (do (vreset! opv nil)
+                                        ops))))
+                     @opv))
+        h    (atom [])
+        t0   (System/nanoTime)]
+    ; Go!
+    (->> (range concurrency)
+         (real-pmap (fn worker [process]
+                      (loop []
+                        (when-let [op (take-op!)]
+                          (let [op   (assoc op :process process)
+                                _    (swap! h conj op)
+                                txn' (apply-txn! (:value op))
+                                op'  (assoc op :type :ok, :value txn')]
+                            (swap! h conj op')
+                            (recur))))))
+         dorun)
+    (let [h   (h/history @h)
+          res (perf-check "sloppy-perf-test" t0 h)
+          as  (:anomalies res)]
+      (is (= (* 2 n) (count h)))
+      (is (= false (:valid? res)))
+      (is (= #{:read-uncommitted} (:not res)))
+      (is (< 1/100000 (/ (count (:G0 as)) n)))
+      (is (< 1/100000 (/ (count (:G1c as)) n)))
+      (is (< 1/100000 (/ (count (:G-single as)) n)))
+      ;(is (< 1/100000 (/ (count (:G-nonadjacent as)) n)))
+      ;(is (< 1/100000 (/ (count (:G2-item as)) n)))
+      ; (pprint (:anomaly-types res))))
+      )))
 
 ; Example of checking a file, for later
 ;(deftest dirty-update-1-test
