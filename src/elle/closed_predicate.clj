@@ -491,7 +491,7 @@
   P matches x2 but not x1."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/digraph))]
+   (loopr [g (g/linear (g/op-digraph))]
           [op          (h/oks history)
            [f :as mop] (:value op)]
           (recur
@@ -586,7 +586,7 @@
   VSet(pred)."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/digraph))]
+   (loopr [g (g/linear (g/op-digraph))]
           [op               (h/oks history)
            [f k v :as mop]  (:value op)]
           (recur
@@ -652,7 +652,7 @@
   directly precedes x' in the version order."
   [{:keys [all-versions ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/digraph))]
+   (loopr [g (g/linear (g/op-digraph))]
           [op (h/possible history)
            [f k v :as mop] (:value op)]
           (recur

@@ -628,8 +628,8 @@
   [history version-graphs]
   (let [ext-read-index  (ext-index txn/ext-reads  history)
         ext-write-index (ext-index txn/ext-writes history)]
-    (loopr [ww (g/linear (g/named-graph :ww))
-            rw (g/linear (g/named-graph :rw))]
+    (loopr [ww (g/linear (g/named-graph :ww (g/op-digraph)))
+            rw (g/linear (g/named-graph :rw (g/op-digraph)))]
            [[k version-graph] version-graphs
             ^IEdge edge (g/edges version-graph)]
            (let [v1        (.from edge)
@@ -789,7 +789,7 @@
                                                      (pr-str writes))))))))
                          graph
                          values->reads))
-               (g/linear (g/named-graph :wr))
+               (g/linear (g/named-graph :wr (g/op-digraph)))
                ext-reads))
      :explainer (WRExplainer.)}))
 

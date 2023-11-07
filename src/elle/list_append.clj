@@ -636,7 +636,7 @@
                                              append-index write-index op mop)]
                                 (g/link g dep op)
                                 g)))
-                          (g/linear (g/named-graph :ww))
+                          (g/linear (g/named-graph :ww (g/op-digraph)))
                           history))
     :explainer (WWExplainer. append-index write-index read-index)}))
 
@@ -674,7 +674,7 @@
                                 (g/link g dep op)
                                 ; No dep
                                 g)))
-                          (g/linear (g/named-graph :wr))
+                          (g/linear (g/named-graph :wr (g/op-digraph)))
                           history))
     :explainer (WRExplainer. append-index write-index read-index)}))
 
@@ -725,7 +725,7 @@
    {:graph (loopr [; Yourkit claims we were burning time in NamedGraph/link, so
                    ; we'll fall back to the concrete digraph then wrap.
                    ; Maybe inliner got confused?
-                   g (g/linear (g/digraph))]
+                   g (g/linear (g/op-digraph))]
                   [op           history
                    [f :as mop]  (:value op)]
                   (if (identical? f :append)

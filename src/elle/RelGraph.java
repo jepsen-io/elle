@@ -61,6 +61,10 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
     }
   }
 
+  public RelGraph(ToLongFunction<V> vertexHash, BiPredicate<V, V> vertexEquality) {
+    this(false, vertexHash, vertexEquality, new Map<R, IGraph<V, Object>>());
+  }
+
   /*
    * Adds a single graph to this relgraph, using the given relationship. Like
    * graph union merging edges, only O(1).

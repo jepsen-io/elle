@@ -85,13 +85,28 @@
   nil
   (->clj [x] x))
 
+(def index-hash
+  "Java functional wrapper for hashing ops by index"
+  (b/functional h/index-hash))
+
+(def index=
+  "Java functional wrapper for comparing ops by index"
+  (b/functional h/index=))
+
 (defn ^DirectedGraph digraph
   "Constructs a fresh directed graph."
   []
   (DirectedGraph.))
 
+(defn ^DirectedGraph op-digraph
+  "A digraph over operations. Uses the index of operations to massively speed
+  up equality."
+  []
+  (DirectedGraph. index-hash index=))
+
 (defn ^NamedGraph named-graph
-  "Constructs a fresh named directed graph with the given name."
+  "Constructs a fresh named directed graph over operations with the given
+  relationship name."
   ([name]
    (NamedGraph. name (digraph)))
   ([name graph]
@@ -369,14 +384,20 @@
   [^NamedGraph a, ^NamedGraph b]
   (.union a b))
 
+(defn ^RelGraph op-rel-graph
+  "An empty RelGraph for operations."
+  []
+  (RelGraph. index-hash index=))
+
 (defn ^RelGraph rel-graph-union
-  "Unions something into a RelGraph. Can take either a NamedGraph or another
-  RelGraph. With no args, returns an empty RelGraph."
-  ([] RelGraph/EMPTY)
+  "Unions something into a RelGraph. Can take either a NamedGraph or
+  another RelGraph. With no args, returns an empty RelGraph."
+  ([] (RelGraph/EMPTY))
   ([a]
    (condp instance? a
-     NamedGraph (.union RelGraph/EMPTY ^NamedGraph a)
-     RelGraph   (.union RelGraph/EMPTY ^RelGraph a)
+     NamedGraph (.union (RelGraph. (.vertexHash a) (.vertexEquality a))
+                        ^NamedGraph a)
+     RelGraph   a
      (throw (IllegalArgumentException.
               (str "Don't know how to union a relgraph with " (type a))))))
   ([^RelGraph a b]
