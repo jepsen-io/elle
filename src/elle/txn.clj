@@ -414,30 +414,6 @@
                (recur))
              false))))
 
-(def cycle-type-priorities
-  "A map of cycle types to approximately how bad they are; low numbers are more
-  interesting/severe anomalies"
-  (->> [:G0
-        :G1c
-        :G-single
-        :G-nonadjacent
-        :G2-item
-        :G2
-        :G0-process
-        :G1c-process
-        :G-single-process
-        :G-nonadjacent-process
-        :G2-item-process
-        :G2-process
-        :G0-realtime
-        :G1c-realtime
-        :G-single-realtime
-        :G-nonadjacent-realtime
-        :G2-item-realtime
-        :G2-realtime]
-       (map-indexed (fn [i t] [t i]))
-       (into {})))
-
 (def base-cycle-anomaly-specs
   "We define a specification language for different anomaly types, and a small
    interpreter to search for them. An anomaly is specified by a map including:
@@ -468,9 +444,7 @@
 
      :type         If present, the cycle explainer must tell us any cycle is of
                    this :type specifically."
-  (sorted-map-by
-    (fn [a b] (compare (cycle-type-priorities a 100)
-                       (cycle-type-priorities b 100)))
+  (sorted-map-by cm/anomaly-depth-compare
     :G0        {:rels #{:ww}}
     ; G1c has at least a wr edge, and can take either ww or wr.
     :G1c       {:rels          #{:ww :wr}
@@ -720,6 +694,7 @@
   "Searches a graph restricted to single SCC for cycle anomalies. See
   cycle-cases."
   [opts g fg pair-explainer]
+  ; (info "Checking scc of size" (b/size g))
   (let [; We're going to do a partial search which can time out. If that
         ; happens, we want to preserve as many of the cycles that we found as
         ; possible, and offer an informative error message. These two variables
@@ -733,8 +708,7 @@
             cycles @cycles]
         (info "Timing out search for" (peek types) "in SCC of" (b/size g)
               "transactions (checked" (str (pr-str (butlast types))")"))
-        ;(info :scc
-        ;      (with-out-str (pprint scc)))
+        ;(info :scc (with-out-str (pprint scc)))
         ; We generate two types of anomalies no matter what. First, an anomaly
         ; that lets us know we failed to complete the search. Second, a
         ; fallback cycle so there's SOMETHING from this SCC.
@@ -745,19 +719,21 @@
                (cycle-cases-in-scc-fallback g fg pair-explainer)]
               ; Then any cycles we already found.
               cycles))
-      ; Now, try each type of cycle we can search for
-      ;
-      ; TODO: many anomalies imply others. We should use the dependency graph to
-      ; check for special-case anomalies before general ones, and only check for
-      ; the general ones if we can't find special-case ones. e.g. if we find a
-      ; g-single, there's no need to look for g-nonadjacent.
-      ;(info "Checking scc of size" (b/size g))
-      (doseq [type+spec cycle-anomaly-specs]
-        ; (info "Checking for" type)
-        (swap! types conj (first type+spec))
-        (when-let [cycle (cycle-in-scc-of-type opts g fg pair-explainer
-                                               type+spec)]
-          (swap! cycles conj cycle)))
+      ; Try increasingly severe anomalies, updating cycles as side effect
+      (reduce (fn check-type [redundant? [type :as type+spec]]
+                ; Don't check a type we've already implied
+                (if (redundant? type)
+                  (do ;(info "Skipping redundant search for" type)
+                      redundant?)
+                  (do ; (info "Checking for" type)
+                      (swap! types conj type)
+                      (if-let [cycle (cycle-in-scc-of-type
+                                       opts g fg pair-explainer type+spec)]
+                        (do (swap! cycles conj cycle)
+                            (into redundant? (cm/all-implied-anomalies [type])))
+                        redundant?))))
+              #{}
+              cycle-anomaly-specs)
       @cycles)))
 
 (defn cycle-cases-in-graph

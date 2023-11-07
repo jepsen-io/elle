@@ -749,7 +749,7 @@
      (if (= 0 (b/size top))
        ; Done!
        (persistent! m)
-       (recur (-> (reduce bg/remove g top)
+       (recur (-> ^DirectedAcyclicGraph (reduce bg/remove g top)
                   ; Work around https://github.com/lacuna/bifurcan/issues/46 by
                   ; recreating the entire DAG.
                   .directedGraph
