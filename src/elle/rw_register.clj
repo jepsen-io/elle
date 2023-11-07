@@ -483,7 +483,7 @@
                       ext-reads-a  (ext-reads  a)]
                   ; For each key and set of downstream txns bs...
                   (loopr [^IMap key-graphs' key-graphs]
-                         [^IEntry pair downstream]
+                         [^IEntry pair downstream :via :iterator]
                          (let [k  (.key pair)
                                bs (.value pair)
                                kg (.get key-graphs' k (.linear (g/digraph)))
