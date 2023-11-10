@@ -115,7 +115,7 @@
 (deftest g2-predicate-read-unseen-test
   (let [[t1 t1' t2 t2' :as h]
         (h/history
-          [; T1 sets x=0 and predicate reads nothing. Implicitly, the version
+          [; T1 sets x=1 and predicate reads nothing. Implicitly, the version
            ; set must be the unborn values of x and y.
            {:process 0, :type :invoke, :f :txn, :value [[:w :x 1] [:rp :true nil]]}
            {:process 0, :type :ok,     :f :txn, :value [[:w :x 1] [:rp :true {}]]}
@@ -127,8 +127,17 @@
     ; VSet(P) must have covered the unborn version of y, and T2 wrote a version
     ; y = 2 which followed y = unborn, and that also changed whether the
     ; predicate matched.
+    ;
+    ; This also happens to be a strong SI violation. We don't catch it because
+    ; there are two edges from T1->T2: one is RT, and the other is RW. When
+    ; looking for a realtime cycle, we choose edges which are *solely*
+    ; realtime. This actually makes our analysis less precise than it should
+    ; be. Thankfully, the cycle-exists checker catches this.
+    ;
+    ; Later we should consider hand-rolling a better state machine for the BFS.
     (is (not (:valid? res)))
-    (is (= [:G2] (:anomaly-types res)))))
+    (is (= [:G2 :strong-snapshot-isolation-cycle-exists]
+           (:anomaly-types res)))))
 
 (deftest g1c-predicate-read-unseen-universe-delete-test
   (let [[t1 t1' t2 t2' :as h]
@@ -184,7 +193,11 @@
     ; wrote y = 1, which followed in the version order and also changed the
     ; matches of the predicate.
     (is (not (:valid? res)))
-    (is (= [:G2] (:anomaly-types res)))))
+    ; This also happens to be a strong-SI violation, but we can't see it
+    ; because our BFS search isn't smart enough to realize it can take an
+    ; RT when an RW is available.
+    (is (= [:G2 :strong-snapshot-isolation-cycle-exists]
+           (:anomaly-types res)))))
 
 (deftest wr-g1c-item-test
   ; A cycle of all write-read edges, forming G1c.

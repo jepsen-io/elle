@@ -393,7 +393,7 @@
   "Unions something into a RelGraph. Can take either a NamedGraph or
   another RelGraph. With no args, returns an empty RelGraph."
   ([] (RelGraph/EMPTY))
-  ([a]
+  ([^IGraph a]
    (condp instance? a
      NamedGraph (.union (RelGraph. (.vertexHash a) (.vertexEquality a))
                         ^NamedGraph a)
@@ -412,7 +412,9 @@
   ([] (DirectedGraph.))
   ([a] a)
   ([^DirectedGraph a ^DirectedGraph b]
-   (.merge a b union-edge))
+   ; Buggy right now; can replace once bifurcan is fixed
+   ; (.merge a b union-edge))
+   (bg/merge a b (fn [x y] (.apply union-edge x y))))
   ([a b & more]
    (reduce digraph-union a (cons b more))))
 
@@ -454,21 +456,29 @@
     (bg/out graph vertex)))
 
 (defn ^IGraph sequential-composition
-  "The sequential composition of two graphs A; B. Returns a graph C such
-  that iff x -> y in A, and y -> z in B, then x -> z in C. This is equivalent
-  to relational composition, treating each graph as a set of [in-vert out-vert]
-  pairs.
+  "The sequential composition (ish; see below) of two graphs A; B. Returns a
+  graph C such that iff x -> y in A, and y -> z in B, then x -> y -> z in C.
+  This is similar to relational composition, treating each graph as a set of
+  [in-vert out-vert] pairs.
+
+  Note that unlike A; B, we actually preserve the intermediate vertex in this
+  graph. This has two advantages: first, Bifurcan's SCC search can't
+  distinguish between singleton SCCs with/ or without self edges; preserving
+  the intermediate vertex means any SCC has at least 2 ops. Second, it means
+  cycles detected here are isomorphic to the real cycles we're looking for.
 
   For now, we simply destroy edge values; it's not clear what the right
   representation is."
   [a b]
-  (loopr [c (b/linear (bg/digraph))]
+  (loopr [c (b/linear (op-digraph))]
          [x->y (bg/edges a)
           z    (out+ b (bg/edge-to x->y))]
-         (recur (bg/link c (bg/edge-from x->y) z))
+         (let [x (bg/edge-from x->y)
+               y (bg/edge-to   x->y)]
+           (recur (-> c (bg/link x y) (bg/link y z))))
          (b/forked c)))
 
-(defn ^IGraph sequential-expansion
+(defn ^IGraph sequential-extension
   "Takes two RelGraphs A and B. Returns A U (A; B): the union of A with the
   sequential composition of A and B. In other words, takes A and expands it
   with edges that represent a step through A, then a step through B.

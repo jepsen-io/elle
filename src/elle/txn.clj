@@ -294,6 +294,143 @@
                 (let [cases (persistent! cases)]
                   (when (seq cases) cases)))))
 
+;; Cycle existence
+
+(def cycle-exists-specs
+  "A series of specifications for consistency models and subgraphs which must be
+  acyclic if that level holds. Each of these has a corresponding anomaly type,
+  like :read-uncommitted-cycle-exists, in consistency-models.
+
+  Note that these use canonical consistency model names!"
+  (->> [; Read uncommitted requires no write cycles
+        {:model :PL-1, :subgraph :ww}
+        ; Read committed requires no circular information flow
+        {:model :PL-2, :subgraph [:union :ww :wr]}
+
+        ; Prefix can have a WW followed by an RW edge
+        ; This is work we can't cite just yet--uncomment it later.
+        ; {:model :prefix, :subgraph [:union :ww :wr [:composition :wr :rw]]}
+
+        ; Snapshot isolation extends through a single RW hop
+        {:model :PL-SI, :subgraph [:extension [:union :ww :wr] :rw]}
+
+        ; Serializable requires no data cycles
+        {:model :PL-3, :subgraph [:union :ww :wr :rw]}
+
+        ; Strong session variants add process edges
+        {:model    :strong-session-snapshot-isolation
+         :subgraph [:extension [:union :ww :wr :process] :rw]}
+        {:model    :strong-session-serializable
+         :subgraph [:union :ww :wr :rw :process]}
+
+        ; Strong variants add realtime
+        {:model    :strong-snapshot-isolation
+         :subgraph [:extension [:union :ww :wr :realtime] :rw]}
+        {:model :PL-SS, :subgraph [:union :ww :wr :rw :realtime]}
+        ]
+       (mapv (fn [{:keys [model] :as spec}]
+               ; Add a :type field for the anomaly type, and a :friendly-model
+               ; field for the friendly model name
+               (assoc spec
+                      :type (keyword (str (name model) "-cycle-exists"))
+                      :friendly-model (cm/friendly-model-name model))))))
+
+(defn cycle-exists-subgraph
+  "Takes a transaction graph and a subgraph spec ala cycle-exists-specs.
+  Computes the given subgraph from it."
+  [g spec]
+  (if (keyword? spec)
+    ; Singleton kw: just project
+    (g/project-relationships #{spec} g)
+    ; AST interpreter
+    (let [[f & args] spec]
+      (case f
+        :union
+        ; We can do something clever here. If we're unioning n keywords
+        ; directly, we can just project the graph to those relationships and
+        ; get their union in constant time.
+        (let [split (group-by keyword? args)
+              kws   (when-let [kws (get split true)]
+                      (g/project-relationships (set kws) g))
+              other (when-let [other (get split false)]
+                      (->> other
+                           (mapv (partial cycle-exists-subgraph g))
+                           (apply g/digraph-union)))]
+          (cond (nil? other) kws
+                (nil? kws)   other
+                true         (g/digraph-union kws other)))
+
+        :extension
+        (do (assert (= 2 (count args)))
+            (g/sequential-extension (cycle-exists-subgraph g (first args))
+                                    (cycle-exists-subgraph g (second args))))
+
+        :composition
+        (do (assert (= 2 (count args)))
+            (g/sequential-composition (cycle-exists-subgraph g (first args))
+                                      (cycle-exists-subgraph g (second args))))))))
+
+(defn cycle-exists-cases
+  "Finding cycles can be expensive, but we can actually distinguish between
+  several levels simply by proving an SCC exists. This function takes a graph.
+  It returns a vector of anomaly maps like:
+
+    {:type     :PL-2-cycle-exists ; A cycle violating PL-2 exists... somewhere
+     :not      :read-committed  ; The isolation level which must not hold
+     :subgraph [:union :ww :wr] ; The weakest subgraph which contained an SCC
+     :scc-size 4                ; The size of the smallest SCC found
+     :scc      #{1, 5, 7, 8}}   ; The set of indices of the transactions in
+                                ; that SCC"
+  [g]
+  (loopr [errs       []
+          redundant? #{}]
+         [{:keys [model friendly-model subgraph type]} cycle-exists-specs]
+         (if (redundant? model)
+           (recur errs redundant?)
+           (let [sg   (cycle-exists-subgraph g subgraph)
+                 sccs (->> (bg/strongly-connected-components sg)
+                           (sort-by b/size))
+                 scc  (g/->clj (first sccs))]
+             (if-not (seq sccs)
+               (recur errs redundant?)
+               (recur (conj errs
+                            {:type     type
+                             :not      friendly-model
+                             :subgraph subgraph
+                             :scc-size (count scc)
+                             :scc      (into (sorted-set) (map :index scc))})
+                      (into redundant? (cm/all-impossible-models #{model}))))))
+         errs))
+
+(defn remove-redundant-cycle-exists
+  "Cycle-exists anomalies are a fallback mechanism: if we can demonstrate a
+  specific cycle, an internal anomaly, a lost update, etc., there's really not
+  much benefit in telling people 'hey a cycle exists somewhere in these 437
+  transactions'. However, we don't *know* when we're doing cycle search whether
+  our cycle-exists anomalies will be redundant or not.
+
+  This function takes a map of anomaly types to anomaly collections, ala:
+
+     {:G1c               [...]
+      :PL-2-cycle-exists [...]}}
+
+  We return a version of this map omitting redundant cycle-exists anomalies."
+  [anomalies]
+  (let [; What non-existence anomalies exist?
+        other-anomaly-types (remove (fn [t]
+                                      (re-find #"-cycle-exists$" (name t)))
+                                    (keys anomalies))
+        ; What models do they alone rule out?
+        impossible-models (cm/anomalies->impossible-models other-anomaly-types)
+        ; Which means we can omit...
+        omittable (->> cycle-exists-specs
+                       (filter (comp impossible-models :model))
+                       (map :type)
+                       set)]
+    (reduce dissoc anomalies omittable)))
+
+;; Cycle finding
+
 (def cycle-explainer
   "This cycle explainer wraps elle.core's cycle explainer, and categorizes
   cycles based on what kinds of edges they contain; e.g. an all-ww cycle is
@@ -690,16 +827,61 @@
                     ex))
               ex)))))
 
+(defn cycle-exists-cases->impossible-cycle-anomalies
+  "Takes a complete collection of cycle-exists cases for a graph, and returns a
+  set of cycle anomalies which *must not* exist in the graph. For instance, if
+  :snapshot-isolation doesn't appear in the cycle exists cases, we don't need
+  to check for :G0, :G1c, or :G-single: they can't possibly be there."
+  [cases]
+  (let [; We know these models are impossible
+        impossible-models (set (cm/all-impossible-models
+                                 (map :not cases)))
+        ; And by extension these models
+        ; Which means we did *not* find a cyclic anomaly that would have
+        ; invalidated these models.
+        possible-models (set/difference (set (map :model cycle-exists-specs))
+                                        impossible-models)
+        ; Which cyclic anomalies are proscribed by the possible models? These
+        ; can't exist.
+        impossible-anomalies (set/intersection
+                               cycle-types
+                               (cm/anomalies-prohibited-by possible-models))]
+    impossible-anomalies))
+
+(defn merge-cycle-exists+cycle-cases
+  "Takes a vector of cycle-exists cases and a vector of cycle cases. Eliminates
+  any cycle-exists cases where we have a corresponding cycle case. Returns a
+  vector of all cases mixed together."
+  [cycle-exists-cases cycle-cases]
+  (let [; What kinds of cycles did we find?
+        cycle-types (set (map :type cycle-cases))
+        ; What consistency models can we rule out based on cycles alone?
+        impossible-models (cm/anomalies->impossible-models cycle-types)
+        ; Skip any cycle-exists cases where we have a cycle that proves that
+        ; specific level is impossible
+        cycle-exists-cases (vec (remove (comp impossible-models
+                                              cm/canonical-model-name
+                                              :not)
+                                        cycle-exists-cases))
+        ]
+    (into cycle-exists-cases cycle-cases)))
+
 (defn cycle-cases-in-scc
-  "Searches a graph restricted to single SCC for cycle anomalies. See
+  "Searches a graph restricted to a single SCC for cycle anomalies. See
   cycle-cases."
   [opts g fg pair-explainer]
   ; (info "Checking scc of size" (b/size g))
-  (let [; We're going to do a partial search which can time out. If that
+  (let [; First, check for cycle existence. We'll use this to guide our search.
+        cycle-exists-cases (cycle-exists-cases g)
+        ;_ (info "cycle-exists-cases")
+        ;_ (pprint (map :type cycle-exists-cases))
+        ;_ (info "We're going to skip"
+        ;        (cycle-exists-cases->impossible-cycle-anomalies cycle-exists-cases))
+        ; We're going to do a partial search which can time out. If that
         ; happens, we want to preserve as many of the cycles that we found as
         ; possible, and offer an informative error message. These two variables
         ; help us do that.
-        types  (atom []) ; What kind of anomalies have we searched for?
+        types  (atom [])  ; What kind of anomalies have we searched for?
         cycles (atom [])] ; What anomalies did we find?
     (util/timeout
       (:cycle-search-timeout opts cycle-search-timeout)
@@ -707,18 +889,19 @@
       (let [types  @types
             cycles @cycles]
         (info "Timing out search for" (peek types) "in SCC of" (b/size g)
-              "transactions (checked" (str (pr-str (butlast types))")"))
+              "transactions (checked" (str (pr-str (drop-last types)) ")"))
         ;(info :scc (with-out-str (pprint scc)))
         ; We generate two types of anomalies no matter what. First, an anomaly
         ; that lets us know we failed to complete the search. Second, a
         ; fallback cycle so there's SOMETHING from this SCC.
         (into [{:type               :cycle-search-timeout
                 :anomaly-spec-type  (peek types)
-                :does-not-contain   (drop-last types)
+                :does-not-contain   (->> (drop-last types)
+                                         (remove (set (map :type cycles))))
                 :scc-size           (b/size g)}
                (cycle-cases-in-scc-fallback g fg pair-explainer)]
               ; Then any cycles we already found.
-              cycles))
+              (into cycle-exists-cases cycles)))
       ; Try increasingly severe anomalies, updating cycles as side effect
       (reduce (fn check-type [redundant? [type :as type+spec]]
                 ; Don't check a type we've already implied
@@ -732,9 +915,11 @@
                         (do (swap! cycles conj cycle)
                             (into redundant? (cm/all-implied-anomalies [type])))
                         redundant?))))
-              #{}
+              (cycle-exists-cases->impossible-cycle-anomalies
+                cycle-exists-cases)
               cycle-anomaly-specs)
-      @cycles)))
+      ; Combine with cycle-exists-cases
+      (into cycle-exists-cases @cycles))))
 
 (defn cycle-cases-in-graph
   "Takes a search options map (see cycles), a pair explainer that
@@ -841,7 +1026,8 @@
   ;(info :anomalies anomalies)
   ;(info :reportable-anomaly-types (reportable-anomaly-types opts))
   (let [bad         (select-keys anomalies (prohibited-anomaly-types opts))
-        reportable  (select-keys anomalies (reportable-anomaly-types opts))]
+        reportable  (select-keys anomalies (reportable-anomaly-types opts))
+        reportable  (remove-redundant-cycle-exists reportable)]
     (if (empty? reportable)
       ; TODO: Maybe return anomalies and/or a boundary here too, and just not
       ; flag them as invalid? Maybe? I dunno, might be noisy, especially if we
@@ -853,6 +1039,8 @@
               :anomaly-types     (sort (keys reportable))
               :anomalies         reportable}
              (cm/friendly-boundary (keys anomalies))))))
+
+;; Generator
 
 (defn key-dist-scale
   "Takes a key-dist-base and a key count. Computes the scale factor used for

@@ -301,20 +301,23 @@
     (is (= #{6} (->clj (.out g 5))))))
 
 (deftest sequential-composition-test
-  (let [a (-> (bg/digraph)
-              (bg/link :x1 :y1)
-              (bg/link :x1 :y2)
-              (bg/link :r  :s))
+  (let [[x1 y1 y2 z1 z2 z3 q r s] (map (fn [i] (h/op {:index i})) (range 8))
+        a (-> (bg/digraph)
+              (bg/link x1 y1)
+              (bg/link x1 y2)
+              (bg/link r  s))
         b (-> (bg/digraph)
-              (bg/link :y1 :z1)
-              (bg/link :y1 :z2)
-              (bg/link :y2 :z3)
-              (bg/link :r  :q)
-              (bg/link :q  :r))]
+              (bg/link y1 z1)
+              (bg/link y1 z2)
+              (bg/link y2 z3)
+              (bg/link r  q)
+              (bg/link q  r))]
     (is (= (-> (bg/digraph)
-               (bg/link :x1 :z1)
-               (bg/link :x1 :z2)
-               (bg/link :x1 :z3))
+               (bg/link x1 y1)
+               (bg/link x1 y2)
+               (bg/link y1 z1)
+               (bg/link y1 z2)
+               (bg/link y2 z3))
            (sequential-composition a b)))))
 
 (deftest topo-depths-test

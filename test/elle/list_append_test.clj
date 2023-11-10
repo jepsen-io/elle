@@ -941,14 +941,16 @@
     ; There's a full explanation here but... it's long, and all we care about
     ; is that we can fall back to saying SOMETHING about this enormous SCC.
     (is (not (:valid? r)))
-    (is (= #{:strong-serializable} (:not r)))
-    (is (= [:G2-item-realtime :cycle-search-timeout]
+    (is (= #{:strong-snapshot-isolation} (:not r)))
+    (is (= [:G2-item-realtime
+            :cycle-search-timeout
+            :strong-snapshot-isolation-cycle-exists]
            (:anomaly-types r)))
     (let [cst (-> r :anomalies :cycle-search-timeout first)]
       ; This might change if we get faster or adjust timeouts
-      (is (= []     (:does-not-contain cst)))
-      (is (= :G0    (:anomaly-spec-type cst)))
-      (is (number?  (:scc-size cst))))))
+      (is (= []           (:does-not-contain cst)))
+      (is (= :G0-realtime (:anomaly-spec-type cst)))
+      (is (number?        (:scc-size cst))))))
 
 (deftest G-nonadjacent-test
   ; For G-nonadjacent, we need two rw edges (just one would be G-single), and
@@ -1053,6 +1055,7 @@
            {:process 2, :type :ok, :f :txn, :value [[:r :y [1]]], :index 3}
            {:process 2, :type :invoke, :f :txn, :value [[:append :x 1]], :index 4}
            {:process 2, :type :ok, :f :txn, :value [[:append :x 1]], :index 5}])]
+    ; t0 -wr-> t1 -process-> t2 -wr-> t1
     (is (= {:valid? false
             :anomaly-types [:G1c-process],
            :anomalies
@@ -1094,12 +1097,98 @@
           :not #{:read-committed}}
          (c {:consistency-models [:read-committed]} h)))))
 
+(deftest unfindable-g-single
+  ; In this test, we construct a single G-single cycle awash in a sea of
+  ; spurious G2-item cycles. This cycle times out our G-single search, but our
+  ; cycle-exists pass can prove that a G-single or weaker must exist by finding
+  ; an SCC.
+  (let [n          1000
+        noise-n    10
+        ring (for [i (range n)]
+                {:type :ok
+                 :process 0
+                 :value [; We append 0, 1, 2, ... to get a ww chain
+                         [:append :ring i]
+                         (condp = i
+                          ; First one writes :anti
+                          0 [:append :anti :first]
+
+                          ; Last one fails to read anti; that's a G-single
+                          (dec n) [:r :anti nil]
+
+                          ; Everyone else does noop writes
+                          [:append i 0])]})
+        ; To see the ring, we need a version order on :ring
+        ring-vo-read [{:type    :ok
+                       :process 1
+                       :value   [[:r :ring (vec (range n))]]}]
+        ; Now we flood the history with appends of integer keys dangling off
+        ; the ring, to slow down cycle BFS. They terminate in a read of key i,
+        ; to establish the version order of i, and a rw-rw hop to the first op
+        ; in the ring. This means they have a *non* G-single cycle, so they
+        ; won't be pruned by our initial SCC restriction pass.
+        noise (for [i (range 1 (dec n))
+                    j (range 1 noise-n)]
+                (let [penultimate? (= j (- noise-n 2))
+                      last?        (= j (dec noise-n))]
+                  {:type    :ok
+                   :process 2
+                   :value
+                   (cond penultimate?
+                         [; Penultimate does a read of i so we have an order
+                          [:r i (vec (range (- noise-n 2)))]
+                          ; And also a read of a special anti-i key, so we can
+                          ; rw to the last.
+                          [:r [:anti i] nil]]
+
+                         last?
+                         [; Last writes that special anti-i key
+                          [:append [:anti i] 0]
+                          ; Last does a read of :ring just prior to the first
+                          ; ring entry
+                          [:r :ring nil]]
+
+                         ; Every other link are just appends: a ww chain
+                         true
+                         [[:append i j]])}))
+
+        h (->> (concat ring ring-vo-read noise)
+               (mapcat pair)
+               h/history)
+        res (c {:consistency-models [:snapshot-isolation]} h)]
+    ;(println "G-single SCC")
+    ;(pprint (->> res :anomalies :snapshot-isolation-cycle-exists first :scc
+    ;             (mapv (partial h/get-index h))
+    ;             (mapv :value)))
+    (is (= {:valid?         false
+            :not            #{:snapshot-isolation
+                              ; TODO: our clever little search system finds a
+                              ; G2-item even though we didn't ask it to, and
+                              ; although it won't *show* that in the output...
+                              ; it still knows.
+                              :repeatable-read}
+            :anomaly-types  [:PL-SI-cycle-exists :cycle-search-timeout]
+            :anomalies      {:PL-SI-cycle-exists
+                             [{:type      :PL-SI-cycle-exists
+                               :not       :snapshot-isolation
+                               :subgraph  [:extension [:union :ww :wr] :rw]
+                               :scc-size  n
+                               :scc       (set (map #(inc (* 2 %))
+                                                    (range n)))}]
+                             :cycle-search-timeout
+                              [{:type :cycle-search-timeout,
+                                :anomaly-spec-type :G-single,
+                                :does-not-contain [],
+                                :scc-size (dec (/ (count h) 2))}]
+                             }}
+           res))))
+
+;; Perf testing
+
 (deftest ^:perf scc-search-perf-test
   ; A case where even small SCCs caused the cycle search to time out
   (time (cf {:consistency-models [:strong-snapshot-isolation]}
             "histories/small-slow-scc.edn")))
-
-;; Perf testing
 
 (defn perf-check
   "Takes a test name, the time it started generating the history, and the
@@ -1160,7 +1249,7 @@
     (is (= (* 2 n) (count h)))
     (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
 
-(deftest ^:perf ^:focus sloppy-perf-test
+(deftest ^:perf sloppy-perf-test
   ; An end-to-end performance test based on a sloppy database which takes
   ; locks... sometimes.
   (let [n           (long 1e6)

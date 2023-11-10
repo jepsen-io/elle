@@ -16,6 +16,7 @@ import io.lacuna.bifurcan.IEntry;
 import io.lacuna.bifurcan.IGraph;
 import io.lacuna.bifurcan.IMap;
 import io.lacuna.bifurcan.ISet;
+import io.lacuna.bifurcan.List;
 import io.lacuna.bifurcan.Map;
 import io.lacuna.bifurcan.Set;
 
@@ -37,6 +38,7 @@ import io.lacuna.bifurcan.Set;
 public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   private static final Object DEFAULT = new Object();
   private static final Set<Object> EMPTY_SET = new Set<Object>();
+  private static final Set<Object> SINGLE_NULL_SET = new Set<Object>().add(null);
 
   // Special identity object for union
   public static final RelGraph<Object, Object> EMPTY = new RelGraph<Object, Object>(false, null, null,
@@ -262,12 +264,17 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   }
 
   public IGraph<V, Set<R>> link(V from, V to, Set<R> edge, BinaryOperator<Set<R>> merge) {
-    throw new UnsupportedOperationException();
+    // Gross, bad: we're just going to ignore the merge fn here. We only ever
+    // call this intending union.
+    return link(from, to, edge);
   }
 
   public IGraph<V, Set<R>> link(V from, V to, Set<R> edge) {
     IMap<R, IGraph<V, Object>> graphsPrime = graphs.linear();
-    // For each relationship, add a link in that edge.
+    if (edge == null) {
+      edge = (Set<R>) SINGLE_NULL_SET;
+    }
+    // For each relationship, add a link in that graph.
     for (R rel : edge) {
       IGraph<V, Object> g = graphs.get(rel, new DirectedGraph<V, Object>());
       g = g.link(from, to, null);

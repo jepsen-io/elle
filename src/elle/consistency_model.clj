@@ -324,13 +324,15 @@
   "Takes a set of models, and expands it, using `models`, to a set of all
   models which are implied by any of those models."
   [ms]
-  (g/bfs (partial g/out models) (validate-models ms)))
+  (g/bfs (partial g/out models)
+         (map canonical-model-name (validate-models ms))))
 
 (defn all-impossible-models
   "Takes a set of models which are impossible, and expands it, using `models`,
   to a set of all models which are also impossible."
   [impossible]
-  (g/bfs (partial g/in models) (validate-models impossible)))
+  (g/bfs (partial g/in models)
+         (map canonical-model-name (validate-models impossible))))
 
 (defn most-models
   "Given a set of models, and a direction function (g/in or g/out), gives a
@@ -385,8 +387,10 @@
                                     ; when a predicate read fails to observe a
                                     ; version when *every* version in the
                                     ; history matches the predicate.
-                                    :predicate-read-miss]
-        :PL-2                      [:G1]               ; Adya
+                                    :predicate-read-miss
+                                    :PL-3-cycle-exists]
+        :PL-2                      [:G1                ; Adya
+                                    :PL-2-cycle-exists]
         :PL-1                      [:G0                ; Adya
                                     ; I don't think an Adya history can exist
                                     ; with either of these. We might want to
@@ -395,8 +399,11 @@
                                     ; formalisms well enough to say for sure.
                                     :duplicate-elements
                                     ; Version orders are supposed to be total
-                                    :cyclic-versions]
-        :prefix                    [:internal :G1a]    ; Cerone (incomplete)
+                                    :cyclic-versions
+                                    :PL-1-cycle-exists]
+        :prefix                    [:internal :G1a     ; Cerone (incomplete)
+                                    ; :prefix-cycle-exists ; Not yet ready
+                                    ]
         :serializable              [:internal]         ; Cerone (incomplete)
         :snapshot-isolation        [:internal          ; Cerone (incomplete)
                                     :G1                ; Adya
@@ -418,6 +425,7 @@
                                     ; forbids *any* history where all rw edges
                                     ; are nonadjacent, not just G-single.
                                     :G-nonadjacent
+                                    :PL-SI-cycle-exists
                                     ]
         :read-atomic               [:internal          ; Cerone (incomplete)
                                     :G1a               ; Cerone (incomplete)
@@ -433,7 +441,8 @@
         :ROLA                      [:lost-update]      ; ROLA
         :strict-serializable       [:G1                ; Adya
                                     :G1c-realtime      ; Adya
-                                    :G2-realtime]      ; Adya
+                                    :G2-realtime       ; Adya
+                                    :PL-SS-cycle-exists]
         ; I *don't* have a source for these officially, because the use of
         ; G-nonadjacent isn't well canonicalized in the literature, but it
         ; seems obvious that strong session SI should prevent you from failing
@@ -442,16 +451,21 @@
         ; (G-single-realtime), and since we actually formalize this in SI as
         ; G-nonadjacent rather than just G-single, I'm going to include
         ; G-nonadjacent's realtime and process variants here too.
-        :strong-session-snapshot-isolation [:internal
-                                            :G1-process
-                                            :G-nonadjacent-process]
-        :strong-snapshot-isolation         [:internal
-                                            :G1-realtime
-                                            :G-nonadjacent-realtime]
-        :strong-session-serializable [:G1-process      ; Daudjee
-                                      :G2-process]     ; Daudjee
+        :strong-session-snapshot-isolation
+        [:internal
+         :G1-process
+         :G-nonadjacent-process
+         :strong-session-snapshot-isolation-cycle-exists]
+        :strong-snapshot-isolation
+        [:internal
+         :G1-realtime
+         :G-nonadjacent-realtime
+         :strong-snapshot-isolation-cycle-exists]
+        :strong-session-serializable
+        [:G1-process      ; Daudjee
+         :G2-process      ; Daudjee
+         :strong-session-serializable-cycle-exists] ; Alvaro (unpub)
         :update-serializable       [:G1 :G-update]     ; Adya
-
         }
        (map (fn [[k v]] [(canonical-model-name k) v]))
        g/map->dag))

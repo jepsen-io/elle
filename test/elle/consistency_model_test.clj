@@ -3,7 +3,8 @@
   into claims about what kind of consistency models are supported by, or ruled
   out by, a given history."
   (:require [bifurcan-clj [graph :as bg]]
-            [clojure [pprint :refer [pprint]]
+            [clojure [datafy :refer [datafy]]
+                     [pprint :refer [pprint]]
                      [test :refer :all]]
             [elle.consistency-model :refer :all]))
 
@@ -12,7 +13,55 @@
 
 (deftest all-anomalies-test
   ; Note: these are in implication & severity order
-  (is (= [:G-MSR :G-SI :G-SIb :G-cursor :G-monotonic :G-update :G0 :G1b :GSIa :cyclic-versions :dirty-update :duplicate-elements :future-read :incompatible-order :internal :lost-update :predicate-read-miss :G1a :G1c :write-skew :G-single :G1 :G2-item :G-nonadjacent :GSIb :G2 :GSI :G0-process :G1c-process :G-single-process :G1-process :G2-item-process :G-nonadjacent-process :G2-process :G0-realtime :G1c-realtime :G-single-realtime :G1-realtime :G2-item-realtime :G-nonadjacent-realtime :G2-realtime]
+  (is (= [:G-MSR
+          :G-SI
+          :G-SIb
+          :G-cursor
+          :G-monotonic
+          :G-update
+          :G0
+          :G1b
+          :GSIa
+          :PL-1-cycle-exists
+          :PL-2-cycle-exists
+          :PL-3-cycle-exists
+          :PL-SI-cycle-exists
+          :PL-SS-cycle-exists
+          :cyclic-versions
+          :dirty-update
+          :duplicate-elements
+          :future-read
+          :incompatible-order
+          :internal
+          :lost-update
+          :predicate-read-miss
+          :strong-session-serializable-cycle-exists
+          :strong-session-snapshot-isolation-cycle-exists
+          :strong-snapshot-isolation-cycle-exists
+          :G1a
+          :G1c
+          :write-skew
+          :G-single
+          :G1
+          :G2-item
+          :G-nonadjacent
+          :GSIb
+          :G2
+          :GSI
+          :G0-process
+          :G1c-process
+          :G-single-process
+          :G1-process
+          :G2-item-process
+          :G-nonadjacent-process
+          :G2-process
+          :G0-realtime
+          :G1c-realtime
+          :G-single-realtime
+          :G1-realtime
+          :G2-item-realtime
+          :G-nonadjacent-realtime
+          :G2-realtime]
          (vec all-anomalies))))
 
 (deftest all-implied-anomalies-test
@@ -72,6 +121,8 @@
                :G1c
                :G1
                :G0
+               :PL-1-cycle-exists
+               :PL-2-cycle-exists
                :cyclic-versions
                :duplicate-elements
                :incompatible-order
@@ -248,6 +299,10 @@
     (is (= {:not #{:strong-snapshot-isolation}
             :also-not #{:strong-serializable}}
            (friendly-boundary [:G-single-realtime])))))
+
+(deftest all-impossible-models-test
+  (is (= #{:strong-session-serializable :PL-SS}
+         (set (all-impossible-models #{:strong-session-serializable})))))
 
 ; This is more for building plots than anything else; it's not actually testing
 ; anything.
