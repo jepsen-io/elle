@@ -273,8 +273,13 @@
 (defn project-relationships
   "Projects a RelGraph to just the given set of relationships."
   [target-rels ^RelGraph g]
+  ; Faster version: single rel
   (if (= 1 (count target-rels))
-    (.projectRel  ^RelGraph g (first target-rels))
+    (let [rel (first target-rels)
+          ^NamedGraph g (.projectRel^RelGraph g rel)]
+      ; We still want a graph with *sets* of relationships for edges
+      (NamedGraph. (bs/add bs/empty rel) (.graph g)))
+    ; Slower version: RelGraph.
     (.projectRels ^RelGraph g target-rels)))
 
 (defn ^DirectedGraph remove-self-edges

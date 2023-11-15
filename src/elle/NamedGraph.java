@@ -25,6 +25,7 @@ import io.lacuna.bifurcan.Set;
 
 public class NamedGraph<V, N> implements IGraph<V, N>, ElleGraph {
   private static final Set<Object> EMPTY_SET = new Set<Object>();
+  private static final Object DEFAULT = new Object();
   private final N name;
   private IGraph<V, Object> graph;
 
@@ -95,6 +96,15 @@ public class NamedGraph<V, N> implements IGraph<V, N>, ElleGraph {
   public N edge(V from, V to) {
     graph.edge(from, to); // Throws if not present
     return name;
+  }
+
+  public N edge(V from, V to, N notFound) {
+    Object r = graph.edge(from, to, DEFAULT);
+    if (r == DEFAULT) {
+      return notFound;
+    } else {
+      return name;
+    }
   }
 
   public ISet<V> in(V vertex) {

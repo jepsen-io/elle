@@ -12,6 +12,10 @@
                  [io.jepsen/history "0.1.3-SNAPSHOT"]
                  [jepsen.txn "0.1.2"]]
   :java-source-paths ["src"]
+  ; We need jepsen.history.Op available before we can compile our java code
+  :prep-tasks [["compile" "jepsen.history"]
+               "javac"
+               "compile"]
   :javac-options ["-target" "1.8" "-source" "1.8"]
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.14"]
                                   [org.clojure/clojure "1.11.1"]

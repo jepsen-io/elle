@@ -1249,7 +1249,7 @@
     (is (= (* 2 n) (count h)))
     (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
 
-(deftest ^:perf sloppy-perf-test
+(deftest ^:perf ^:focus sloppy-perf-test
   ; An end-to-end performance test based on a sloppy database which takes
   ; locks... sometimes.
   (let [n           (long 1e6)

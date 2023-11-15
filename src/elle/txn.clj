@@ -9,7 +9,8 @@
             [clojure.tools.logging :refer [info warn]]
             [clojure.java.io :as io]
             [dom-top.core :refer [loopr]]
-            [elle [core :as elle]
+            [elle [bfs :as bfs]
+                  [core :as elle]
                   [consistency-model :as cm]
                   [graph :as g]
                   [util :as util]
@@ -792,21 +793,21 @@
               ; full state machine search. Our graph will include *everything*
               ; possible.
               (or (seq preds) nonadjacent-rels)
-              (g/find-cycle-with transition pred
-                                 (fg (set/union rels nonadjacent-rels
-                                                required-rels single-rels
-                                                multiple-rels)))
+              (bfs/search (fg (set/union rels nonadjacent-rels
+                                         required-rels single-rels
+                                         multiple-rels))
+                          spec)
 
               ; No predicates, no nonadjacents. If there's a single rels
               ; constraint, we can start our search there and jump back into
               ; the rels graph.
               single-rels
-              (g/find-cycle-starting-with (fg single-rels) (fg rels))
+              (bfs/search (fg (set/union single-rels rels)) spec)
 
               ; Rels only, nothing else. Straightforward search. This is super
               ; fast for stuff like G0/G1c, which we check first.
               true
-              (g/find-cycle (fg rels)))]
+              (bfs/search (fg rels) spec))]
     (when cycle
       ;(info "Cycle:\n" (with-out-str (pprint cycle)))
       (let [ex (elle/explain-cycle cycle-explainer pair-explainer cycle)]

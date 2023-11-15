@@ -195,16 +195,29 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   public Set<R> edge(V from, V to) {
     Set<R> rels = (Set<R>) EMPTY_SET.linear();
     for (IEntry<R, IGraph<V, Object>> kv : graphs) {
-      try {
-        kv.value().edge(from, to); // Explodes if absent
+      Object edge = kv.value().edge(from, to, DEFAULT);
+      if (edge != DEFAULT) {
         rels = rels.add(kv.key());
-      } catch (IllegalArgumentException e) {
-        // No such edge
       }
     }
 
     if (rels.size() == 0) {
       throw new IllegalArgumentException("no such edge");
+    }
+    return rels.forked();
+  }
+
+  public Set<R> edge(V from, V to, Set<R> notFound) {
+    Set<R> rels = (Set<R>) EMPTY_SET.linear();
+    for (IEntry<R, IGraph<V, Object>> kv : graphs) {
+      Object edge = kv.value().edge(from, to, DEFAULT);
+      if (edge != DEFAULT) {
+        rels = rels.add(kv.key());
+      }
+    }
+
+    if (rels.size() == 0) {
+      return notFound;
     }
     return rels.forked();
   }
@@ -250,7 +263,8 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
     Set<V> s = (Set<V>) EMPTY_SET.linear();
     boolean present = false;
     for (IGraph<V, Object> g : graphs.values()) {
-      // This contains check is expensive and duplicates work in g.out(), but if we call g.out directly it'll throw and that's *also* expensive, ugh.
+      // This contains check is expensive and duplicates work in g.out(), but if we
+      // call g.out directly it'll throw and that's *also* expensive, ugh.
       if (g.vertices().contains(vertex)) {
         s = s.union(g.out(vertex));
         present = true;
