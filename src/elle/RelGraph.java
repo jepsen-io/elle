@@ -40,10 +40,6 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   private static final Set<Object> EMPTY_SET = new Set<Object>();
   private static final Set<Object> SINGLE_NULL_SET = new Set<Object>().add(null);
 
-  // Special identity object for union
-  public static final RelGraph<Object, Object> EMPTY = new RelGraph<Object, Object>(false, null, null,
-      new Map<Object, IGraph<Object, Object>>());
-
   private boolean linear;
   private ToLongFunction<V> vertexHash;
   private BiPredicate<V, V> vertexEquality;
@@ -53,6 +49,7 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
 
   private RelGraph(boolean linear, ToLongFunction<V> vertexHash, BiPredicate<V, V> vertexEquality,
       IMap<R, IGraph<V, Object>> graphs) {
+
     this.linear = linear;
     this.vertexHash = vertexHash;
     this.vertexEquality = vertexEquality;
@@ -76,10 +73,10 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
     if (graphs.contains(rel)) {
       throw new IllegalArgumentException("Already have relationship " + rel);
     }
-    if ((vertexHash != null) && !vertexHash.equals(graph.vertexHash())) {
+    if (!vertexHash.equals(graph.vertexHash())) {
       throw new IllegalArgumentException("All graphs must have same vertex hash");
     }
-    if ((vertexEquality != null) && !vertexEquality.equals(graph.vertexEquality())) {
+    if (!vertexEquality.equals(graph.vertexEquality())) {
       throw new IllegalArgumentException("All graphs must have same vertex equality");
     }
     IMap<R, IGraph<V, Object>> graphsPrime = graphs.put(rel, graph.graph());
@@ -87,42 +84,38 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       this.graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, graph.vertexHash(), graph.vertexEquality(), graphsPrime);
+      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
     }
   }
 
   /* Unions another RelGraph into this one. */
   public RelGraph<V, R> union(RelGraph<V, R> graph) {
     IMap<R, IGraph<V, Object>> graphsPrime = graphs;
-    ToLongFunction<V> vertexHashPrime = vertexHash;
-    BiPredicate<V, V> vertexEqualityPrime = vertexEquality;
     for (IEntry<R, IGraph<V, Object>> kv : graph.graphs) {
       final R rel = kv.key();
       final IGraph<V, Object> g = kv.value();
       if (graphs.contains(rel)) {
         throw new IllegalArgumentException("Already have relationship " + rel);
       }
-      if ((vertexHashPrime != null) && !vertexHashPrime.equals(g.vertexHash())) {
+      if (!vertexHash.equals(g.vertexHash())) {
         throw new IllegalArgumentException("All graphs must have same vertex hash");
       }
-      if ((vertexEqualityPrime != null) && !vertexEqualityPrime.equals(g.vertexEquality())) {
+      if (!vertexEquality.equals(g.vertexEquality())) {
         throw new IllegalArgumentException("All graphs must have same vertex equality");
       }
       graphsPrime = graphsPrime.put(rel, g);
-      vertexHashPrime = g.vertexHash();
-      vertexEqualityPrime = g.vertexEquality();
     }
 
     if (isLinear()) {
       this.graphs = graphsPrime;
       return this;
     }
-    return new RelGraph<V, R>(false, vertexHashPrime, vertexEqualityPrime, graphsPrime);
+    return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
   }
 
   /* Projects this graph to a single relationship */
   public NamedGraph<V, R> projectRel(R rel) {
-    return new NamedGraph<V, R>(rel, graphs.get(rel, new DirectedGraph<V, Object>()));
+    return new NamedGraph<V, R>(rel, graphs.get(rel, new DirectedGraph<V, Object>(vertexHash, vertexEquality)));
   }
 
   /* Projects this graph to just a specific subset of relationships. */

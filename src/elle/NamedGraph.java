@@ -46,7 +46,7 @@ public class NamedGraph<V, N> implements IGraph<V, N>, ElleGraph {
 
   // Union with a different namedgraph. Both graphs must have the same name.
   public NamedGraph<V, N> union(NamedGraph<V, N> g) {
-    if (! name.equals(g.name())) {
+    if (!name.equals(g.name())) {
       throw new IllegalArgumentException("names differ! " + name + " is not " + g.name());
     }
     IGraph<V, Object> graphPrime = graph.merge(g.graph());
@@ -167,12 +167,12 @@ public class NamedGraph<V, N> implements IGraph<V, N>, ElleGraph {
 
   public <U> IGraph<V, U> mapEdges(final Function<IEdge<V, N>, U> f) {
     return graph.mapEdges(edge -> {
-      return f.apply(new Graphs.DirectedEdge<V,N>(name, edge.from(), edge.to()));
+      return f.apply(new Graphs.DirectedEdge<V, N>(name, edge.from(), edge.to()));
     });
   }
 
   public NamedGraph<V, N> select(ISet<V> vertices) {
-    return new NamedGraph<V,N>(name, graph.select(vertices));
+    return new NamedGraph<V, N>(name, graph.select(vertices));
   }
 
   public boolean isDirected() {
@@ -188,7 +188,7 @@ public class NamedGraph<V, N> implements IGraph<V, N>, ElleGraph {
   }
 
   public NamedGraph<V, N> transpose() {
-    return new NamedGraph<V,N>(name, graph.transpose());
+    return new NamedGraph<V, N>(name, graph.transpose());
   }
 
   public int hashCode() {
@@ -200,15 +200,15 @@ public class NamedGraph<V, N> implements IGraph<V, N>, ElleGraph {
       return true;
     }
     if (other instanceof NamedGraph<?, ?>) {
-      return (name.equals(((NamedGraph<V,N>) other).name) &&
-      graph.equals(((NamedGraph<V,N>) other).graph()));
+      return (name.equals(((NamedGraph<V, N>) other).name) &&
+          graph.equals(((NamedGraph<V, N>) other).graph()));
     }
     return false;
   }
 
   public NamedGraph<V, N> clone() {
     if (isLinear()) {
-      return new NamedGraph<V,N>(name, graph.clone());
+      return new NamedGraph<V, N>(name, graph.clone());
     }
     return this;
   }

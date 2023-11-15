@@ -396,8 +396,9 @@
 
 (defn ^RelGraph rel-graph-union
   "Unions something into a RelGraph. Can take either a NamedGraph or
-  another RelGraph. With no args, returns an empty RelGraph."
-  ([] (RelGraph/EMPTY))
+  another RelGraph. With no args, returns an empty RelGraph with equality
+  semantics for Ops."
+  ([] (op-rel-graph))
   ([^IGraph a]
    (condp instance? a
      NamedGraph (.union (RelGraph. (.vertexHash a) (.vertexEquality a))
