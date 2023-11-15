@@ -276,7 +276,7 @@
   ; Faster version: single rel
   (if (= 1 (count target-rels))
     (let [rel (first target-rels)
-          ^NamedGraph g (.projectRel^RelGraph g rel)]
+          ^NamedGraph g (.projectRel ^RelGraph g rel)]
       ; We still want a graph with *sets* of relationships for edges
       (NamedGraph. (bs/add bs/empty rel) (.graph g)))
     ; Slower version: RelGraph.

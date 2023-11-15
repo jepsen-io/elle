@@ -3,8 +3,10 @@
   lists lists, and operations are either appends or reads."
   (:refer-clojure :exclude [test])
   (:require [bifurcan-clj [core :as b]
-                          [map :as bm]]
-            [clojure [pprint :refer [pprint]]
+                          [map :as bm]
+                          [set :as bs]]
+            [clojure [datafy :refer [datafy]]
+                     [pprint :refer [pprint]]
                      [set :as set]
                      [string :as str]]
             [clojure.core.reducers :as r]
@@ -275,26 +277,35 @@
   (let [fold
         (loopf {:name :sorted-values}
                ; Reducer
-               ([states (transient {})]
+               ([states (b/linear bm/empty)]
                 [^Op op]
                 (recur
                   (loopr [states states]
                          [[f k v] (.value op)]
                          (recur
-                           (if (and (= :r f) (seq v))
+                           (if (and (= :r f)
+                                    ; Faster than (seq v)
+                                    v (not= [] v))
                              ; Good, this is a read of something other than the
                              ; initial state
-                             (-> states
-                                 (get k #{})
-                                 (conj v)
-                                 (->> (assoc! states k)))
+                             (bm/update states k
+                                        (fn record [values]
+                                          (-> values
+                                              (or (b/linear bs/empty))
+                                              (bs/add v))))
                              ; Something else!
                              states))))
-                (persistent! states))
+                ; Seal transients
+                (b/forked (bm/map-values states (fn seal [k v] (b/forked v)))))
                ; Combiner
-               ([states1 {}]
+               ([states1 (b/linear bm/empty)]
                 [states2]
-                (recur (merge-with set/union states1 states2))))]
+                (recur
+                  (bm/merge states1 states2
+                            (fn merge [values1 values2]
+                              (bs/union values1 values2))))
+                ; Transform back to Clojure
+                (datafy states1)))]
     (->> (h/fold history fold)
          ; If we can't infer anything from reads, see if we can use a single
          ; append operation to infer a value.
