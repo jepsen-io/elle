@@ -276,11 +276,18 @@
                                  ; either.
                                  :strong-snapshot-isolation
                                  :strong-session-serializable]; Daudjee???
-        ; TODO: does strong mean PL-SS?
-        ; TODO: What about strict-1SR? Zuikeviciute's informal definitions
-        ; make it sound like these are all PL-SS, but I'm not SURE
-        :strong-serializable    [:session-serializable]       ; Zuikeviciute
-        :strong-session-serializable [:serializable]          ; Daudjee
+
+        ; These models aren't in the literature to my knowledge, but they're
+        ; intuitive generalizations of the SI/serializable models, and they
+        ; help us rule out quite a few cycle searches.
+        :strong-session-PL-1 [:PL-1]
+        :strong-session-PL-2 [:PL-2 :strong-session-PL-1]
+        :strong-PL-1 [:strong-session-PL-1]
+        :strong-PL-2 [:strong-session-PL-2 :strong-PL-1]
+
+        :strong-session-serializable
+        [:serializable                        ; Daudjee
+         :strong-session-snapshot-isolation]  ; Obviously!
 
         ; TODO: Fekete et al suggests there's a concurrency restriction for
         ; SI-but-nonserializable anomalies here: https://www.cse.iitb.ac.in/infolab/Data/Courses/CS632/2009/Papers/p492-fekete.pdf, but I don't fully understand
@@ -288,6 +295,11 @@
 
         ; Daudjee-SI, Cerone-SI
         :strong-session-snapshot-isolation [:snapshot-isolation]
+
+        ; TODO: does strong mean PL-SS?
+        ; TODO: What about strict-1SR? Zuikeviciute's informal definitions
+        ; make it sound like these are all PL-SS, but I'm not SURE
+        :strong-serializable    [:session-serializable]       ; Zuikeviciute
         ; Daudjee-SI
         :strong-snapshot-isolation [:strong-session-snapshot-isolation]
 
@@ -443,6 +455,14 @@
                                     :G1c-realtime      ; Adya
                                     :G2-realtime       ; Adya
                                     :PL-SS-cycle-exists]
+        :strong-session-PL-1       [:strong-session-PL-1-cycle-exists
+                                    :G0-process]
+        :strong-session-PL-2       [:strong-session-PL-2-cycle-exists
+                                    :G1c-process]
+        :strong-PL-1               [:strong-PL-1-cycle-exists
+                                    :G0-realtime]
+        :strong-PL-2               [:strong-PL-2-cycle-exists
+                                    :G1c-realtime]
         ; I *don't* have a source for these officially, because the use of
         ; G-nonadjacent isn't well canonicalized in the literature, but it
         ; seems obvious that strong session SI should prevent you from failing
