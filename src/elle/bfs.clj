@@ -305,6 +305,34 @@
                            ;(prn :paths'' (datafy paths''))
                            (recur (bl/concat paths' paths''))))))))
 
+(declare search-from-op)
+
+(defn trim-loop
+  "Takes a graph, a loop path with a tail, and tries to cut the tail
+  off. Returns either a tail-less loop, or nil."
+  [g init-path path]
+  (let [; We just hit a loop. Find the loop, restrict the graph to just those
+        ; vertices, and search it for a cycle. We know the last op visited must
+        ; be the pin where we link the loop shut.
+        ops (ops path)
+        pin (.index ^Op (bl/last ops))
+        ; So where does our path begin?
+        pin-index (loopr [i 0]
+                         [^Op op ops :via :iterator]
+                         (if (= pin (.index op))
+                           i
+                           (recur (inc i))))
+        ; Which means our candidate path is
+        trimmed (bl/slice ops pin-index (b/size ops))
+        n (b/size trimmed)
+        ; Restrict graph to just those elements
+        g' (bg/select g (bs/from trimmed))]
+    ; Now search that graph.
+    (loopr []
+           [op trimmed :via :iterator]
+           (or (search-from-op g' init-path op)
+               (recur)))))
+
 (defn search-from-op
   "Searches a graph for a cycle matching the given initial path, starting with
   `op`."
@@ -325,9 +353,10 @@
                    ; Done!
                    (do ; (prn :found (datafy path))
                        (into [] (ops path)))
-                   ; Later we should try and prune the tail
+                   ; We have a tail--can we prune it?
                    (do ; (prn :loop-has-tail (datafy path))
-                       (recur paths')))
+                       (or (trim-loop g init-path path)
+                           (recur paths'))))
                  ; A loop, but not valid: drop this
                  (do ; (prn :loop-not-valid (datafy path))
                      (recur paths')))

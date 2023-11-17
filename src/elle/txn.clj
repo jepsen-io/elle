@@ -918,6 +918,7 @@
   possibly be a cycle out there. This means we can avoid materializing filtered
   graphs and searching the entire graph."
   [opts pair-explainer graph]
+  ; (info "Checking SCC of" (b/size graph) "ops")
   (let [fg (-> (filtered-graphs graph) warm-filtered-graphs!)]
     (->> (cycle-cases-in-scc opts graph fg pair-explainer)
          (group-by :type))))
@@ -933,6 +934,7 @@
         (elle/check- analyzer history)
         ; TODO: just call (analyzer (h/client-ops history)) directly; we don't
         ; need elle's core mechanism here.
+        ; _ (info "Found" (count sccs) "top-level SCCs")
 
         ; Spawn a task to check each SCC
         scc-tasks (mapv (fn per-scc [scc]

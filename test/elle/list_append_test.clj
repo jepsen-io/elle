@@ -1194,7 +1194,8 @@
   [test-name t0 h]
   (let [n  (/ (count h) 2)
         t1 (System/nanoTime)
-        analysis (check h)
+        analysis (check ;{:cycle-search-timeout 10000}
+                        h)
         t2 (System/nanoTime)
         run-time   (/ (- t1 t0) 1e9)
         check-time (/ (- t2 t1) 1e9)]
@@ -1246,7 +1247,7 @@
     (is (= (* 2 n) (count h)))
     (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
 
-(deftest ^:perf sloppy-perf-test
+(deftest ^:perf ^:focus sloppy-perf-test
   ; An end-to-end performance test based on a sloppy database which takes
   ; locks... sometimes.
   (let [n           (long 1e6)
