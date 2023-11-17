@@ -251,10 +251,12 @@
              :repeatable-read
              :serializable
              :snapshot-isolation
+             :strong-read-committed
+             :strong-snapshot-isolation
              :strong-serializable
+             :strong-session-read-committed
              :strong-session-serializable
              :strong-session-snapshot-isolation
-             :strong-snapshot-isolation
              :update-serializable
              :ROLA
              :causal-cerone

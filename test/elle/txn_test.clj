@@ -1,5 +1,7 @@
 (ns elle.txn-test
-  (:require [clojure [pprint :refer [pprint]]
+  (:require [bifurcan-clj [core :as b]
+                          [set :as bs]]
+            [clojure [pprint :refer [pprint]]
                      [test :refer :all]]
             [elle [graph :as g]
                   [txn :refer :all]]
@@ -34,7 +36,7 @@
               (g/link op1 op2 :ww)
               (g/link op2 op0 :rw))]
     (testing "simple keyword"
-      (is (= (-> (g/named-graph :ww)
+      (is (= (-> (g/named-graph (bs/from [:ww]))
                  (g/link op1 op2))
              (cycle-exists-subgraph g :ww))))
     (testing "union"

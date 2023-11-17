@@ -35,6 +35,10 @@
           :internal
           :lost-update
           :predicate-read-miss
+          :strong-PL-1-cycle-exists
+          :strong-PL-2-cycle-exists
+          :strong-session-PL-1-cycle-exists
+          :strong-session-PL-2-cycle-exists
           :strong-session-serializable-cycle-exists
           :strong-session-snapshot-isolation-cycle-exists
           :strong-snapshot-isolation-cycle-exists
@@ -178,8 +182,10 @@
                :parallel-snapshot-isolation
                :prefix
                :read-atomic
+               :strong-session-read-committed
                :strong-session-serializable
                :strong-session-snapshot-isolation
+               :strong-read-committed
                :strong-snapshot-isolation
                }
              (as [:dirty-update]))))
@@ -209,6 +215,13 @@
     (is (= {:not #{:read-uncommitted}
             :also-not #{:read-committed
                         :snapshot-isolation
+                        :causal-cerone
+                        :consistent-view
+                        :cursor-stability
+                        :forward-consistent-view
+                        :monotonic-atomic-view
+                        :monotonic-snapshot-read
+                        :monotonic-view
                         ; Not sure about this one. PSI allows long fork, and
                         ; I think long fork explicitly looks like inconsistent
                         ; version orders. Then again, it's not so much that the
@@ -217,23 +230,20 @@
                         ; invalidated read committed, then we've also broken
                         ; read atomic, and that covers the various SIs!
                         :parallel-snapshot-isolation
+                        :prefix
+                        :read-atomic
                         :repeatable-read
+                        :ROLA
                         :serializable
+                        :strong-read-committed
+                        :strong-read-uncommitted
                         :strong-serializable
-                        :consistent-view
-                        :cursor-stability
-                        :monotonic-atomic-view
-                        :monotonic-snapshot-read
-                        :update-serializable
-                        :forward-consistent-view
-                        :monotonic-view
+                        :strong-session-read-committed
+                        :strong-session-read-uncommitted
                         :strong-session-serializable
                         :strong-session-snapshot-isolation
                         :strong-snapshot-isolation
-                        :ROLA
-                        :causal-cerone
-                        :prefix
-                        :read-atomic
+                        :update-serializable
                         }}
            (friendly-boundary [:cyclic-versions]))))
 
@@ -259,10 +269,12 @@
                         :monotonic-snapshot-read :monotonic-view
                         :parallel-snapshot-isolation :prefix :repeatable-read
                         :serializable :snapshot-isolation
+                        :strong-read-committed
+                        :strong-snapshot-isolation
                         :strong-serializable
+                        :strong-session-read-committed
                         :strong-session-serializable
                         :strong-session-snapshot-isolation
-                        :strong-snapshot-isolation
                         :update-serializable}}
            (friendly-boundary [:G1a]))))
 

@@ -201,6 +201,10 @@
    ; Right, I'm calling this: strong and strict serializable are the same thing.
    :strong-serializable      :PL-SS
    :update-serializable      :PL-3U    ; Adya
+   :strong-session-read-uncommitted :strong-session-PL-1
+   :strong-session-read-committed   :strong-session-PL-2
+   :strong-read-uncommitted         :strong-PL-1
+   :strong-read-committed           :strong-PL-2
    })
 
 (def friendly-model-names
@@ -294,14 +298,16 @@
         ; their formalism.
 
         ; Daudjee-SI, Cerone-SI
-        :strong-session-snapshot-isolation [:snapshot-isolation]
+        :strong-session-snapshot-isolation [:snapshot-isolation
+                                            :strong-session-PL-2]
 
         ; TODO: does strong mean PL-SS?
         ; TODO: What about strict-1SR? Zuikeviciute's informal definitions
         ; make it sound like these are all PL-SS, but I'm not SURE
         :strong-serializable    [:session-serializable]       ; Zuikeviciute
         ; Daudjee-SI
-        :strong-snapshot-isolation [:strong-session-snapshot-isolation]
+        :strong-snapshot-isolation [:strong-session-snapshot-isolation
+                                    :strong-PL-2]
 
         ; Single-object (ish) models
         :linearizable          [:sequential]                 ; Bailis

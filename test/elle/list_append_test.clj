@@ -365,20 +365,20 @@
           (h/history [(op "ax1ay1")
                       (op "ax2ay2")
                       (op "rx12ry21")])
-          msg {:cycle [t2 t1 t2]
+          msg {:cycle [t1 t2 t1]
                :steps
                [{:type :ww,
-                 :key :y,
-                 :value 2,
-                 :value' 1,
-                 :a-mop-index 1,
-                 :b-mop-index 1}
-                {:type :ww,
                  :key :x,
                  :value 1,
                  :value' 2,
                  :a-mop-index 0,
-                 :b-mop-index 0}],
+                 :b-mop-index 0}
+                {:type :ww,
+                 :key :y,
+                 :value 2,
+                 :value' 1,
+                 :a-mop-index 1,
+                 :b-mop-index 1}]
                :type :G0}]
       ; G1 and G0 both catch this, because technically G0 *is* G1.
       (is (= {:valid? false
@@ -653,8 +653,7 @@
       ; But it will if we ask for strict-serializable.
       (is (= {:valid?         false
               :anomaly-types  [:G-single-process]
-              :not            #{:strong-session-snapshot-isolation
-                                :strong-session-serializable}
+              :not            #{:strong-session-snapshot-isolation}
               :anomalies
               {:G-single-process
                [{:cycle [t2' t1' t2']
@@ -696,12 +695,17 @@
       ; But it will if we ask for strong session SI.
       (is (= {:valid?         false
               :anomaly-types  [:G-nonadjacent-process]
-              :not            #{:strong-session-snapshot-isolation
-                                :strong-session-serializable}
+              :not            #{:strong-session-snapshot-isolation}
               :anomalies
               {:G-nonadjacent-process
-               [{:cycle [t1' t2' t3' t0' t1']
-                 :steps [{:type :process, :process 1}
+               [{:cycle [t0' t1' t2' t3' t0']
+                 :steps [{:type :rw,
+                          :key :x
+                          :value :elle.list-append/init
+                          :value' 1
+                          :a-mop-index 0
+                          :b-mop-index 0}
+                         {:type :process, :process 1}
                          {:type :rw, :key :z, :value :elle.list-append/init
                           :value' 1
                           :a-mop-index 0
@@ -710,13 +714,7 @@
                           :key :z
                           :value 1
                           :a-mop-index 0
-                          :b-mop-index 1}
-                         {:type :rw,
-                          :key :x
-                          :value :elle.list-append/init
-                          :value' 1
-                          :a-mop-index 0
-                          :b-mop-index 0}]
+                          :b-mop-index 1}]
                  :type :G-nonadjacent-process}]}}
              (c {:consistency-models [:strong-session-snapshot-isolation]}
                 h)))))
@@ -964,13 +962,8 @@
             :not            #{:snapshot-isolation}
             :anomaly-types  [:G-nonadjacent]
             :anomalies      {:G-nonadjacent
-                             [{:cycle [(h 1) (h 3) (h 5) (h 7) (h 1)]
-                               :steps [{:type :wr,
-                                        :key :x,
-                                        :value 1,
-                                        :a-mop-index 0,
-                                        :b-mop-index 0}
-                                       {:type :rw,
+                             [{:cycle (mapv h [3 5 7 1 3])
+                               :steps [{:type :rw,
                                         :key :y,
                                         :value :elle.list-append/init,
                                         :value' 1,
@@ -986,7 +979,12 @@
                                         :value :elle.list-append/init,
                                         :value' 1,
                                         :a-mop-index 1,
-                                        :b-mop-index 0}],
+                                        :b-mop-index 0}
+                                       {:type :wr,
+                                        :key :x,
+                                        :value 1,
+                                        :a-mop-index 0,
+                                        :b-mop-index 0}]
                                :type :G-nonadjacent}]}}
                              (c {} h))))
 
@@ -1074,8 +1072,7 @@
                 :a-mop-index 0,
                 :b-mop-index 0}],
               :type :G1c-process}]},
-           :not #{:strong-session-snapshot-isolation
-                  :strong-session-serializable}}
+           :not #{:strong-session-read-committed}}
            (c {:consistency-models [:strong-session-snapshot-isolation]} h)))))
 
 (deftest future-read-test
@@ -1249,7 +1246,7 @@
     (is (= (* 2 n) (count h)))
     (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
 
-(deftest ^:perf ^:focus sloppy-perf-test
+(deftest ^:perf sloppy-perf-test
   ; An end-to-end performance test based on a sloppy database which takes
   ; locks... sometimes.
   (let [n           (long 1e6)

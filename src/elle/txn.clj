@@ -319,12 +319,16 @@
         {:model :PL-3, :subgraph [:union :ww :wr :rw]}
 
         ; Strong session variants add process edges
+        {:model :strong-session-PL-1, :subgraph [:union :ww :process]}
+        {:model :strong-session-PL-2, :subgraph [:union :ww :wr :process]}
         {:model    :strong-session-snapshot-isolation
          :subgraph [:extension [:union :ww :wr :process] :rw]}
         {:model    :strong-session-serializable
          :subgraph [:union :ww :wr :rw :process]}
 
         ; Strong variants add realtime
+        {:model :strong-PL-1, :subgraph [:union :ww :realtime]}
+        {:model :strong-PL-2, :subgraph [:union :ww :wr :realtime]}
         {:model    :strong-snapshot-isolation
          :subgraph [:extension [:union :ww :wr :realtime] :rw]}
         {:model :PL-SS, :subgraph [:union :ww :wr :rw :realtime]}
@@ -587,14 +591,18 @@
     ; G1c has at least a wr edge, and can take either ww or wr.
     :G1c       {:rels          #{:ww :wr}
                 :required-rels #{:wr}}
-    ; G-single takes ww/wr normally, but has exactly one rw.
+    ; G-single takes ww/wr normally, but has exactly one rw. Note that some
+    ; G-singles are G2-item and we can't distinguish them at the graph level.
     :G-single  {:rels        #{:ww :wr}
-                :single-rels #{:rw}}
+                :single-rels #{:rw}
+                :type        :G-single}
     ; G-nonadjacent is the more general form of G-single: it has multiple
-    ; nonadjacent rw edges.
+    ; nonadjacent rw edges. Note that some G-nonadjacents are G2-item, and we
+    ; can't distinguish them from graph alone yet.
     :G-nonadjacent {:rels             #{:ww :wr}
                     :nonadjacent-rels #{:rw}
-                    :multiple-rels    #{:rw}}
+                    :multiple-rels    #{:rw}
+                    :type             :G-nonadjacent}
     ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
     ; insists on being G2, rather than G-single. Not bulletproof, but G-single
     ; is worse, so I'm OK with it.
@@ -761,53 +769,13 @@
                  realtime? process?]
           :as spec}]]
   ; First pass: look for a candidate
-  (let [; Build up path predicates based on known constraints
-        ; TODO: we can compile these once and re-use them
-        preds (cond-> []
-                ; Note: you may be asking "hang on, what if we insist on two
-                ; different kinds of required edges, and it just so happens
-                ; that we choose the *same* edge for both required passes?
-                ; Thankfully this does not happen: required edges admit no
-                ; other possibilities, and our requirements never intersect. An
-                ; #{:rt :ww} edge never satisfies an :rt requirement: only
-                ; #{:rt} can do that.
-                multiple-rels (conj (multiple-path-state-pred g multiple-rels))
-                required-rels (conj (required-path-state-pred g required-rels))
-                process?      (conj (required-path-state-pred g #{:process}))
-                realtime?     (conj (required-path-state-pred g #{:realtime})))
-        pred (util/fand preds)
-
-        ; And the path transition function
-        transition (cond
-                     single-rels      (first-path-transition single-rels)
-                     nonadjacent-rels (nonadjacent-path-transition
-                                        nonadjacent-rels)
-                     true             trivial-path-transition)
-        ;_ (info :spec spec)
+  (let [;_ (info :type type :spec spec)
         ;_ (info ":preds\n" (with-out-str (pprint preds)))
         ;_ (info :transition transition)
-
-        ; Now search for a candidate cycle
-        cycle
-        (cond ; We have predicate constraints or nonadjacents; gotta use the
-              ; full state machine search. Our graph will include *everything*
-              ; possible.
-              (or (seq preds) nonadjacent-rels)
-              (bfs/search (fg (set/union rels nonadjacent-rels
+        cycle (bfs/search (fg (set/union rels nonadjacent-rels
                                          required-rels single-rels
                                          multiple-rels))
-                          spec)
-
-              ; No predicates, no nonadjacents. If there's a single rels
-              ; constraint, we can start our search there and jump back into
-              ; the rels graph.
-              single-rels
-              (bfs/search (fg (set/union single-rels rels)) spec)
-
-              ; Rels only, nothing else. Straightforward search. This is super
-              ; fast for stuff like G0/G1c, which we check first.
-              true
-              (bfs/search (fg rels) spec))]
+                          spec)]
     (when cycle
       ;(info "Cycle:\n" (with-out-str (pprint cycle)))
       (let [ex (elle/explain-cycle cycle-explainer pair-explainer cycle)]
@@ -837,16 +805,19 @@
   (let [; We know these models are impossible
         impossible-models (set (cm/all-impossible-models
                                  (map :not cases)))
+        ;_ (info :impossible-models impossible-models)
         ; And by extension these models
         ; Which means we did *not* find a cyclic anomaly that would have
         ; invalidated these models.
         possible-models (set/difference (set (map :model cycle-exists-specs))
                                         impossible-models)
+        ;_ (info :possible-models possible-models)
         ; Which cyclic anomalies are proscribed by the possible models? These
         ; can't exist.
         impossible-anomalies (set/intersection
                                cycle-types
                                (cm/anomalies-prohibited-by possible-models))]
+    ;(info :impossible-anomalies impossible-anomalies)
     impossible-anomalies))
 
 (defn merge-cycle-exists+cycle-cases
@@ -889,8 +860,8 @@
       ; If we time out...
       (let [types  @types
             cycles @cycles]
-        (info "Timing out search for" (peek types) "in SCC of" (b/size g)
-              "transactions (checked" (str (pr-str (drop-last types)) ")"))
+        ;(info "Timing out search for" (peek types) "in SCC of" (b/size g)
+        ;      "transactions (checked" (str (pr-str (drop-last types)) ")"))
         ;(info :scc (with-out-str (pprint scc)))
         ; We generate two types of anomalies no matter what. First, an anomaly
         ; that lets us know we failed to complete the search. Second, a
@@ -909,11 +880,12 @@
                 (if (redundant? type)
                   (do ;(info "Skipping redundant search for" type)
                       redundant?)
-                  (do ; (info "Checking for" type)
+                  (do ;(info "Checking for" type)
                       (swap! types conj type)
                       (if-let [cycle (cycle-in-scc-of-type
                                        opts g fg pair-explainer type+spec)]
                         (do (swap! cycles conj cycle)
+                            ;(info "Found a" type "so we can skip" (cm/all-implied-anomalies [type]))
                             (into redundant? (cm/all-implied-anomalies [type])))
                         redundant?))))
               (cycle-exists-cases->impossible-cycle-anomalies
