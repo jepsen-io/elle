@@ -15,5 +15,8 @@ pom.xml.asc
 *.class
 /.lein-*
 /.nrepl-port
+/.clj-kondo
+/.lsp
+/incompatible-order
 .hgignore
 .hg/
