@@ -12,7 +12,8 @@
             [clojure.core.reducers :as r]
             [dom-top.core :refer [loopr]]
             [elle.util :refer [map-vals maybe-interrupt]]
-            [jepsen.history :as h])
+            [jepsen.history :as h]
+            [jepsen.history.fold :refer [loopf]])
   (:import (elle NamedGraph
                  RelGraph)
            (io.lacuna.bifurcan DirectedGraph
@@ -756,3 +757,39 @@
                   DirectedAcyclicGraph/from)
               (inc depth)
               (reduce #(assoc! %1 %2 depth) m top))))))
+
+(defn ^IGraph materialize
+  "Tarjan on RelGraphs spends most of its time in .vertices and .out: it has to
+  union the vertex sets and every individual out query across rels. We can burn
+  memory to materialize this graph in parallel, speeding up the search
+  process.
+
+  Takes a history (for its task scheduler) and a RelGraph over ops in the
+  history. Returns an equivalent IGraph over ops which, when the graph is large
+  enough, has its components materialized."
+  [history g]
+  ; Since this graph's vertices must be a subset of the history, we can fold
+  ; over the history. This efficiently partitions the graph.
+  (let [vertices (bg/vertices g)
+        fold
+        (loopf {:name :materialize-graph}
+               ; Reducer over ops
+               ([g' (b/linear (op-digraph))]
+                [^Op op]
+                (recur
+                  (if (bs/contains? vertices op)
+                    ; Copy all edges outbound from this op
+                    (loopr [g' g']
+                           [op' (bg/out g op) :via :iterator]
+                           ; We'll never have to merge edges here
+                           (recur (bg/link g' op op' (bg/edge g op op'))))
+                    g')))
+               ; Combiner over subgraphs
+               ([g (b/linear (op-digraph))]
+                [g']
+                ; Because we partitioned by ops out, we'll never have to merge
+                ; here
+                (recur (.merge ^IGraph g g' union-edge))
+                (b/forked g)))]
+    ; Fold over history
+    (h/fold history fold)))

@@ -21,11 +21,11 @@
             [tesser.core :as t]
             [unilog.config :refer [start-logging!]])
   (:import (elle.graph PathState)
+           (elle ElleGraph)
            (io.lacuna.bifurcan IGraph
                                LinearMap
                                Map)
            (jepsen.history Op)))
-
 
 (start-logging! {:console "%p [%d] %t - %c %m%n"})
 
@@ -929,11 +929,17 @@
   and a history. Analyzes the history and yields the analysis, plus an anomaly
   map like {:G1c [...]}."
   [opts analyzer history]
-  (let [; Analyze the history.
-        {:keys [graph explainer sccs] :as analysis}
-        (elle/check- analyzer history)
-        ; TODO: just call (analyzer (h/client-ops history)) directly; we don't
-        ; need elle's core mechanism here.
+  (let [; Analyze the history. Duplicating some of the logic in core/check-
+        ; here...
+        {:keys [anomalies graph explainer]} (analyzer (h/client-ops history))
+        anomalies (if (.isEmpty ^ElleGraph graph)
+                    (assoc anomalies :empty-transaction-graph true)
+                    anomalies)
+        ;_      (info "Materializing" (b/size graph) "ops")
+        mg     (g/materialize history graph)
+        ;mg      graph
+        ;_      (info "Materialized")
+        sccs   (g/strongly-connected-components mg)
         ; _ (info "Found" (count sccs) "top-level SCCs")
 
         ; Spawn a task to check each SCC
@@ -945,11 +951,14 @@
 
         ; And merge together
         anomalies (reduce (partial merge-with into)
-                          {}
+                          anomalies
                           (map deref scc-tasks))]
     ;(pprint anomalies)
     ; Merge our cases into the existing anomalies map.
-    (update analysis :anomalies merge anomalies)))
+    {:graph     graph
+     :explainer explainer
+     :sccs      sccs
+     :anomalies anomalies}))
 
 (defn cycles!
   "Like cycles, but writes out files as a side effect. Only writes files for
