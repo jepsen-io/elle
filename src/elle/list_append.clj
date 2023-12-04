@@ -15,6 +15,7 @@
             [dom-top.core :as dt :refer [loopr]]
             [elle [core :as elle]
                   [graph :as g]
+                  [rels :as rels :refer [ww wr rw]]
                   [txn :as ct]
                   [util :as util :refer [index-of
                                          nanos->secs]]]
@@ -647,7 +648,7 @@
                                              append-index write-index op mop)]
                                 (g/link g dep op)
                                 g)))
-                          (g/linear (g/named-graph :ww (g/op-digraph)))
+                          (g/linear (g/named-graph ww (g/op-digraph)))
                           history))
     :explainer (WWExplainer. append-index write-index read-index)}))
 
@@ -685,7 +686,7 @@
                                 (g/link g dep op)
                                 ; No dep
                                 g)))
-                          (g/linear (g/named-graph :wr (g/op-digraph)))
+                          (g/linear (g/named-graph wr (g/op-digraph)))
                           history))
     :explainer (WRExplainer. append-index write-index read-index)}))
 
@@ -747,7 +748,7 @@
                       (recur (g/link-all-to g deps op))
                       (recur g))
                     (recur g))
-                  (g/named-graph :rw (g/forked g)))
+                  (g/named-graph rw (g/forked g)))
     :explainer (RWExplainer. append-index write-index read-index)}))
 
 (defn graph

@@ -5,6 +5,8 @@
             :url "https://www.eclipse.org/legal/epl-2.0/"}
   :dependencies [[slingshot "0.12.2"]
                  [com.aphyr/bifurcan-clj "0.1.1-SNAPSHOT"]
+                 ; Has to be here for our java classes to use Clojure
+                 [org.clojure/clojure "1.11.1"]
                  [dom-top "1.0.9"]
                  [hiccup "1.0.5"]
                  [org.clojure/tools.logging "1.2.4"]
@@ -16,9 +18,9 @@
   :prep-tasks [["compile" "jepsen.history"]
                "javac"
                "compile"]
-  :javac-options ["-target" "1.8" "-source" "1.8"]
+  :javac-options ["-target" "1.8" "-source" "1.8"
+                  ]
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.14"]
-                                  [org.clojure/clojure "1.11.1"]
                                   [org.clojure/test.check "1.1.1"]
                                   [spootnik/unilog "0.7.31"]]}}
   :jvm-opts ["-server"

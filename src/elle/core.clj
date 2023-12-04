@@ -35,6 +35,7 @@
                      [string :as str]]
             [dom-top.core :refer [loopr]]
             [elle [graph :as g]
+                  [rels :as rels :refer [ww wr rw process realtime]]
                   [util :as util]]
             [clojure.java.io :as io]
             [jepsen [history :as h]
@@ -249,7 +250,7 @@
          ; And build a graph out of them
          (reduce (fn [g [[v1 ops1] [v2 ops2]]]
                    (g/link-all-to-all g ops1 ops2))
-                 (g/linear (g/named-graph :monotonic-key (g/op-digraph))))
+                 (g/linear (g/named-graph ww (g/op-digraph))))
          g/forked)))
 
 (defn monotonic-key-graph
@@ -263,7 +264,7 @@
                    distinct
                    (map (fn [k] (monotonic-key-order k history)))
                    (reduce g/named-graph-union
-                           (g/named-graph :monotonic-key (g/op-digraph))))]
+                           (g/named-graph ww (g/op-digraph))))]
     {:graph     graph
      :explainer (MonotonicKeyExplainer.)}))
 
@@ -277,7 +278,7 @@
        (h/filter (comp #{process} :process))
        (partition 2 1)
        (reduce (fn [g [op1 op2]] (g/link g op1 op2))
-               (g/linear (g/named-graph :process (g/op-digraph))))
+               (g/linear (g/named-graph rels/process (g/op-digraph))))
        g/forked))
 
 (defrecord ProcessExplainer []
@@ -302,7 +303,7 @@
                    distinct
                    (map (partial process-order oks))
                    (reduce g/named-graph-union
-                           (g/named-graph :process (g/op-digraph))))]
+                           (g/named-graph process (g/op-digraph))))]
     {:graph     graph
      :explainer (ProcessExplainer.)}))
 
@@ -362,7 +363,7 @@
   ; completion d, we look backwards in the graph to see whether any buffered
   ; completions point to d, and remove those from the buffer.
   (loopr [^ISet oks (.linear (Set.)) ; Our buffer of completed ops
-          g         (g/named-graph :realtime (g/op-digraph))] ; Our order graph
+          g         (g/named-graph realtime (g/op-digraph))] ; Our order graph
          [op history :via :reduce]
          (case (:type op)
            ; A new operation begins! Link every completed op to this one's

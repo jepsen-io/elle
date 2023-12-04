@@ -98,6 +98,7 @@
             [dom-top.core :as dt :refer [loopr]]
             [elle [core :as elle]
                   [graph :as g]
+                  [rels :refer [ww wr rw wwp wrp rwp]]
                   [rw-register :as rw-register]
                   [txn :as ct]
                   [util :as util :refer [index-of]]]
@@ -536,7 +537,7 @@
                     g))
           ; Later we should break out predicate vs non-predicate deps so we can
           ; distinguish G2 from G2-item?
-          (g/named-graph :rw (g/forked g)))
+          (g/named-graph rw (g/forked g)))
    :explainer (RWExplainer. all-versions vsets)})
 
 (defrecord WRExplainer [all-versions vsets]
@@ -617,7 +618,7 @@
                                g))))
               ; Some other mop
               g))
-          (g/named-graph :wr (g/forked g)))
+          (g/named-graph wr (g/forked g)))
    :explainer (WRExplainer. all-versions vsets)})
 
 (defrecord WWExplainer [all-versions]
@@ -631,7 +632,7 @@
                ; We have a prior version
                (if (= v (get a-writes k))
                  ; Found it
-                 {:type  :ww
+                 {:type   :ww
                   :key    k
                   :value  v
                   :value' v'
@@ -671,7 +672,7 @@
 
               ; Some other mop
               g))
-          (g/named-graph :ww (g/forked g)))
+          (g/named-graph ww (g/forked g)))
    :explainer (WWExplainer. all-versions)})
 
 (defn graph

@@ -3,7 +3,8 @@
                           [graph :as bg]
                           [set :as bs]]
             [clojure [pprint :refer [pprint]]]
-            [elle.graph :refer :all]
+            [elle [graph :refer :all]
+                  [rels :refer :all]]
             [jepsen [history :as h]
                     [txn :as txn]]
             [clojure.test :refer :all]
@@ -177,7 +178,7 @@
                       ([last-was-rw? path rel v']
                        ; It's fine to follow *non* rw links, but if you've only
                        ; got rw, and we just did one, this path is invalid.
-                       (let [rw? (= (bset :rw) rel)]
+                       (let [rw? (= rw rel)]
                          (if (and last-was-rw? rw?)
                            :elle.graph/invalid
                            rw?))))
@@ -211,26 +212,26 @@
         (is (= nil (find-cycle-with nonadjacent
                                     always
                                     (-> (digraph)
-                                        (link 1 2 :rw)
-                                        (link 2 1 :rw)
+                                        (link 1 2 rw)
+                                        (link 2 1 rw)
                                         op-graph)))))
       (testing "rw, rw+ww"
         (is (= [2 1 2]
                (indices (find-cycle-with nonadjacent
                                          always
                                          (-> (digraph)
-                                             (link 1 2 :rw)
-                                             (link 2 1 :rw)
-                                             (link 2 1 :ww)
+                                             (link 1 2 rw)
+                                             (link 2 1 rw)
+                                             (link 2 1 ww)
                                              op-graph))))))
 
       (testing "rw, ww, rw"
         (is (= nil (find-cycle-with nonadjacent
                                     always
                                     (-> (digraph)
-                                        (link 1 2 :rw)
-                                        (link 2 3 :ww)
-                                        (link 3 1 :rw)
+                                        (link 1 2 rw)
+                                        (link 2 3 ww)
+                                        (link 3 1 rw)
                                         op-graph)))))
 
       (testing "rw, ww, rw, ww"
@@ -238,17 +239,17 @@
                              (find-cycle-with nonadjacent
                                             always
                                             (-> (digraph)
-                                                (link 1 2 :rw)
-                                                (link 2 3 :ww)
-                                                (link 3 4 :rw)
-                                                (link 4 1 :ww)
+                                                (link 1 2 rw)
+                                                (link 2 3 ww)
+                                                (link 3 4 rw)
+                                                (link 4 1 ww)
                                                 op-graph)))))))))
 
 (deftest link-test
   (let [g (-> (digraph)
-              (link 1 2 :foo)
-              (link 1 2 :bar))]
-    (is (= #{:foo :bar} (->clj (edge g 1 2))))))
+              (link 1 2 ww)
+              (link 1 2 wr))]
+    (is (= (union ww wr) (->clj (edge g 1 2))))))
 
 (deftest collapse-graph-test
   (testing "simple"
@@ -272,31 +273,31 @@
 
   (testing "complex"
     (is (= (-> (linear (digraph))
-               (link 1 1 :a)
-               (link 1 2 :b)
-               (link 1 2 :c))
+               (link 1 1 ww)
+               (link 1 2 wr)
+               (link 1 2 rw))
            (map-vertices {1 1, 2 1, 3 2, 4 2}
                          (-> (linear (digraph))
-                             (link 1 2 :a) ; becomes a self-edge
-                             (link 1 3 :b) ; becomes 1->2
-                             (link 2 4 :c) ; becomes 1->2
+                             (link 1 2 ww) ; becomes a self-edge
+                             (link 1 3 wr) ; becomes 1->2
+                             (link 2 4 rw) ; becomes 1->2
                              ))))))
 
 (deftest rel-graph-test
   (let [[o0 o1 o2 o3 o4 o5 o6] (map #(h/op {:index %}) (range 7))
-        a (-> (named-graph :a (op-digraph))
+        a (-> (named-graph ww (op-digraph))
               (link o1 o2)
               (link o1 o3))
-        b (-> (named-graph :b (op-digraph))
+        b (-> (named-graph wr (op-digraph))
               (link o1 o2)
               (link o1 o4)
               (link o5 o6))
         g (reduce rel-graph-union (rel-graph-union) [a b])]
     (is (= true (.isDirected g)))
     (is (= #{o1 o2 o3 o4 o5 o6} (->clj (.vertices g))))
-    (is (= a (.projectRel g :a)))
-    (is (= b (.projectRel g :b)))
-    (is (= g (.projectRels g [:a :b])))
+    (is (= a (.projectRel g ww)))
+    (is (= b (.projectRel g wr)))
+    (is (= g (.projectRels g (union ww wr))))
     (is (= #{o2 o3 o4} (->clj (.out g o1))))
     (is (thrown? IllegalArgumentException (->clj (.out g o0))))
     (is (= #{o6} (->clj (.out g o5))))))

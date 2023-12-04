@@ -24,9 +24,9 @@ import io.lacuna.bifurcan.Set;
  * @author aphyr
  * 
  *         RelGraph represents a graph of jepsen history Operations where edges
- *         are are tagged with a set of *relationship* objects. Gluing together
- *         n graphs with different relationships is quick, as is getting a view
- *         of the graph with just one or two relationships in it.
+ *         are are tagged with BitRels. Gluing together n graphs with different
+ *         relationships is quick, as is getting a view of the graph with just
+ *         one or two relationships in it.
  * 
  *         We use this extensively in Elle for tracking graphs with e.g. ww, wr,
  *         and rw edges--there are times where we want all three in the same
@@ -35,7 +35,7 @@ import io.lacuna.bifurcan.Set;
  *         so it's worth optimizing.
  */
 
-public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
+public class RelGraph<V> implements IGraph<V, BitRels>, ElleGraph {
   private static final Object DEFAULT = new Object();
   private static final Set<Object> EMPTY_SET = new Set<Object>();
   private static final Set<Object> SINGLE_NULL_SET = new Set<Object>().add(null);
@@ -43,12 +43,12 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   private boolean linear;
   private ToLongFunction<V> vertexHash;
   private BiPredicate<V, V> vertexEquality;
-  // We store a map of relationships to the directed graph for that particular
+  // We store a map of singleton Bitrels to the directed graph for that particular
   // relationship.
-  private IMap<R, IGraph<V, Object>> graphs;
+  private IMap<BitRels, IGraph<V, Object>> graphs;
 
   private RelGraph(boolean linear, ToLongFunction<V> vertexHash, BiPredicate<V, V> vertexEquality,
-      IMap<R, IGraph<V, Object>> graphs) {
+      IMap<BitRels, IGraph<V, Object>> graphs) {
 
     this.linear = linear;
     this.vertexHash = vertexHash;
@@ -61,15 +61,15 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   }
 
   public RelGraph(ToLongFunction<V> vertexHash, BiPredicate<V, V> vertexEquality) {
-    this(false, vertexHash, vertexEquality, new Map<R, IGraph<V, Object>>());
+    this(false, vertexHash, vertexEquality, new Map<BitRels, IGraph<V, Object>>());
   }
 
   /*
    * Adds a single graph to this relgraph, using the given relationship. Like
    * graph union merging edges, only O(1).
    */
-  public RelGraph<V, R> union(NamedGraph<V, R> graph) {
-    final R rel = graph.name();
+  public RelGraph<V> union(NamedGraph<V, BitRels> graph) {
+    final BitRels rel = graph.name();
     if (graphs.contains(rel)) {
       throw new IllegalArgumentException("Already have relationship " + rel);
     }
@@ -79,20 +79,21 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
     if (!vertexEquality.equals(graph.vertexEquality())) {
       throw new IllegalArgumentException("All graphs must have same vertex equality");
     }
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs.put(rel, graph.graph());
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.put(rel, graph.graph());
     if (isLinear()) {
       this.graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime);
     }
   }
 
   /* Unions another RelGraph into this one. */
-  public RelGraph<V, R> union(RelGraph<V, R> graph) {
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs;
-    for (IEntry<R, IGraph<V, Object>> kv : graph.graphs) {
-      final R rel = kv.key();
+  public RelGraph<V> union(RelGraph<V> graph) {
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs;
+    for (IEntry<BitRels, IGraph<V, Object>> kv : graph.graphs) {
+      final BitRels rel = kv.key();
+      assert rel.isSingleton();
       final IGraph<V, Object> g = kv.value();
       if (graphs.contains(rel)) {
         throw new IllegalArgumentException("Already have relationship " + rel);
@@ -110,25 +111,25 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       this.graphs = graphsPrime;
       return this;
     }
-    return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
+    return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime);
   }
 
   /* Projects this graph to a single relationship */
-  public NamedGraph<V, R> projectRel(R rel) {
-    return new NamedGraph<V, R>(rel, graphs.get(rel, new DirectedGraph<V, Object>(vertexHash, vertexEquality)));
+  public NamedGraph<V, BitRels> projectRel(BitRels rel) {
+    return new NamedGraph<V, BitRels>(rel, graphs.get(rel, new DirectedGraph<V, Object>(vertexHash, vertexEquality)));
   }
 
   /* Projects this graph to just a specific subset of relationships. */
-  public RelGraph<V, R> projectRels(Iterable<R> rels) {
+  public RelGraph<V> projectRels(Iterable<BitRels> rels) {
     // Just copy over those subgraphs
-    IMap<R, IGraph<V, Object>> graphsPrime = new Map<R, IGraph<V, Object>>().linear();
-    for (R rel : rels) {
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = new Map<BitRels, IGraph<V, Object>>().linear();
+    for (BitRels rel : rels) {
       IGraph<V, Object> g = graphs.get(rel, null);
       if (g != null) {
         graphsPrime = graphsPrime.put(rel, g);
       }
     }
-    return new RelGraph<V, R>(linear, vertexHash, vertexEquality, graphsPrime.forked());
+    return new RelGraph<V>(linear, vertexHash, vertexEquality, graphsPrime.forked());
   }
 
   // Materializing the vertex set is expensive, so we have an optimized routine
@@ -156,82 +157,83 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
   }
 
   // ??? @Override
-  public Iterable<IEdge<V, Set<R>>> edges() {
-    final Stream<IEdge<V, Set<R>>> stream = StreamSupport.stream(vertices().spliterator(), false).flatMap(vertex -> {
-      // For this vertex, build up a map of out-vertex->rels.
-      IMap<V, Set<R>> outrels = new Map<V, Set<R>>().linear();
-      // Go through each rel, and each set of outs *in* that rel...
-      for (IEntry<R, IGraph<V, Object>> kv : graphs) {
-        final R rel = kv.key();
-        final IGraph<V, Object> g = kv.value();
-        // For each outbound node in this particular graph, add a rel to the map
-        try {
-          for (V out : g.out(vertex)) {
-            outrels = outrels.update(out, rels -> {
-              if (rels == null) {
-                return Set.of(rel);
-              } else {
-                return rels.add(rel);
+  public Iterable<IEdge<V, BitRels>> edges() {
+    final Stream<IEdge<V, BitRels>> stream = StreamSupport.stream(vertices().spliterator(), false)
+        .flatMap(vertex -> {
+          // For this vertex, build up a map of out-vertex->rels.
+          IMap<V, BitRels> outrels = new Map<V, BitRels>().linear();
+          // Go through each rel, and each set of outs *in* that rel...
+          for (IEntry<BitRels, IGraph<V, Object>> kv : graphs) {
+            final BitRels rel = kv.key();
+            final IGraph<V, Object> g = kv.value();
+            // For each outbound node in this particular graph, add a rel to the map
+            try {
+              for (V out : g.out(vertex)) {
+                outrels = outrels.update(out, rels -> {
+                  if (rels == null) {
+                    return rel;
+                  } else {
+                    return rels.union(rel);
+                  }
+                });
               }
-            });
+            } catch (IllegalArgumentException e) {
+              // No such vertex
+            }
           }
-        } catch (IllegalArgumentException e) {
-          // No such vertex
-        }
-      }
-      return outrels.stream().map(kv -> new Graphs.DirectedEdge<V, Set<R>>(kv.value(), vertex, kv.key()));
-    });
+          return outrels.stream().map(kv -> new Graphs.DirectedEdge<V, BitRels>(kv.value(), vertex, kv.key()));
+        });
     return stream::iterator;
   }
 
   // ??? @Override
-  public Set<R> edge(V from, V to) {
-    Set<R> rels = (Set<R>) EMPTY_SET.linear();
-    for (IEntry<R, IGraph<V, Object>> kv : graphs) {
-      Object edge = kv.value().edge(from, to, DEFAULT);
-      if (edge != DEFAULT) {
-        rels = rels.add(kv.key());
+  public BitRels edge(V from, V to) {
+    BitRels rels = BitRels.NONE;
+    for (IEntry<BitRels, IGraph<V, Object>> kv : graphs) {
+      Object edge = kv.value().edge(from, to, BitRels.NONE);
+      if (edge != BitRels.NONE) {
+        rels = rels.union(kv.key());
       }
     }
 
-    if (rels.size() == 0) {
+    if (rels.isEmpty()) {
       throw new IllegalArgumentException("no such edge");
     }
-    return rels.forked();
+    return rels;
   }
 
-  public Set<R> edge(V from, V to, Set<R> notFound) {
-    Set<R> rels = (Set<R>) EMPTY_SET.linear();
-    for (IEntry<R, IGraph<V, Object>> kv : graphs) {
-      Object edge = kv.value().edge(from, to, DEFAULT);
-      if (edge != DEFAULT) {
-        rels = rels.add(kv.key());
+  public BitRels edge(V from, V to, BitRels notFound) {
+    BitRels rels = BitRels.NONE;
+    for (IEntry<BitRels, IGraph<V, Object>> kv : graphs) {
+      Object edge = kv.value().edge(from, to, BitRels.NONE);
+      if (edge != BitRels.NONE) {
+        rels = rels.union(kv.key());
       }
     }
 
-    if (rels.size() == 0) {
+    if (rels.isEmpty()) {
       return notFound;
     }
-    return rels.forked();
+    return rels;
   }
 
   public boolean isLinear() {
     return linear;
   }
 
-  public IGraph<V, Set<R>> forked() {
+  public IGraph<V, BitRels> forked() {
     if (isLinear()) {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphs.forked());
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphs.forked());
     } else {
       return this;
     }
   }
 
-  public IGraph<V, Set<R>> linear() {
+  public IGraph<V, BitRels> linear() {
     if (isLinear()) {
       return this;
     } else {
-      return new RelGraph<V, R>(true, vertexHash, vertexEquality, graphs.linear());
+      return new RelGraph<V>(true, vertexHash, vertexEquality, graphs.linear());
     }
   }
 
@@ -270,19 +272,14 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
     return s.forked();
   }
 
-  public IGraph<V, Set<R>> link(V from, V to, Set<R> edge, BinaryOperator<Set<R>> merge) {
-    // Gross, bad: we're just going to ignore the merge fn here. We only ever
-    // call this intending union.
-    return link(from, to, edge);
-  }
-
-  public IGraph<V, Set<R>> link(V from, V to, Set<R> edge) {
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs.linear();
+  // We actually ignore the merge semantics altogether. Every link, for us, is union.
+  public IGraph<V, BitRels> link(V from, V to, BitRels edge, BinaryOperator<BitRels> merge) {
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.linear();
     if (edge == null) {
-      edge = (Set<R>) SINGLE_NULL_SET;
+      edge = BitRels.NONE;
     }
     // For each relationship, add a link in that graph.
-    for (R rel : edge) {
+    for (BitRels rel : edge) {
       IGraph<V, Object> g = graphs.get(rel, new DirectedGraph<V, Object>());
       g = g.link(from, to, null);
       graphsPrime = graphsPrime.put(rel, g);
@@ -292,19 +289,23 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       this.graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime.forked());
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime.forked());
     }
   }
 
-  public IGraph<V, Set<R>> link(V from, V to) {
+  public IGraph<V, BitRels> link(V from, V to, BitRels edge) {
+    return link(from, to, edge, null);
+  }
+
+  public IGraph<V, BitRels> link(V from, V to) {
     return link(from, to, null);
   }
 
-  public IGraph<V, Set<R>> unlink(V from, V to) {
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs.linear();
+  public IGraph<V, BitRels> unlink(V from, V to) {
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.linear();
     // For each graph, unlink
-    for (IEntry<R, IGraph<V, Object>> kv : graphs) {
-      final R rel = kv.key();
+    for (IEntry<BitRels, IGraph<V, Object>> kv : graphs) {
+      final BitRels rel = kv.key();
       IGraph<V, Object> g = kv.value();
       g = g.unlink(from, to);
       graphsPrime = graphsPrime.put(rel, g);
@@ -314,27 +315,27 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       this.graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime.forked());
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime.forked());
     }
   }
 
-  public IGraph<V, Set<R>> add(V vertex) {
+  public IGraph<V, BitRels> add(V vertex) {
     IGraph<V, Object> graphPrime = graphs.get(null, new DirectedGraph<V, Object>());
     graphPrime = graphPrime.add(vertex);
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs.put(null, graphPrime);
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.put(null, graphPrime);
 
     if (isLinear()) {
       graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime);
     }
   }
 
-  public IGraph<V, Set<R>> remove(V vertex) {
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs.linear();
-    for (IEntry<R, IGraph<V, Object>> kv : graphs) {
-      final R rel = kv.key();
+  public IGraph<V, BitRels> remove(V vertex) {
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.linear();
+    for (IEntry<BitRels, IGraph<V, Object>> kv : graphs) {
+      final BitRels rel = kv.key();
       IGraph<V, Object> g = kv.value();
       graphsPrime = graphsPrime.put(rel, g.remove(vertex));
     }
@@ -343,17 +344,17 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime);
     }
   }
 
-  public <U> IGraph<V, U> mapEdges(Function<IEdge<V, Set<R>>, U> f) {
+  public <U> IGraph<V, U> mapEdges(Function<IEdge<V, BitRels>, U> f) {
     throw new UnsupportedOperationException();
   }
 
-  public IGraph<V, Set<R>> select(ISet<V> vertices) {
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs.linear();
-    for (IEntry<R, IGraph<V, Object>> kv : graphs) {
+  public IGraph<V, BitRels> select(ISet<V> vertices) {
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.linear();
+    for (IEntry<BitRels, IGraph<V, Object>> kv : graphs) {
       graphsPrime = graphsPrime.put(kv.key(), kv.value().select(vertices));
     }
 
@@ -361,7 +362,7 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime);
     }
   }
 
@@ -377,9 +378,9 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
     return vertexEquality;
   }
 
-  public IGraph<V, Set<R>> transpose() {
-    IMap<R, IGraph<V, Object>> graphsPrime = graphs.linear();
-    for (IEntry<R, IGraph<V, Object>> kv : graphs) {
+  public IGraph<V, BitRels> transpose() {
+    IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.linear();
+    for (IEntry<BitRels, IGraph<V, Object>> kv : graphs) {
       graphsPrime = graphsPrime.put(kv.key(), kv.value().transpose());
     }
 
@@ -387,7 +388,7 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       graphs = graphsPrime;
       return this;
     } else {
-      return new RelGraph<V, R>(false, vertexHash, vertexEquality, graphsPrime);
+      return new RelGraph<V>(false, vertexHash, vertexEquality, graphsPrime);
     }
   }
 
@@ -397,7 +398,7 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
       return true;
     }
     if (other instanceof RelGraph) {
-      return graphs.equals(((RelGraph<V, R>) other).graphs);
+      return graphs.equals(((RelGraph<V>) other).graphs);
     }
     return false;
   }
@@ -412,9 +413,9 @@ public class RelGraph<V, R> implements IGraph<V, Set<R>>, ElleGraph {
     return graphs.hashCode();
   }
 
-  public RelGraph<V, R> clone() {
+  public RelGraph<V> clone() {
     if (isLinear()) {
-      return new RelGraph<V, R>(linear, vertexHash, vertexEquality, graphs.clone());
+      return new RelGraph<V>(linear, vertexHash, vertexEquality, graphs.clone());
     } else {
       return this;
     }

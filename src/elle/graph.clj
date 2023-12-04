@@ -14,7 +14,8 @@
             [elle.util :refer [map-vals maybe-interrupt]]
             [jepsen.history :as h]
             [jepsen.history.fold :refer [loopf]])
-  (:import (elle NamedGraph
+  (:import (elle BitRels
+                 NamedGraph
                  RelGraph)
            (io.lacuna.bifurcan DirectedGraph
                                DirectedAcyclicGraph
@@ -155,13 +156,21 @@
   (reify BinaryOperator
     (apply [_ a b] b)))
 
-(def ^BinaryOperator union-edge
+(def ^BinaryOperator union-bset
   "A binary operator performing bifurcan set union on the values of edges."
   (reify BinaryOperator
     (apply [_ a b]
       (cond (nil? a) b
             (nil? b) a
             true    (.union ^ISet a ^ISet b)))))
+
+(def ^BinaryOperator union-rels
+  "A binary operator which unions two BitRels sets."
+  (reify BinaryOperator
+    (apply [_ a b]
+      (cond (nil? a) b
+            (nil? b) a
+            true     (.union ^BitRels a ^BitRels b)))))
 
 (defn ^IEdge edge
   "Returns the edge between two vertices."
@@ -199,9 +208,8 @@
   (.add s x))
 
 (defn link
-  "Helper for linking Bifurcan graphs. Optionally takes a relationship, which
-  is added to the value set of the edge. Nil relationships are treated as if no
-  relationship were passed."
+  "Helper for linking Bifurcan graphs of ops. Optionally takes a BitRels
+  relationship, which is unioned into BitRels of the edge."
   ([^IGraph graph node succ]
    ;(assert (not (nil? node)))
    ;(assert (not (nil? succ)))
@@ -209,7 +217,7 @@
   ([^IGraph graph node succ relationship]
    (do ;(assert (not (nil? node)))
        ;(assert (not (nil? succ)))
-       (.link graph node succ (bset relationship) union-edge))))
+       (.link graph node succ relationship union-rels))))
 
 (defn link-to-all-iter
   "Given a graph g, links x to all ys, using a loop w/iterator instead of
@@ -273,13 +281,11 @@
 
 (defn project-relationships
   "Projects a RelGraph to just the given set of relationships."
-  [target-rels ^RelGraph g]
+  [^BitRels target-rels ^RelGraph g]
   ; Faster version: single rel
-  (if (= 1 (count target-rels))
-    (let [rel (first target-rels)
-          ^NamedGraph g (.projectRel ^RelGraph g rel)]
-      ; We still want a graph with *sets* of relationships for edges
-      (NamedGraph. (bs/add bs/empty rel) (.graph g)))
+  (if (.isSingleton target-rels)
+    (let [^NamedGraph g (.projectRel ^RelGraph g target-rels)]
+      (NamedGraph. target-rels (.graph g)))
     ; Slower version: RelGraph.
     (.projectRels ^RelGraph g target-rels)))
 
@@ -419,9 +425,7 @@
   ([] (DirectedGraph.))
   ([a] a)
   ([^DirectedGraph a ^DirectedGraph b]
-   ; Buggy right now; can replace once bifurcan is fixed
-   ; (.merge a b union-edge))
-   (bg/merge a b (fn [x y] (.apply union-edge x y))))
+   (.merge a b union-rels))
   ([a b & more]
    (reduce digraph-union a (cons b more))))
 
@@ -447,20 +451,9 @@
                      (f (.from edge))
                      (f (.to edge))
                      (.value edge)
-                     union-edge))
+                     union-rels))
             (linear (digraph))
             (edges g))))
-
-(defn out+
-  "Like graph/out, but returns nil when the vertex does not exist, rather than
-  throwing."
-  [graph vertex]
-  ; TODO: if this is slow, consider trying bg/out directly and catching the
-  ; not-found case. My *guess* is that the double lookup is going to be
-  ; relatively fast and stay in cache, but the exception handler might be
-  ; cheaper.
-  (when (bs/contains? (bg/vertices graph) vertex)
-    (bg/out graph vertex)))
 
 (defn ^IGraph sequential-composition
   "The sequential composition (ish; see below) of two graphs A; B. Returns a
@@ -468,22 +461,28 @@
   This is similar to relational composition, treating each graph as a set of
   [in-vert out-vert] pairs.
 
-  Note that unlike A; B, we actually preserve the intermediate vertex in this
-  graph. This has two advantages: first, Bifurcan's SCC search can't
-  distinguish between singleton SCCs with/ or without self edges; preserving
-  the intermediate vertex means any SCC has at least 2 ops. Second, it means
-  cycles detected here are isomorphic to the real cycles we're looking for.
-
-  For now, we simply destroy edge values; it's not clear what the right
-  representation is."
+  Note that unlike A; B, we actually preserve the intermediate vertex and
+  original edges in this graph. This has two advantages: first, Bifurcan's SCC
+  search can't distinguish between singleton SCCs with/ or without self edges;
+  preserving the intermediate vertex means any SCC has at least 2 ops. Second,
+  it means cycles detected here are isomorphic to the real cycles we're looking
+  for."
   [a b]
-  (loopr [c (b/linear (op-digraph))]
-         [x->y (bg/edges a)
-          z    (out+ b (bg/edge-to x->y))]
-         (let [x (bg/edge-from x->y)
-               y (bg/edge-to   x->y)]
-           (recur (-> c (bg/link x y) (bg/link y z))))
-         (b/forked c)))
+  (let [b-vertices (bg/vertices b)]
+    (loopr [c (b/linear (op-digraph))]
+           [x->y (bg/edges a) :via :iterator]
+           (recur
+             (let [y (bg/edge-to x->y)]
+               (if (bs/contains? b-vertices y)
+                 (loopr [c c]
+                        [z (bg/out b y) :via :iterator]
+                        (-> c
+                            (bg/add-edge x->y)
+                            (bg/link y z (bg/edge b y z))
+                            recur))
+                 ; y not in b
+                 c)))
+           (b/forked c))))
 
 (defn ^IGraph sequential-extension
   "Takes two RelGraphs A and B. Returns A U (A; B): the union of A with the
@@ -494,9 +493,20 @@
   produces a graph where cycles are mostly in A, but can take non-adjacent
   jumps through B."
   [^RelGraph a, ^RelGraph b]
-  ; Rather than add to a piecemeal, we union it with a new NamedGraph--that's
-  ; constant time.
-  (.union a (NamedGraph. ::seq-comp (sequential-composition a b))))
+  (let [b-vertices (bg/vertices b)]
+    (loopr [c (b/linear a)]
+           ; Iterate over vertices in a with some inbound edge
+           [y (r/filter (fn has-inbound? [y]
+                          (< 0 (b/size (bg/in a y))))
+                        (bg/vertices a))]
+           (recur
+             (if (bs/contains? b-vertices y)
+               (loopr [c c]
+                      [z (bg/out b y) :via :iterator]
+                      (recur (bg/link c y z (bg/edge b y z))))
+               ; y not in b
+               c))
+           (b/forked c))))
 
 ; Advanced graph search
 ;
@@ -789,7 +799,7 @@
                 [g']
                 ; Because we partitioned by ops out, we'll never have to merge
                 ; here
-                (recur (.merge ^IGraph g g' union-edge))
+                (recur (.merge ^IGraph g g' union-rels))
                 (b/forked g)))]
     ; Fold over history
     (h/fold history fold)))

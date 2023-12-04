@@ -13,6 +13,7 @@
                   [core :as elle]
                   [consistency-model :as cm]
                   [graph :as g]
+                  [rels :as rels :refer [ww wr rw wwp wrp rwp process realtime]]
                   [util :as util]
                   [viz :as viz]]
             [jepsen [history :as h]
@@ -21,7 +22,8 @@
             [tesser.core :as t]
             [unilog.config :refer [start-logging!]])
   (:import (elle.graph PathState)
-           (elle ElleGraph)
+           (elle BitRels
+                 ElleGraph)
            (io.lacuna.bifurcan IGraph
                                LinearMap
                                Map)
@@ -304,34 +306,34 @@
 
   Note that these use canonical consistency model names!"
   (->> [; Read uncommitted requires no write cycles
-        {:model :PL-1, :subgraph :ww}
+        {:model :PL-1, :subgraph ww}
         ; Read committed requires no circular information flow
-        {:model :PL-2, :subgraph [:union :ww :wr]}
+        {:model :PL-2, :subgraph [:union ww wr]}
 
         ; Prefix can have a WW followed by an RW edge
         ; This is work we can't cite just yet--uncomment it later.
-        ; {:model :prefix, :subgraph [:union :ww :wr [:composition :wr :rw]]}
+        ; {:model :prefix, :subgraph [:union ww wr [:composition wr rw]]}
 
         ; Snapshot isolation extends through a single RW hop
-        {:model :PL-SI, :subgraph [:extension [:union :ww :wr] :rw]}
+        {:model :PL-SI, :subgraph [:extension [:union ww wr] rw]}
 
         ; Serializable requires no data cycles
-        {:model :PL-3, :subgraph [:union :ww :wr :rw]}
+        {:model :PL-3, :subgraph [:union ww wr rw]}
 
         ; Strong session variants add process edges
-        {:model :strong-session-PL-1, :subgraph [:union :ww :process]}
-        {:model :strong-session-PL-2, :subgraph [:union :ww :wr :process]}
+        {:model :strong-session-PL-1, :subgraph [:union ww process]}
+        {:model :strong-session-PL-2, :subgraph [:union ww wr process]}
         {:model    :strong-session-snapshot-isolation
-         :subgraph [:extension [:union :ww :wr :process] :rw]}
+         :subgraph [:extension [:union ww wr process] rw]}
         {:model    :strong-session-serializable
-         :subgraph [:union :ww :wr :rw :process]}
+         :subgraph [:union ww wr rw process]}
 
         ; Strong variants add realtime
-        {:model :strong-PL-1, :subgraph [:union :ww :realtime]}
-        {:model :strong-PL-2, :subgraph [:union :ww :wr :realtime]}
+        {:model :strong-PL-1, :subgraph [:union ww realtime]}
+        {:model :strong-PL-2, :subgraph [:union ww wr realtime]}
         {:model    :strong-snapshot-isolation
-         :subgraph [:extension [:union :ww :wr :realtime] :rw]}
-        {:model :PL-SS, :subgraph [:union :ww :wr :rw :realtime]}
+         :subgraph [:extension [:union ww wr realtime] rw]}
+        {:model :PL-SS, :subgraph [:union ww wr rw realtime]}
         ]
        (mapv (fn [{:keys [model] :as spec}]
                ; Add a :type field for the anomaly type, and a :friendly-model
@@ -344,19 +346,20 @@
   "Takes a transaction graph and a subgraph spec ala cycle-exists-specs.
   Computes the given subgraph from it."
   [g spec]
-  (if (keyword? spec)
+  (if (rels/bit-rels? spec)
     ; Singleton kw: just project
-    (g/project-relationships #{spec} g)
+    (g/project-relationships spec g)
     ; AST interpreter
     (let [[f & args] spec]
       (case f
         :union
-        ; We can do something clever here. If we're unioning n keywords
+        ; We can do something clever here. If we're unioning n IRels
         ; directly, we can just project the graph to those relationships and
         ; get their union in constant time.
-        (let [split (group-by keyword? args)
+        (let [split (group-by rels/bit-rels? args)
               kws   (when-let [kws (get split true)]
-                      (g/project-relationships (set kws) g))
+                      (g/project-relationships
+                        (reduce rels/union rels/none kws) g))
               other (when-let [other (get split false)]
                       (->> other
                            (mapv (partial cycle-exists-subgraph g))
@@ -374,6 +377,18 @@
         (do (assert (= 2 (count args)))
             (g/sequential-composition (cycle-exists-subgraph g (first args))
                                       (cycle-exists-subgraph g (second args))))))))
+
+(defn cycle-exists-friendly-subgraph
+  "Takes a subgraph spec and converts it to one with keywords instead of
+  bitrels."
+  [x]
+  (cond (rels/bit-rels? x)
+        (first (.toClojure ^BitRels x))
+
+        (vector? x)
+        (mapv cycle-exists-friendly-subgraph x)
+
+        true x))
 
 (defn cycle-exists-cases
   "Finding cycles can be expensive, but we can actually distinguish between
@@ -401,7 +416,7 @@
                (recur (conj errs
                             {:type     type
                              :not      friendly-model
-                             :subgraph subgraph
+                             :subgraph (cycle-exists-friendly-subgraph subgraph)
                              :scc-size (count scc)
                              :scc      (into (sorted-set) (map :index scc))})
                       (into redundant? (cm/all-impossible-models #{model}))))))
@@ -560,8 +575,8 @@
   "We define a specification language for different anomaly types, and a small
    interpreter to search for them. An anomaly is specified by a map including:
 
-     :rels         A set of relationships which can be used as edges in the
-                   cycle.
+     :rels         A BitRels set of relationships which can be used as edges in
+                   the cycle.
 
    There may also be supplementary relationships which may be used in addition
    to rels:
@@ -587,32 +602,32 @@
      :type         If present, the cycle explainer must tell us any cycle is of
                    this :type specifically."
   (sorted-map-by cm/anomaly-depth-compare
-    :G0        {:rels #{:ww}}
+    :G0        {:rels ww}
     ; G1c has at least a wr edge, and can take either ww or wr.
-    :G1c       {:rels          #{:ww :wr}
-                :required-rels #{:wr}}
+    :G1c       {:rels          (rels/union ww wr)
+                :required-rels wr}
     ; G-single takes ww/wr normally, but has exactly one rw. Note that some
     ; G-singles are G2-item and we can't distinguish them at the graph level.
-    :G-single  {:rels        #{:ww :wr}
-                :single-rels #{:rw}
+    :G-single  {:rels        (rels/union ww wr)
+                :single-rels rw
                 :type        :G-single}
     ; G-nonadjacent is the more general form of G-single: it has multiple
     ; nonadjacent rw edges. Note that some G-nonadjacents are G2-item, and we
     ; can't distinguish them from graph alone yet.
-    :G-nonadjacent {:rels             #{:ww :wr}
-                    :nonadjacent-rels #{:rw}
-                    :multiple-rels    #{:rw}
+    :G-nonadjacent {:rels             (rels/union ww wr)
+                    :nonadjacent-rels rw
+                    :multiple-rels    rw
                     :type             :G-nonadjacent}
     ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
     ; insists on being G2, rather than G-single. Not bulletproof, but G-single
     ; is worse, so I'm OK with it.
-    :G2-item   {:rels          #{:ww :wr :rw}
-                :multiple-rels #{:rw} ; A single rw rel is trivially G-Single
+    :G2-item   {:rels          (rels/union ww wr rw)
+                :multiple-rels rw ; A single rw rel is trivially G-Single
                 :type         :G2-item}
     ; G2 is identical, except we want a cycle explained as G2
     ; specifically--it'll have at least one :predicate? edge.
-    :G2        {:rels          #{:ww :wr :rw}
-                :multiple-rels #{:rw}
+    :G2        {:rels          (rels/union ww wr rw)
+                :multiple-rels rw
                 :type          :G2}))
 
 (defn cycle-anomaly-spec-variant
@@ -621,7 +636,10 @@
   for the process/realtime variant of that spec."
   [variant [anomaly-name spec]]
   (let [; You can take variant edges any time
-        spec' (update spec :rels conj variant)
+        spec' (update spec :rels rels/union
+                      (case variant
+                        :realtime BitRels/REALTIME
+                        :process  BitRels/PROCESS))
         ; And must include the appropriate realtime/process flag
         spec' (assoc spec' (case variant
                              :realtime :realtime?
@@ -735,12 +753,12 @@
   connected), as a fallback in case our BFS gets stuck. We invoke this if our
   search times out."
   [g fg pair-explainer]
-  (let [c (loop [rels [#{:ww}
-                       #{:ww :realtime :process}
-                       #{:ww :wr}
-                       #{:ww :wr :realtime :process}
-                       #{:ww :wr :rw}
-                       #{:ww :wr :rw :realtime :process}]]
+  (let [c (loop [rels [ww
+                       (rels/union ww realtime process)
+                       (rels/union ww wr)
+                       (rels/union ww wr realtime process)
+                       (rels/union ww wr rw)
+                       (rels/union ww wr rw realtime process)]]
             (if-not (seq rels)
               ; Out of projections; fall back to the total scc, which
               ; MUST have a cycle.
@@ -772,9 +790,9 @@
   (let [;_ (info :type type :spec spec)
         ;_ (info ":preds\n" (with-out-str (pprint preds)))
         ;_ (info :transition transition)
-        cycle (bfs/search (fg (set/union rels nonadjacent-rels
-                                         required-rels single-rels
-                                         multiple-rels))
+        cycle (bfs/search (fg (rels/union rels nonadjacent-rels
+                                          required-rels single-rels
+                                          multiple-rels))
                           spec)]
     (when cycle
       ;(info "Cycle:\n" (with-out-str (pprint cycle)))
