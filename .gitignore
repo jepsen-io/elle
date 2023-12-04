@@ -17,6 +17,7 @@ pom.xml.asc
 /.nrepl-port
 /.clj-kondo
 /.lsp
+/.vscode
 /incompatible-order
 .hgignore
 .hg/
