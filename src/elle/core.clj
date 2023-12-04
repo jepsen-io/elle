@@ -537,14 +537,21 @@
   returns a [graph, explainer] pair, and returns a checker which uses those
   graphs to identify cyclic dependencies. Options are:
 
-  {:analyzer    A function which takes a history and returns a {:graph,
-  :explainer, :anomalies} map; e.g. realtime-graph.
+  {:analyzer   A function which takes a history and returns a 
+               {:graph, :explainer, :anomalies} map; e.g. realtime-graph.
   :directory   Where to write results}"
   [opts history]
   (try+
     (let [analyze-fn (:analyzer opts)
           {:keys [graph explainer sccs cycles]} (check- analyze-fn history)]
-      (write-cycles! opts cycles)
+      (when (and (seq sccs)
+                 (:directory opts))
+        (let [opts      (assoc opts :pair-explainer explainer)
+              explained (->> sccs ; write-cycles! wants explained cycles
+                          (map #(->> (bg/select graph (bs/from %))
+                                     g/find-cycle
+                                     (explain-cycle cycle-explainer explainer))))]
+          (write-cycles! opts explained)))
       {:valid?     (empty? sccs)
        :scc-count  (count sccs)
        :cycles     cycles})

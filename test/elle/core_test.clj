@@ -86,11 +86,15 @@
           r11' {:index 5 :type :ok     :process 0 :f :read :value {:x 1 :y 1}}
           r01  {:index 6 :type :invoke :process 0 :f :read :value nil}
           r01' {:index 7 :type :ok     :process 0 :f :read :value {:x 0 :y 1}}
-          history (h/history [r00 r00' r10 r10' r11 r11' r01 r01'])]
+          history (h/history [r00 r00' r10 r10' r11 r11' r01 r01'])
+          msg "Let:\n  T1 = {:index 7, :time -1, :type :ok, :process 0, :f :read, :value {:x 0, :y 1}}\n  T2 = {:index 3, :time -1, :type :ok, :process 0, :f :read, :value {:x 1, :y 0}}\n\nThen:\n  - T1 < T2, because T1 observed :x = 0, and T2 observed a higher value 1.\n  - However, T2 < T1, because T2 observed :y = 0, and T1 observed a higher value 1: a contradiction!"]
       (is (= {:valid? false
               :scc-count 1
-              :cycles ["Let:\n  T1 = {:index 7, :time -1, :type :ok, :process 0, :f :read, :value {:x 0, :y 1}}\n  T2 = {:index 3, :time -1, :type :ok, :process 0, :f :read, :value {:x 1, :y 0}}\n\nThen:\n  - T1 < T2, because T1 observed :x = 0, and T2 observed a higher value 1.\n  - However, T2 < T1, because T2 observed :y = 0, and T1 observed a higher value 1: a contradiction!"]}
-             (check {:analyzer monotonic-key-graph} history)))))
+              :cycles [msg]}
+             (check {:analyzer  monotonic-key-graph
+                     :directory "test-output/checker-test/invalid/sccs"}
+                    history)))
+      (is (= (str "Cycle #0\n" msg) (slurp "test-output/checker-test/invalid/sccs/cycles.txt")))))
 
   (testing "large histories"
     (let [history (->> (range)
