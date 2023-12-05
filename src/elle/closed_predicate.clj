@@ -492,7 +492,7 @@
   P matches x2 but not x1."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/op-rel-graph))]
+   (loopr [g (g/linear (g/op-digraph))]
           [op          (h/oks history)
            [f :as mop] (:value op)]
           (recur
@@ -585,7 +585,7 @@
   VSet(pred)."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g                (g/linear (g/op-rel-graph))]
+   (loopr [g                (g/linear (g/op-digraph))]
           [op               (h/oks history)
            [f k v :as mop]  (:value op)]
           (recur
@@ -662,7 +662,7 @@
                   (if-let [write (get-in ext-writes [k v])]
                     (if (= op write)
                       g
-                      (g/link g write op))
+                      (g/link g write op ww))
                     ; No writer known
                     g)
                   ; No prior version
@@ -670,7 +670,7 @@
 
               ; Some other mop
               g))
-          (g/named-graph ww (g/forked g)))
+          (g/forked g))
    :explainer (WWExplainer. all-versions)})
 
 (defn graph

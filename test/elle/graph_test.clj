@@ -10,8 +10,7 @@
             [clojure.test :refer :all]
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan IMap
-                               Map)
-           (elle RelGraph)))
+                               Map)))
 
 (defn op
   "Takes a number, returns an Op with that as its index."
@@ -285,19 +284,19 @@
 
 (deftest rel-graph-test
   (let [[o0 o1 o2 o3 o4 o5 o6] (map #(h/op {:index %}) (range 7))
-        a (-> (named-graph ww (op-digraph))
-              (link o1 o2)
-              (link o1 o3))
-        b (-> (named-graph wr (op-digraph))
-              (link o1 o2)
-              (link o1 o4)
-              (link o5 o6))
-        g (reduce rel-graph-union (rel-graph-union) [a b])]
+        a (-> (op-digraph)
+              (link o1 o2 ww)
+              (link o1 o3 ww))
+        b (-> (op-digraph)
+              (link o1 o2 wr)
+              (link o1 o4 wr)
+              (link o5 o6 wr))
+        g (reduce digraph-union (digraph-union) [a b])]
     (is (= true (.isDirected g)))
     (is (= #{o1 o2 o3 o4 o5 o6} (->clj (.vertices g))))
-    (is (= a (.projectRel g ww)))
-    (is (= b (.projectRel g wr)))
-    (is (= g (.projectRels g (union ww wr))))
+    (is (= a (project-rels ww g)))
+    (is (= b (project-rels wr g)))
+    (is (= g (project-rels (union ww wr realtime) g)))
     (is (= #{o2 o3 o4} (->clj (.out g o1))))
     (is (thrown? IllegalArgumentException (->clj (.out g o0))))
     (is (= #{o6} (->clj (.out g o5))))))

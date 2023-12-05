@@ -365,21 +365,21 @@
           (h/history [(op "ax1ay1")
                       (op "ax2ay2")
                       (op "rx12ry21")])
-          msg {:cycle [t2 t1 t2]
+          msg {:cycle [t1 t2 t1]
                :steps
                [
-                {:type :ww,
-                 :key :y,
-                 :value 2,
-                 :value' 1,
-                 :a-mop-index 1,
-                 :b-mop-index 1}
                 {:type :ww,
                  :key :x,
                  :value 1,
                  :value' 2,
                  :a-mop-index 0,
                  :b-mop-index 0}
+                {:type :ww,
+                 :key :y,
+                 :value 2,
+                 :value' 1,
+                 :a-mop-index 1,
+                 :b-mop-index 1}
                 ]
                :type :G0}]
       ; G1 and G0 both catch this, because technically G0 *is* G1.
@@ -576,20 +576,22 @@
                  :anomaly-types  [:G2-item]
                  :not            #{:repeatable-read}
                  :anomalies
-                 {:G2-item [{:cycle [t2 t1 t2]
+                 {:G2-item [{:cycle [t1 t2 t1]
                              :steps
-                             [{:type :rw,
-                               :key :x,
-                               :value :elle.list-append/init,
-                               :value' 1,
-                               :a-mop-index 1,
-                               :b-mop-index 0}
+                             [
                               {:type :rw,
                                :key :y,
                                :value :elle.list-append/init,
                                :value' 1,
                                :a-mop-index 1,
-                               :b-mop-index 0}]
+                               :b-mop-index 0}
+                              {:type :rw,
+                               :key :x,
+                               :value :elle.list-append/init,
+                               :value' 1,
+                               :a-mop-index 1,
+                               :b-mop-index 0}
+                              ]
                              :type :G2-item}]}}]
       (is (= err (c {:consistency-models nil, :anomalies [:G2]} h)))
       ; As will a serializable checker.
@@ -700,15 +702,8 @@
               :not            #{:strong-session-snapshot-isolation}
               :anomalies
               {:G-nonadjacent-item-process
-               [{:cycle [t0' t1' t2' t3' t0']
-                 :steps [{:type :rw,
-                          :key :x
-                          :value :elle.list-append/init
-                          :value' 1
-                          :a-mop-index 0
-                          :b-mop-index 0}
-                         {:type :process, :process 1}
-                         {:type :rw, :key :z, :value :elle.list-append/init
+               [{:cycle [t2' t3' t0' t1' t2']
+                 :steps [{:type :rw, :key :z, :value :elle.list-append/init
                           :value' 1
                           :a-mop-index 0
                           :b-mop-index 0}
@@ -716,7 +711,15 @@
                           :key :z
                           :value 1
                           :a-mop-index 0
-                          :b-mop-index 1}]
+                          :b-mop-index 1}
+                         {:type :rw,
+                          :key :x
+                          :value :elle.list-append/init
+                          :value' 1
+                          :a-mop-index 0
+                          :b-mop-index 0}
+                         {:type :process, :process 1}
+                         ]
                  :type :G-nonadjacent-item-process}]}}
              (c {:consistency-models [:strong-session-snapshot-isolation]}
                 h)))))
@@ -919,20 +922,22 @@
             :not            #{:repeatable-read}
             :anomaly-types  [:G2-item]
             :anomalies {:G2-item [{:cycle
-                                   [t2 t1 t2]
+                                   [t1 t2 t1]
                                    :steps
-                                   [{:type :rw,
-                                     :key :y,
-                                     :value :elle.list-append/init,
-                                     :value' 1,
-                                     :a-mop-index 0,
-                                     :b-mop-index 1}
+                                   [
                                     {:type :rw,
                                      :key :x,
                                      :value :elle.list-append/init,
                                      :value' 1,
                                      :a-mop-index 0,
-                                     :b-mop-index 1}],
+                                     :b-mop-index 1}
+                                    {:type :rw,
+                                     :key :y,
+                                     :value :elle.list-append/init,
+                                     :value' 1,
+                                     :a-mop-index 0,
+                                     :b-mop-index 1}
+                                    ],
                                    :type :G2-item}]}}
            (c {:consistency-models [:repeatable-read]} h)))))
 
@@ -964,18 +969,8 @@
             :not            #{:snapshot-isolation :repeatable-read}
             :anomaly-types  [:G-nonadjacent-item]
             :anomalies      {:G-nonadjacent-item
-                             [{:cycle (mapv h [3 5 7 1 3])
-                               :steps [{:type :rw,
-                                        :key :y,
-                                        :value :elle.list-append/init,
-                                        :value' 1,
-                                        :a-mop-index 1,
-                                        :b-mop-index 0}
-                                       {:type :wr,
-                                        :key :y,
-                                        :value 1,
-                                        :a-mop-index 0,
-                                        :b-mop-index 0}
+                             [{:cycle (mapv h [7 1 3 5 7])
+                               :steps [
                                        {:type :rw,
                                         :key :x,
                                         :value :elle.list-append/init,
@@ -986,7 +981,19 @@
                                         :key :x,
                                         :value 1,
                                         :a-mop-index 0,
-                                        :b-mop-index 0}]
+                                        :b-mop-index 0}
+                                       {:type :rw,
+                                        :key :y,
+                                        :value :elle.list-append/init,
+                                        :value' 1,
+                                        :a-mop-index 1,
+                                        :b-mop-index 0}
+                                       {:type :wr,
+                                        :key :y,
+                                        :value 1,
+                                        :a-mop-index 0,
+                                        :b-mop-index 0}
+                                       ]
                                :type :G-nonadjacent-item}]}}
                              (c {} h))))
 
@@ -1018,19 +1025,21 @@
                              ; here because neither t1 nor t2 saw each other's
                              ; effects, making this G2-item
                              :G2-item
-                             [{:cycle [t1' t2' t1']
-                               :steps [{:type :rw,
-                                        :key :x,
-                                        :value 0,
-                                        :value' 2,
-                                        :a-mop-index 0,
-                                        :b-mop-index 1}
+                             [{:cycle [t2' t1' t2']
+                               :steps [
                                        {:type :rw,
                                         :key :x,
                                         :value 0,
                                         :value' 1,
                                         :a-mop-index 0,
-                                        :b-mop-index 1}],
+                                        :b-mop-index 1}
+                                      {:type :rw,
+                                        :key :x,
+                                        :value 0,
+                                        :value' 2,
+                                        :a-mop-index 0,
+                                        :b-mop-index 1}
+                                       ],
                                :type :G2-item}]}}
            (c {} h))))
 
@@ -1060,19 +1069,21 @@
             :anomaly-types [:G1c-process],
            :anomalies
            {:G1c-process
-            [{:cycle [t0' t1' t2' t0']
+            [{:cycle [t2' t0' t1' t2']
               :steps
-              [{:type :wr,
+              [
+               {:type :wr,
+                :key :x,
+                :value 1,
+                :a-mop-index 0,
+                :b-mop-index 0}
+               {:type :wr,
                 :key :y,
                 :value 1,
                 :a-mop-index 1,
                 :b-mop-index 0}
                {:type :process, :process 2}
-               {:type :wr,
-                :key :x,
-                :value 1,
-                :a-mop-index 0,
-                :b-mop-index 0}],
+               ],
               :type :G1c-process}]},
            :not #{:strong-session-read-committed}}
            (c {:consistency-models [:strong-session-snapshot-isolation]} h)))))
@@ -1119,29 +1130,31 @@
             :anomaly-types [:G-nonadjacent-item],
             :anomalies
             {:G-nonadjacent-item
-             [{:cycle [t2' t3' t4' t1' t2']
-               :steps [{:type :rw,
-                  :key :y,
-                  :value :elle.list-append/init,
-                  :value' 1,
-                  :a-mop-index 1,
-                  :b-mop-index 0}
-                 {:type :wr,
-                  :key :z,
-                  :value 2,
-                  :a-mop-index 1,
-                  :b-mop-index 0}
-                 {:type :rw,
-                  :key :t,
-                  :value :elle.list-append/init,
-                  :value' 1,
-                  :a-mop-index 1,
-                  :b-mop-index 1}
-                 {:type :wr,
-                  :key :x,
-                  :value 1,
-                  :a-mop-index 0,
-                  :b-mop-index 0}]
+             [{:cycle [t4' t1' t2' t3' t4']
+               :steps [
+                       {:type :rw,
+                        :key :t,
+                        :value :elle.list-append/init,
+                        :value' 1,
+                        :a-mop-index 1,
+                        :b-mop-index 1}
+                       {:type :wr,
+                        :key :x,
+                        :value 1,
+                        :a-mop-index 0,
+                        :b-mop-index 0}
+                       {:type :rw,
+                        :key :y,
+                        :value :elle.list-append/init,
+                        :value' 1,
+                        :a-mop-index 1,
+                        :b-mop-index 0}
+                       {:type :wr,
+                        :key :z,
+                        :value 2,
+                        :a-mop-index 1,
+                        :b-mop-index 0}
+                       ]
                :type :G-nonadjacent-item}]}
             :not #{:repeatable-read :snapshot-isolation}}
            r))))
@@ -1319,7 +1332,7 @@
     (is (= (* 2 n) (count h)))
     (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
 
-(deftest ^:perf sloppy-perf-test
+(deftest ^:perf ^:focus sloppy-perf-test
   ; An end-to-end performance test based on a sloppy database which takes
   ; locks... sometimes.
   (let [n           (long 1e6)
@@ -1386,10 +1399,10 @@
       (is (= #{:read-uncommitted} (:not res)))
       (is (< 1/100000 (/ (count (:G0 as)) n)))
       (is (< 1/100000 (/ (count (:G1c as)) n)))
-      (is (< 1/100000 (/ (count (:G-single as)) n)))
+      (is (< 1/100000 (/ (count (:G-single-item as)) n)))
       ;(is (< 1/100000 (/ (count (:G-nonadjacent as)) n)))
       ;(is (< 1/100000 (/ (count (:G2-item as)) n)))
-      ; (pprint (:anomaly-types res))))
+      ;(pprint (:anomaly-types res))
       )))
 
 ; Example of checking a file, for later

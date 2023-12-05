@@ -22,8 +22,7 @@
             [tesser.core :as t]
             [unilog.config :refer [start-logging!]])
   (:import (elle.graph PathState)
-           (elle BitRels
-                 ElleGraph)
+           (elle BitRels)
            (io.lacuna.bifurcan IGraph
                                LinearMap
                                Map)
@@ -358,8 +357,8 @@
   Computes the given subgraph from it."
   [g spec]
   (if (rels/bit-rels? spec)
-    ; Singleton kw: just project
-    (g/project-relationships spec g)
+    ; Ah, good, we have specific rels to project to
+    (g/project-rels spec g)
     ; AST interpreter
     (let [[f & args] spec]
       (case f
@@ -369,7 +368,7 @@
         ; get their union in constant time.
         (let [split (group-by rels/bit-rels? args)
               kws   (when-let [kws (get split true)]
-                      (g/project-relationships
+                      (g/project-rels
                         (reduce rels/union rels/none kws) g))
               other (when-let [other (get split false)]
                       (->> other
@@ -760,7 +759,7 @@
   "Takes a graph g. Returns a function that takes a set of relationships, and
   yields g filtered to just those relationships. Memoized."
   [graph]
-  (memoize (fn [rels] (g/project-relationships rels graph))))
+  (memoize (fn [rels] (g/project-rels rels graph))))
 
 (defn warm-filtered-graphs!
   "I thought memoizing this and making it lazy was a good idea, and it might be
@@ -985,16 +984,14 @@
   [opts analyzer history]
   (let [; Analyze the history. Duplicating some of the logic in core/check-
         ; here...
+        ;_ (info "Building graphs")
         {:keys [anomalies graph explainer]} (analyzer (h/client-ops history))
-        anomalies (if (.isEmpty ^ElleGraph graph)
+        anomalies (if (= 0 (b/size graph))
                     (assoc anomalies :empty-transaction-graph true)
                     anomalies)
-        ;_      (info "Materializing" (b/size graph) "ops")
-        mg     (g/materialize history graph)
-        ;mg      graph
-        ;_      (info "Materialized")
-        sccs   (g/strongly-connected-components mg)
-        ; _ (info "Found" (count sccs) "top-level SCCs")
+        ;_      (info "Graph built")
+        sccs   (g/strongly-connected-components graph)
+        ;_ (info "Found" (count sccs) "top-level SCCs")
 
         ; Spawn a task to check each SCC
         scc-tasks (mapv (fn per-scc [scc]

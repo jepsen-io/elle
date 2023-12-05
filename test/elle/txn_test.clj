@@ -32,28 +32,28 @@
   ; A simple G-single; stresses the AST interpreter for subgraphs, union,
   ; composition, extension.
   (let [[op0 op1 op2 op3] (map (fn [i] (h/op {:index i})) (range 4))
-        g (-> (g/op-rel-graph)
+        g (-> (g/op-digraph)
               (g/link op0 op1 wr)
               (g/link op1 op2 ww)
               (g/link op2 op0 rw)
               ; Double-rw link to op3
               (g/link op0 op3 rw))]
     (testing "simple keyword"
-      (is (= (-> (g/named-graph ww)
-                 (g/link op1 op2))
+      (is (= (-> (g/op-digraph)
+                 (g/link op1 op2 ww))
              (cycle-exists-subgraph g ww))))
     (testing "union"
-      (is (= (-> (g/op-rel-graph)
+      (is (= (-> (g/op-digraph)
                  (g/link op0 op1 wr)
                  (g/link op1 op2 ww))
              (cycle-exists-subgraph g [:union ww wr]))))
     (testing "composition"
-      (is (= (-> (g/digraph)
+      (is (= (-> (g/op-digraph)
                  (g/link op1 op2 ww)  ; Through ww-rw
                  (g/link op2 op0 rw)) ; Through ww-rw
              (cycle-exists-subgraph g [:composition ww rw]))))
     (testing "extension"
-      (is (= (-> (g/op-rel-graph)
+      (is (= (-> (g/op-digraph)
                  (g/link op0 op1 wr)  ; Original wr edge
                  (g/link op1 op2 ww)  ; Original ww edge
                  (g/link op2 op0 rw)) ; Through ww-rw
@@ -63,7 +63,7 @@
   ; A simple G-single; stresses the AST interpreter for subgraphs and also the
   ; sequential extension mechanism
   (let [[op0 op1] (map (fn [i] (h/op {:index i})) (range 2))
-        g (-> (g/op-rel-graph)
+        g (-> (g/op-digraph)
               (g/link op0 op1 ww)
               (g/link op1 op0 rw))
         cases (cycle-exists-cases g)]

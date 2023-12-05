@@ -35,7 +35,8 @@
 
   We can alternate between expanding the transaction graph and expanding the
   version graph until we reach a fixed point. This isn't implemented yet."
-  (:require [clojure.core.reducers :as r]
+  (:require [bifurcan-clj [core :as b]]
+            [clojure.core.reducers :as r]
             [clojure [set :as set]
                      [pprint :refer [pprint]]]
             [clojure.tools.logging :refer [info warn]]
@@ -629,8 +630,7 @@
   [history version-graphs]
   (let [ext-read-index  (ext-index txn/ext-reads  history)
         ext-write-index (ext-index txn/ext-writes history)]
-    (loopr [ww (g/linear (g/named-graph ww (g/op-digraph)))
-            rw (g/linear (g/named-graph rw (g/op-digraph)))]
+    (loopr [g (g/linear (g/op-digraph))]
            [[k version-graph] version-graphs
             ^IEdge edge (g/edges version-graph)]
            (let [v1        (.from edge)
@@ -640,17 +640,12 @@
                  v1-reads  (get k-reads v1)
                  v1-writes (get k-writes v1)
                  v2-writes (get k-writes v2)
-                 all-vals  (set (concat v1-reads v1-writes v2-writes))
-                 ww'       (-> ww
-                               (g/link-all-to-all v1-writes v2-writes)
-                               (g/remove-self-edges all-vals))
-                 rw'       (-> rw
-                               (g/link-all-to-all v1-reads v2-writes)
-                               (g/remove-self-edges all-vals))]
-             (recur ww' rw'))
-           (reduce g/rel-graph-union
-                   (g/rel-graph-union)
-                   [(g/forked ww) (g/forked rw)]))))
+                 all-vals  (set (concat v1-reads v1-writes v2-writes))]
+             (recur (-> g
+                        (g/link-all-to-all v1-writes v2-writes ww)
+                        (g/link-all-to-all v1-reads v2-writes rw)
+                        (g/remove-self-edges all-vals))))
+           (b/forked g))))
 
 (defn explain-op-deps
   "Given version graphs, a function extracting a map of keys to values from op
@@ -774,7 +769,7 @@
                                ; OK, in this case, we've got exactly one
                                ; txn that wrote this value, which is good!
                                ; We can generate dependency edges here!
-                               1 (g/link-to-all graph (first writes) reads)
+                               1 (g/link-to-all graph (first writes) reads wr)
 
                                ; But if there's more than one, we can't do this
                                ; sort of cycle analysis because there are
@@ -790,7 +785,7 @@
                                                      (pr-str writes))))))))
                          graph
                          values->reads))
-               (g/linear (g/named-graph wr (g/op-digraph)))
+               (b/linear (g/op-digraph))
                ext-reads))
      :explainer (WRExplainer.)}))
 

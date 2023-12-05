@@ -14,8 +14,7 @@
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan IMap
                                Map)
-           (elle BFSPath
-                 RelGraph)))
+           (elle BFSPath)))
 
 ; Just for debugging
 (extend-protocol p/Datafiable

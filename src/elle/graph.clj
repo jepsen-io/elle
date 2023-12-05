@@ -14,9 +14,7 @@
             [elle.util :refer [map-vals maybe-interrupt]]
             [jepsen.history :as h]
             [jepsen.history.fold :refer [loopf]])
-  (:import (elle BitRels
-                 NamedGraph
-                 RelGraph)
+  (:import (elle BitRels)
            (io.lacuna.bifurcan DirectedGraph
                                DirectedAcyclicGraph
                                Graphs
@@ -105,14 +103,6 @@
   up equality."
   []
   (DirectedGraph. index-hash index=))
-
-(defn ^NamedGraph named-graph
-  "Constructs a fresh named directed graph over operations with the given
-  relationship name."
-  ([name]
-   (NamedGraph. name (digraph)))
-  ([name graph]
-   (NamedGraph. name graph)))
 
 (defn linear
   "Bifurcan's analogue to (transient x)"
@@ -279,15 +269,18 @@
     (recur (unlink g (first xs) y) (next xs) y)
     g))
 
-(defn project-relationships
-  "Projects a RelGraph to just the given set of relationships."
-  [^BitRels target-rels ^RelGraph g]
-  ; Faster version: single rel
-  (if (.isSingleton target-rels)
-    (let [^NamedGraph g (.projectRel ^RelGraph g target-rels)]
-      (NamedGraph. target-rels (.graph g)))
-    ; Slower version: RelGraph.
-    (.projectRels ^RelGraph g target-rels)))
+(defn project-rels
+  "Takes a BitRels and a directed graph where edges are BitRels. Returns a
+  directed graph with just those relationships in the given BitRels."
+  [^BitRels target-rels ^DirectedGraph g]
+  (loopr [^DirectedGraph g' (.linear (op-digraph))]
+         [^IEdge edge (.edges g) :via :iterator]
+         (recur
+           (let [rel (.intersection target-rels ^BitRels (.value edge))]
+             (if (.isEmpty rel)
+               g' ; No rels here
+               (.link g' (.from edge) (.to edge) rel))))
+         (.forked g')))
 
 (defn ^DirectedGraph remove-self-edges
   "There are times when it's just way simpler to use link-all-to-all between
@@ -391,37 +384,8 @@
          (recur (bg/link g node succ))
          (b/forked g)))
 
-(defn ^NamedGraph named-graph-union
-  "Unions two named graphs together."
-  [^NamedGraph a, ^NamedGraph b]
-  (.union a b))
-
-(defn ^RelGraph op-rel-graph
-  "An empty RelGraph for operations."
-  []
-  (RelGraph. index-hash index=))
-
-(defn ^RelGraph rel-graph-union
-  "Unions something into a RelGraph. Can take either a NamedGraph or
-  another RelGraph. With no args, returns an empty RelGraph with equality
-  semantics for Ops."
-  ([] (op-rel-graph))
-  ([^IGraph a]
-   (condp instance? a
-     NamedGraph (.union (RelGraph. (.vertexHash a) (.vertexEquality a))
-                        ^NamedGraph a)
-     RelGraph   a
-     (throw (IllegalArgumentException.
-              (str "Don't know how to union a relgraph with " (type a))))))
-  ([^RelGraph a b]
-   (condp instance? b
-     NamedGraph (.union a ^NamedGraph b)
-     RelGraph   (.union a ^RelGraph b)
-     (throw (IllegalArgumentException.
-              (str "Don't know how to union a relgraph with " (type b)))))))
-
 (defn ^DirectedGraph digraph-union
-  "Takes the union of n graphs, merging edges with union."
+  "Takes the union of n graphs, merging BitRels edges with BitRels union."
   ([] (DirectedGraph.))
   ([a] a)
   ([^DirectedGraph a ^DirectedGraph b]
@@ -485,14 +449,14 @@
            (b/forked c))))
 
 (defn ^IGraph sequential-extension
-  "Takes two RelGraphs A and B. Returns A U (A; B): the union of A with the
+  "Takes two graphs A and B. Returns A U (A; B): the union of A with the
   sequential composition of A and B. In other words, takes A and expands it
   with edges that represent a step through A, then a step through B.
 
   This operation is particularly helpful in finding nonadjacent cycles: it
   produces a graph where cycles are mostly in A, but can take non-adjacent
   jumps through B."
-  [^RelGraph a, ^RelGraph b]
+  [a b]
   (let [b-vertices (bg/vertices b)]
     (loopr [c (b/linear a)]
            ; Iterate over vertices in a with some inbound edge

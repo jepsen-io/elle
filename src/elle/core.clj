@@ -43,10 +43,7 @@
             [jepsen.history.task :as task]
             [jepsen.txn.micro-op :as mop]
             [slingshot.slingshot :refer [try+ throw+]])
-  (:import (elle ElleGraph
-                 RelGraph
-                 NamedGraph)
-           (io.lacuna.bifurcan ISet
+  (:import (io.lacuna.bifurcan ISet
                                Set)))
 
 ; This is going to look a bit odd. Please bear with me.
@@ -185,6 +182,7 @@
   [& analyzers]
   (fn analyze [history]
     ; Fire off all analyzers
+    ;(info "Starting analysis tasks")
     (let [tasks (mapv (fn launch-analysis [analyzer]
                         (task/submit! (h/executor history)
                                       [:analyze analyzer]
@@ -193,6 +191,7 @@
                                         (analyzer history))))
                       analyzers)
           analyses (mapv deref tasks)]
+      ;(info "Analysis tasks complete")
       ; Validate
       (doseq [[analyzer analysis] (map vector analyzers analyses)]
         (assert (and (:graph analysis) (:explainer analysis))
@@ -200,11 +199,12 @@
                      (pr-str analyzer)
                      " did not return a map with a :graph and :analysis."
                      " Instead, we got " (pr-str analysis))))
+      ;(info "Merging")
       {; Merge anomalies
        :anomalies (reduce merge (map :anomalies analyses))
        ; Merge graphs
-       :graph (reduce g/rel-graph-union
-                      (g/op-rel-graph)
+       :graph (reduce g/digraph-union
+                      (g/op-digraph)
                       (mapv :graph analyses))
        ; Merge explainers
        :explainer (CombinedExplainer. (mapv :explainer analyses))})))
@@ -249,8 +249,8 @@
          (partition 2 1)
          ; And build a graph out of them
          (reduce (fn [g [[v1 ops1] [v2 ops2]]]
-                   (g/link-all-to-all g ops1 ops2))
-                 (g/linear (g/named-graph ww (g/op-digraph))))
+                   (g/link-all-to-all g ops1 ops2 ww))
+                 (g/linear (g/op-digraph)))
          g/forked)))
 
 (defn monotonic-key-graph
@@ -263,8 +263,7 @@
                    (mapcat (comp keys :value))
                    distinct
                    (map (fn [k] (monotonic-key-order k history)))
-                   (reduce g/named-graph-union
-                           (g/named-graph ww (g/op-digraph))))]
+                   (reduce g/digraph-union (g/op-digraph)))]
     {:graph     graph
      :explainer (MonotonicKeyExplainer.)}))
 
@@ -277,8 +276,8 @@
   (->> history
        (h/filter (comp #{process} :process))
        (partition 2 1)
-       (reduce (fn [g [op1 op2]] (g/link g op1 op2))
-               (g/linear (g/named-graph rels/process (g/op-digraph))))
+       (reduce (fn [g [op1 op2]] (g/link g op1 op2 rels/process))
+               (g/linear (g/op-digraph)))
        g/forked))
 
 (defrecord ProcessExplainer []
@@ -302,8 +301,7 @@
                    (h/map :process)
                    distinct
                    (map (partial process-order oks))
-                   (reduce g/named-graph-union
-                           (g/named-graph process (g/op-digraph))))]
+                   (reduce g/digraph-union (g/op-digraph)))]
     {:graph     graph
      :explainer (ProcessExplainer.)}))
 
@@ -363,7 +361,7 @@
   ; completion d, we look backwards in the graph to see whether any buffered
   ; completions point to d, and remove those from the buffer.
   (loopr [^ISet oks (.linear (Set.)) ; Our buffer of completed ops
-          g         (g/named-graph realtime (g/op-digraph))] ; Our order graph
+          g         (b/linear (g/op-digraph))] ; Our order graph
          [op history :via :reduce]
          (case (:type op)
            ; A new operation begins! Link every completed op to this one's
@@ -373,7 +371,7 @@
            ; crashed ops, because they may complete later on.
            :invoke ; NB: we might get a partial history without completions
            (if-let [op' (h/completion history op)]
-             (recur oks (g/link-all-to g oks op'))
+             (recur oks (g/link-all-to g oks op' realtime))
              (recur oks g))
 
            ; An operation has completed. Add it to the oks buffer, and remove
@@ -392,7 +390,7 @@
            ; we don't need to add them to the ok set.
            :info (recur oks g))
          ; All done!
-         {:graph     g
+         {:graph     (b/forked g)
           :explainer (RealtimeExplainer. history)}))
 
 (defn explain-binding
@@ -498,7 +496,7 @@
                                               explainer)))
         ; It's almost certainly the case that something went wrong if we didn't
         ; infer *any* dependencies.
-        anomalies (if (.isEmpty ^ElleGraph graph)
+        anomalies (if (= 0 (b/size graph))
                     (assoc anomalies :empty-transaction-graph true)
                     anomalies)]
     {:graph     graph

@@ -127,7 +127,8 @@
     (testing "combined invalid"
       (is (= {:valid? false
               :scc-count 1
-              :cycles ["Let:\n  T1 = {:index 1, :time -1, :type :ok, :process 0, :f :read, :value {:x 0}}\n  T2 = {:index 0, :time -1, :type :ok, :process 0, :f :read, :value {:x 1}}\n\nThen:\n  - T1 < T2, because T1 observed :x = 0, and T2 observed a higher value 1.\n  - However, T2 < T1, because process 0 executed T2 before T1: a contradiction!"]}
+              :cycles ["Let:\n  T1 = {:index 0, :time -1, :type :ok, :process 0, :f :read, :value {:x 1}}\n  T2 = {:index 1, :time -1, :type :ok, :process 0, :f :read, :value {:x 0}}\n\nThen:\n  - T1 < T2, because process 0 executed T1 before T2.\n  - However, T2 < T1, because T2 observed :x = 0, and T1 observed a higher value 1: a contradiction!"
+                       ]}
              (check {:analyzer (combine monotonic-key-graph
                                          process-graph)}
                      history))))))
