@@ -101,7 +101,7 @@
 (deftest g1c-predicate-read-seen-test
   (let [[t1 t1' t2 t2' :as h]
         (h/history
-          [; T1 sets x=0 and performs a predicate read, seeing y = 2.
+          [; T1 sets x = 1 and performs a predicate read, seeing y = 2.
            {:process 0, :type :invoke, :f :txn, :value [[:w :x 1] [:rp :true nil]]}
            {:process 0, :type :ok,     :f :txn, :value [[:w :x 1] [:rp :true {:y 2}]]}
            ; T2 sets y = 2 and predicate reads x = 1.
@@ -191,11 +191,11 @@
         res (check {:directory "test-output/closed-predicate/g2-predicate-read-unseen-universe-write"} h)]
     ; T1 rw-predicate precedes T2, because T1 implicitly observed y = 0, and T2
     ; wrote y = 1, which followed in the version order and also changed the
-    ; matches of the predicate.
+    ; matches of the predicate. Ditto, T2 -rwp-> T1.
     (is (not (:valid? res)))
     ; This also happens to be a strong-SI violation, but we can't see it
-    ; because our BFS search isn't smart enough to realize it can take an
-    ; RT when an RW is available.
+    ; because our BFS isn't smart enough to realize it can take an RT when an
+    ; RW is available.
     (is (= [:G2 :strong-snapshot-isolation-cycle-exists]
            (:anomaly-types res)))))
 
@@ -276,14 +276,14 @@
            ; T1 deletes x, so T0 -ww-> T1. It inserts y.
            {:process 0, :type :invoke, :f :txn, :value [[:delete :x] [:insert :y 1]]}
            {:process 0, :type :ok,     :f :txn, :value [[:delete :x] [:insert :y 1]]}
-           ; T2 reads y, so T1  -> wr T2. However, it *fails* to observe z, which means T2 -rw-> T0
+           ; T2 reads y, so T1 -> wr T2. However, it *fails* to observe z, which means T2 -rw-> T0
            {:process 1, :type :invoke, :f :txn, :value [[:r :y nil] [:r :z nil]]}
            {:process 1, :type :ok,     :f :txn, :value [[:r :y 1]   [:r :z nil]]}])
         res (check {:directory "test-output/closed-predicate/ww-wr-rw-item"} h)]
     (is (= {:valid? false,
-           :anomaly-types [:G-single],
+           :anomaly-types [:G-single-item],
            :anomalies
-           {:G-single
+           {:G-single-item
             [{:cycle [t2' t0' t1' t2']
               :steps
               [{:type :rw,
@@ -303,8 +303,8 @@
                 :value 1,
                 :a-mop-index 1,
                 :b-mop-index 0}],
-              :type :G-single}]},
-           :not #{:consistent-view},
+              :type :G-single-item}]},
+           :not #{:consistent-view :repeatable-read},
            :also-not
            #{:forward-consistent-view
              :serializable
@@ -314,9 +314,7 @@
              :strong-session-snapshot-isolation
              :strong-snapshot-isolation
              :update-serializable}}
-           res))
-    ; This is G-single.
-    (is (= [:G-single] (:anomaly-types res)))))
+           res))))
 
 (deftest failure-to-observe-test
   ; When a predicate read fails to see something we KNOW must have been there,
@@ -354,14 +352,14 @@
            {:index 4, :type :ok, :process 4, :f :init, :value {7 1}}
            ; T1 implicitly selects version 1 of 7 in its predicate read, since
            ; there can't have been any other possible value. However, it also
-           ; fails to read key 7! This is G-single: wr / rw.
+           ; fails to read key 7! This is G-single-item: wrp / rw.
            {:index 72, :type :invoke, :process 7, :f :txn, :value [[:rp [:mod 2 0] nil] [:r 7 nil]]}
            {:index 82, :type :ok, :process 7, :f :txn, :value [[:rp [:mod 2 0] {}] [:r 7 nil]]}])
         res (check {:directory "test-output/closed-predicate/init-g-single-pred"} h)]
     (is (= {:valid? false,
-           :anomaly-types [:G-single],
+           :anomaly-types [:G-single-item],
            :anomalies
-           {:G-single
+           {:G-single-item
             [{:cycle [t1' t0' t1']
               :steps
               [{:type :rw,
@@ -370,14 +368,14 @@
                 :value' 1,
                 :a-mop-index 1,
                 :b-mop-index 0}
-               {:type :wr,
+               {:type :wrp,
                 :key 7,
                 :value 1,
                 :predicate-read [:rp [:mod 2 0] {}],
                 :a-mop-index 0,
                 :b-mop-index 0}],
-              :type :G-single}]},
-           :not #{:consistent-view},
+              :type :G-single-item}]},
+           :not #{:consistent-view :repeatable-read},
            :also-not
            #{:forward-consistent-view
              :serializable
@@ -407,7 +405,7 @@
            {:G-single
             [{:cycle [t2' t1' t2']
               :steps
-              [{:type :rw,
+              [{:type :rwp,
                 :key 38,
                 :value 0,
                 :value' :elle/dead,
@@ -415,7 +413,7 @@
                 :predicate-read [:rp :true {31 0, 38 0}],
                 :a-mop-index 0,
                 :b-mop-index 0}
-               {:type :wr,
+               {:type :wrp,
                 :key 26,
                 :value :elle/dead,
                 :predicate-read [:rp :true {31 0, 38 0}],

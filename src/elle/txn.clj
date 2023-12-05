@@ -305,35 +305,46 @@
   like :read-uncommitted-cycle-exists, in consistency-models.
 
   Note that these use canonical consistency model names!"
-  (->> [; Read uncommitted requires no write cycles
-        {:model :PL-1, :subgraph ww}
+  (->> [; Read uncommitted requires no write cycles--including predicates! See
+        ; Adya, page 47
+        {:model :PL-1, :subgraph [:union ww wwp]}
         ; Read committed requires no circular information flow
-        {:model :PL-2, :subgraph [:union ww wr]}
+        {:model :PL-2, :subgraph [:union ww wwp wr wrp]}
 
         ; Prefix can have a WW followed by an RW edge
         ; This is work we can't cite just yet--uncomment it later.
         ; {:model :prefix, :subgraph [:union ww wr [:composition wr rw]]}
 
-        ; Snapshot isolation extends through a single RW hop
-        {:model :PL-SI, :subgraph [:extension [:union ww wr] rw]}
+        ; Snapshot isolation extends through a single RW hop, and covers
+        ; prefixes
+        {:model :PL-SI, :subgraph [:extension
+                                   [:union ww wwp wr wrp]
+                                   [:union rw rwp]]}
+
+        ; Repeatable read means no cycles except for rw with predicates
+        {:model :PL-2.99, :subgraph [:union ww wwp wr wrp rw]}
 
         ; Serializable requires no data cycles
-        {:model :PL-3, :subgraph [:union ww wr rw]}
+        {:model :PL-3, :subgraph [:union ww wwp wr wrp rw rwp]}
 
         ; Strong session variants add process edges
-        {:model :strong-session-PL-1, :subgraph [:union ww process]}
-        {:model :strong-session-PL-2, :subgraph [:union ww wr process]}
+        {:model :strong-session-PL-1, :subgraph [:union ww wwp process]}
+        {:model :strong-session-PL-2, :subgraph [:union ww wwp wr wrp process]}
         {:model    :strong-session-snapshot-isolation
-         :subgraph [:extension [:union ww wr process] rw]}
+         :subgraph [:extension
+                    [:union ww wwp wr wrp process]
+                    [:union rw rwp]]}
         {:model    :strong-session-serializable
-         :subgraph [:union ww wr rw process]}
+         :subgraph [:union ww wwp wr wrp rw rwp process]}
 
         ; Strong variants add realtime
-        {:model :strong-PL-1, :subgraph [:union ww realtime]}
-        {:model :strong-PL-2, :subgraph [:union ww wr realtime]}
+        {:model :strong-PL-1, :subgraph [:union ww wwp realtime]}
+        {:model :strong-PL-2, :subgraph [:union ww wwp wr wrp realtime]}
         {:model    :strong-snapshot-isolation
-         :subgraph [:extension [:union ww wr realtime] rw]}
-        {:model :PL-SS, :subgraph [:union ww wr rw realtime]}
+         :subgraph [:extension
+                    [:union ww wwp wr wrp realtime]
+                    [:union rw rwp]]}
+        {:model :PL-SS, :subgraph [:union ww wwp wr wrp rw rwp realtime]}
         ]
        (mapv (fn [{:keys [model] :as spec}]
                ; Add a :type field for the anomaly type, and a :friendly-model
@@ -463,27 +474,44 @@
             realtime  (:realtime  type-freqs 0)
             process   (:process   type-freqs 0)
             ww        (:ww        type-freqs 0)
+            wwp       (:wwp       type-freqs 0)
             wr        (:wr        type-freqs 0)
+            wrp       (:wrp       type-freqs 0)
             rw        (:rw        type-freqs 0)
-            ; Any predicate edges?
-            predicate? (boolean (seq (filter :predicate? (:steps ex))))
+            rwp       (:rwp       type-freqs 0)
+            ; Any predicate rw edges? TODO: we're going to move to :rwp edges
+            ; later, and can drop the :predicate? check.
+            predicate? (or (boolean (seq (filter :predicate? (:steps ex))))
+                           (< 0 rwp))
             ; Are any pair of rw's together?
             rw-adj?   (->> (:steps ex)
                            (cons (last (:steps ex))) ; For last->first edge
                            (map :type)
-                           (partition 2 1)        ; Take pairs
-                           (filter #{[:rw :rw]})  ; Find an rw, rw pair
+                           (partition 2 1)           ; Take pairs
+                           (filter (fn rwrw? [[a b]] ; Find an rw, rw pair
+                                     (and (or (identical? a :rw)
+                                              (identical? a :rwp))
+                                          (or (identical? b :rw)
+                                              (identical? b :rwp)))))
                            seq
                            boolean)
             ; We compute a type based on data dependencies alone
-            data-dep-type (cond (= 1 rw) "G-single"
-                                (< 1 rw) (if rw-adj?
-                                           (if predicate?
-                                             "G2"
-                                             "G2-item")
-                                           "G-nonadjacent")
-                                (< 0 wr) "G1c"
-                                (< 0 ww) "G0"
+            data-dep-type (cond (= 1 (+ rw rwp))
+                                (if predicate?
+                                  "G-single"
+                                  "G-single-item")
+
+                                (< 1 (+ rw rwp))
+                                (if rw-adj?
+                                  (if predicate?
+                                    "G2"
+                                    "G2-item")
+                                  (if predicate?
+                                    "G-nonadjacent"
+                                    "G-nonadjacent-item"))
+
+                                (< 0 (+ wr wrp)) "G1c"
+                                (< 0 (+ ww wwp)) "G0"
                                 true (throw (IllegalStateException.
                                               (str "Don't know how to classify"
                                                    (pr-str ex)))))
@@ -590,44 +618,52 @@
      :multiple-rels  Edges intersecting this set must appear more than once in
                      the cycle.
 
-     :required-rels  Edges intersecting this set must appear at least once in
-                     the cycle.
+     :required-rels  A set of bitrels. We need at least one edge intersecting
+                     each element of this set.
 
    And optionally:
-
-     :realtime?    If present, at least one edge must be :realtime.
-
-     :process?     If present, at least one edge must be :process.
 
      :type         If present, the cycle explainer must tell us any cycle is of
                    this :type specifically."
   (sorted-map-by cm/anomaly-depth-compare
-    :G0        {:rels ww}
+    :G0        {:rels (rels/union ww wwp)}
     ; G1c has at least a wr edge, and can take either ww or wr.
-    :G1c       {:rels          (rels/union ww wr)
-                :required-rels wr}
+    :G1c       {:rels          (rels/union ww wwp wr wrp)
+                ; We need either a wr or wrp; otherwise it's just G0
+                :required-rels #{(rels/union wr wrp)}}
+    ; G-single-item is a special case of G-single where we only consider rw,
+    ; not rwp.
+    :G-single-item {:rels         (rels/union ww wwp wr wrp)
+                    :single-rels  rw
+                    :type         :G-single-item}
     ; G-single takes ww/wr normally, but has exactly one rw. Note that some
     ; G-singles are G2-item and we can't distinguish them at the graph level.
-    :G-single  {:rels        (rels/union ww wr)
-                :single-rels rw
+    :G-single  {:rels        (rels/union ww wwp wr wrp)
+                :single-rels (rels/union rw rwp)
                 :type        :G-single}
+    ; G-nonadjacent-item: like G-nonadjacent, but no predicate rw edges.
+    :G-nonadjacent-item {:rels             (rels/union ww wwp wr wrp)
+                         :nonadjacent-rels rw
+                         :multiple-rels    rw
+                         :type             :G-nonadjacent-item}
     ; G-nonadjacent is the more general form of G-single: it has multiple
-    ; nonadjacent rw edges. Note that some G-nonadjacents are G2-item, and we
-    ; can't distinguish them from graph alone yet.
-    :G-nonadjacent {:rels             (rels/union ww wr)
-                    :nonadjacent-rels rw
-                    :multiple-rels    rw
+    ; nonadjacent rw edges.
+    :G-nonadjacent {:rels             (rels/union ww wwp wr wrp)
+                    ; TODO: these should have rwp too
+                    :nonadjacent-rels (rels/union rw rwp)
+                    :multiple-rels    (rels/union rw rwp)
                     :type             :G-nonadjacent}
     ; G2-item, likewise, starts with an anti-dep edge, but allows more, and
     ; insists on being G2, rather than G-single. Not bulletproof, but G-single
     ; is worse, so I'm OK with it.
-    :G2-item   {:rels          (rels/union ww wr rw)
-                :multiple-rels rw ; A single rw rel is trivially G-Single
+    :G2-item   {:rels          (rels/union ww wwp wr wrp rw)
+                ; A single rw rel is trivially G-Single
+                :multiple-rels rw
                 :type         :G2-item}
     ; G2 is identical, except we want a cycle explained as G2
     ; specifically--it'll have at least one :predicate? edge.
-    :G2        {:rels          (rels/union ww wr rw)
-                :multiple-rels rw
+    :G2        {:rels          (rels/union ww wwp wr wrp rw rwp)
+                :multiple-rels (rels/union rw rwp)
                 :type          :G2}))
 
 (defn cycle-anomaly-spec-variant
@@ -636,15 +672,13 @@
   for the process/realtime variant of that spec."
   [variant [anomaly-name spec]]
   (let [; You can take variant edges any time
-        spec' (update spec :rels rels/union
-                      (case variant
-                        :realtime BitRels/REALTIME
-                        :process  BitRels/PROCESS))
-        ; And must include the appropriate realtime/process flag
-        spec' (assoc spec' (case variant
-                             :realtime :realtime?
-                             :process  :process?)
-                     variant)
+        rel (case variant
+              :realtime BitRels/REALTIME
+              :process  BitRels/PROCESS)
+        spec' (update spec :rels rels/union rel)
+        ; Those edges are also required, in addition to any other edges
+        r'    (:required-rels spec #{})
+        spec' (assoc spec' :required-rels (conj r' rel))
         ; If there's a type, we need to match its variant.
         spec' (if-let [t (:type spec)]
                 (assoc spec' :type (keyword (str (name anomaly-name) "-"
@@ -784,14 +818,16 @@
   nil if none found."
   [opts g fg pair-explainer
    [type {:keys [rels nonadjacent-rels single-rels multiple-rels required-rels
-                 realtime? process?]
+                 ]
           :as spec}]]
   ; First pass: look for a candidate
   (let [;_ (info :type type :spec spec)
         ;_ (info ":preds\n" (with-out-str (pprint preds)))
         ;_ (info :transition transition)
-        cycle (bfs/search (fg (rels/union rels nonadjacent-rels
-                                          required-rels single-rels
+        cycle (bfs/search (fg (rels/union rels
+                                          nonadjacent-rels
+                                          (reduce rels/union required-rels)
+                                          single-rels
                                           multiple-rels))
                           spec)]
     (when cycle

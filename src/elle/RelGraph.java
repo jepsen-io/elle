@@ -99,7 +99,7 @@ public class RelGraph<V> implements IGraph<V, BitRels>, ElleGraph {
         throw new IllegalArgumentException("Already have relationship " + rel);
       }
       if (!vertexHash.equals(g.vertexHash())) {
-        throw new IllegalArgumentException("All graphs must have same vertex hash");
+        throw new IllegalArgumentException("All graphs must have same vertex hash, but our hash " + vertexHash + " is not (" + rel + ") " + g.vertexHash());
       }
       if (!vertexEquality.equals(g.vertexEquality())) {
         throw new IllegalArgumentException("All graphs must have same vertex equality");
@@ -272,7 +272,7 @@ public class RelGraph<V> implements IGraph<V, BitRels>, ElleGraph {
     return s.forked();
   }
 
-  // We actually ignore the merge semantics altogether. Every link, for us, is union.
+  // We actually ignore the merge argument altogether. Every link, for us, is union. ALL WILL LOVE US, AND DESPAIR
   public IGraph<V, BitRels> link(V from, V to, BitRels edge, BinaryOperator<BitRels> merge) {
     IMap<BitRels, IGraph<V, Object>> graphsPrime = graphs.linear();
     if (edge == null) {
@@ -280,7 +280,7 @@ public class RelGraph<V> implements IGraph<V, BitRels>, ElleGraph {
     }
     // For each relationship, add a link in that graph.
     for (BitRels rel : edge) {
-      IGraph<V, Object> g = graphs.get(rel, new DirectedGraph<V, Object>());
+      IGraph<V, Object> g = graphs.get(rel, new DirectedGraph<V, Object>(vertexHash, vertexEquality));
       g = g.link(from, to, null);
       graphsPrime = graphsPrime.put(rel, g);
     }

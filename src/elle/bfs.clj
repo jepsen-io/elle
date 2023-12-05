@@ -15,7 +15,9 @@
             [clojure.tools.logging :refer [info warn]]
             [dom-top.core :refer [loopr]]
             [elle [graph :as g]
-                  [util :refer [maybe-interrupt]]]
+                  [util :refer [maybe-interrupt]]
+                  [rels :as rels :refer [ww wwp wr wrp rw rwp
+                                         process realtime]]]
             [potemkin :refer [definterface+]])
   (:import (elle BFSPath
                  BFSPath$RWMode
@@ -30,29 +32,31 @@
 (defn ^BFSPath spec->path
   "Constructs an empty path from a cycle-anomaly spec."
   [{:keys [^BitRels rels
-           ^BitRels required-rels
+           required-rels
            ^BitRels nonadjacent-rels
            ^BitRels single-rels
-           ^BitRels multiple-rels
-           realtime?
-           process?]
+           ^BitRels multiple-rels]
     :as spec}]
-  ;(info :rels rels :required-rels required-rels)
   (BFSPath. ; Legal, normally allowed rels
             (.rels rels)
-            ; Required rels. Note that our :required spec breaks these out
+            ; Wanted rels. Note that our :required spec breaks out p/rt
             ; right now, for implementation reasons. When we drop the old
             ; implementation we can simplify.
-            (.rels ^BitRels
-                   (cond-> (or required-rels BitRels/NONE)
-                     process?  (.union BitRels/PROCESS)
-                     realtime? (.union BitRels/REALTIME)))
+            (bs/from (or required-rels #{}))
+
             ; RW wanted count
             (cond single-rels
-                  (do (assert (= BitRels/RW single-rels)) 1)
+                  (do (assert (.isEmpty (.difference single-rels
+                                                     BitRels/ANY_RW))
+                              (str single-rels))
+
+                      1)
 
                   multiple-rels
-                  (do (assert (= BitRels/RW multiple-rels)) 2)
+                  (do (assert (.isEmpty (.difference multiple-rels
+                                                     BitRels/ANY_RW))
+                              (str multiple-rels))
+                      2)
 
                   true 0)
 
@@ -61,7 +65,8 @@
               nil    (if (and single-rels (.isAnyRW single-rels))
                         BFSPath$RWMode/SINGLE
                         BFSPath$RWMode/NONE)
-              BitRels/RW BFSPath$RWMode/NONADJACENT_FREE
+              rw                  BFSPath$RWMode/NONADJACENT_FREE
+              (rels/union rw rwp) BFSPath$RWMode/NONADJACENT_FREE
               (throw (IllegalArgumentException. (str "Unexpected nonadjacent rels: "
                                                      nonadjacent-rels))))))
 

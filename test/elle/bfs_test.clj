@@ -14,7 +14,8 @@
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan IMap
                                Map)
-           (elle RelGraph)))
+           (elle BFSPath
+                 RelGraph)))
 
 ; Just for debugging
 (extend-protocol p/Datafiable
@@ -40,13 +41,27 @@
   [g]
   (g/map-vertices op g))
 
+(deftest packed-rels-set-test
+  (are [rels] (= rels (-> rels bs/from BFSPath/packRelsSet BFSPath/unpackRelsSet set))
+       #{}
+       #{ww}
+       #{rw rwp}
+       #{ww realtime}
+       #{ww process realtime}
+       #{ww wwp wr realtime}))
+
 (deftest realtime-test
   ; Realtime is tricky--it occupies the high bit in our byte representation of
   ; bitrels, and that causes sign extension bugs when Clojure emits
   ; auto-widening code.
-  (let [p (spec->path (t/cycle-anomaly-specs :G0-realtime))]
-    (is (= (.rels (union ww realtime)) (.legal p)))
-    (is (= (.rels realtime) (.want p)))))
+  (testing "G0"
+    (let [p (spec->path (t/cycle-anomaly-specs :G0-realtime))]
+      (is (= (.rels (union ww wwp realtime)) (.legal p)))
+      (is (= #{realtime} (set (BFSPath/unpackRelsSet (.want p)))))))
+  (testing "G1c"
+    (let [p (spec->path (t/cycle-anomaly-specs :G1c-realtime))]
+      (is (= (.rels (union ww wwp wr wrp realtime)) (.legal p)))
+      (is (= #{realtime (rels/union wr wrp)} (set (BFSPath/unpackRelsSet (.want p))))))))
 
 (defn s
   "Takes an anomaly spec type and a series of [from-idx to-idx rel] triples.
@@ -101,6 +116,22 @@
               2 1 rw
               3 1 wr
               3 2 rw)))))
+
+(deftest g1c-realtime-test
+  ; This is trickier: we have to get a realtime edge and a *separate* wr or wrp
+  ; edge. It's not enough for them to be combined!
+  (testing "simple"
+    (is (= [2 1 2]
+           (s :G1c-realtime
+              1 2 wrp
+              2 1 realtime))))
+
+  (testing "not present"
+    (is (= nil
+           (s :G1c-realtime
+              1 2 ww
+              2 1 realtime
+              2 1 wrp)))))
 
 (deftest g-single-test
   (testing "simple"

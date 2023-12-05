@@ -18,12 +18,14 @@
           :G-SIb
           :G-cursor
           :G-monotonic
+          :G-single-item
           :G-update
           :G0
           :G1b
           :GSIa
           :PL-1-cycle-exists
           :PL-2-cycle-exists
+          :PL-2.99-cycle-exists
           :PL-3-cycle-exists
           :PL-SI-cycle-exists
           :PL-SS-cycle-exists
@@ -42,13 +44,18 @@
           :strong-session-serializable-cycle-exists
           :strong-session-snapshot-isolation-cycle-exists
           :strong-snapshot-isolation-cycle-exists
+          :G-nonadjacent-item
+          :G-single-item-process
           :G1a
           :G1c
           :write-skew
+          :G-nonadjacent-item-process
           :G-single
+          :G-single-item-realtime
           :G1
           :G2-item
           :G-nonadjacent
+          :G-nonadjacent-item-realtime
           :GSIb
           :G2
           :GSI

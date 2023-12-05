@@ -29,10 +29,61 @@ public class BFSPath {
     NONE, SINGLE, NONADJACENT_FREE, NONADJACENT_TAKEN
   }
 
+  // Takes a set of up to four BitRels and packs it into an integer.
+  public static int packRelsSet(final ISet<BitRels> relsSet) {
+    assert relsSet.size() <= 4;
+    int i = 0;
+    int packed = 0;
+    for (final BitRels rels : relsSet) {
+      packed = packed | (Byte.toUnsignedInt(rels.rels) << i);
+      i += 8;
+    }
+    return packed;
+  }
+
+  // Unpacks a set of BitRels from an integer.
+  public static ISet<BitRels> unpackRelsSet(final int relsSet) {
+    ISet<BitRels> set = Set.EMPTY;
+    BitRels rels;
+    for (byte i = 0; i < 32; i += 8) {
+      rels = new BitRels((byte) (relsSet >>> i));
+      if (! rels.isEmpty()) {
+        set = set.add(rels);
+      }
+    }
+    return set;
+  }
+
+  // Takes a packed set of BitRels and collapses it into a single mask which will intersect with any BitRels that intersects with any element of the set
+  public static byte packedSetToMask(int rels) {
+    // We shift rels over one byte at a time, unioning with itself.
+    for (byte i = 0; i < 32; i += 8) {
+      rels = rels | rels >>> i;
+    }
+    // This means the lower byte is now the mask we want.
+    return (byte) rels;
+  }
+
+  // Takes a set of (up to) four wanted BitRels packed into an int, and a BitRels rel we're taking. Returns the wanted set with up to one of the four BitRels zeroed out iff the given rel intersects with it.
+  public static int checkOffRelInPackedSet(final int rels, final byte rel) {
+    // Loop through bytes
+    int mask;
+    byte thisRel;
+    for (byte i = 0; i < 32; i += 8) {
+      mask = 0xFF << i;
+      thisRel = (byte) ((rels & mask) >>> i);
+      if (0 != BitRels.rawIntersection(thisRel, rel)) {
+        // Our rel intersects this rel. Zero it out.
+        return rels & (~mask);
+      }
+    }
+    return rels;
+  }
+
   // BitRels representation of the edges we can normally take
   public final byte legal;
-  // BitRels representation of the edges we still want to take
-  public final byte want;
+  // Up to four BitRels packed into an int, representing the rels we still want to take. This number needs to be zero for a path to be valid. We can zero out any single bitrels set in this structure by taking a rel that intersects that set.
+  public final int want;
   // Number of RW edges we're waiting to take: 0, 1, or 2
   public final byte wantRW;
   // What kind of RW traversal we're doing
@@ -44,7 +95,7 @@ public class BFSPath {
   // The list of ops we visited, in order
   public final IList<Object> ops;
 
-  public BFSPath(final byte legal, final byte want, final byte wantRW, final RWMode rwMode, final long lastIndex,
+  public BFSPath(final byte legal, final int want, final byte wantRW, final RWMode rwMode, final long lastIndex,
       final IntSet indexSet, final IList<Object> ops) {
     this.legal = legal;
     this.want = want;
@@ -55,8 +106,8 @@ public class BFSPath {
     this.ops = ops;
   }
 
-  public BFSPath(final byte legal, final byte want, final byte wantRW, final RWMode rwMode) {
-    this(legal, want, wantRW, rwMode, -1L, new IntSet(), (IList<Object>) List.EMPTY);
+  public BFSPath(final byte legal, final ISet<BitRels> want, final byte wantRW, final RWMode rwMode) {
+    this(legal, packRelsSet(want), wantRW, rwMode, -1L, new IntSet(), (IList<Object>) List.EMPTY);
     assert rwMode != null;
   }
 
@@ -116,7 +167,7 @@ public class BFSPath {
           rwMode = RWMode.NONADJACENT_FREE;
           break;
       }
-      return new BFSPath(legal, BitRels.rawDifference(want, rel), wantRW, rwMode, index, indexSet.add(lastIndex),
+      return new BFSPath(legal, checkOffRelInPackedSet(want, rel), wantRW, rwMode, index, indexSet.add(lastIndex),
           ops.addLast(op));
     } else if (isRw) {
       // System.out.println("RW step");
@@ -127,7 +178,7 @@ public class BFSPath {
           return null;
         // We can do exactly one RW
         case SINGLE:
-          return new BFSPath(legal, BitRels.rawDifference(want, rel), (byte) 0, RWMode.NONE, index,
+          return new BFSPath(legal, checkOffRelInPackedSet(want, rel), (byte) 0, RWMode.NONE, index,
               indexSet.add(lastIndex),
               ops.addLast(op));
         // We can take a nonadjacent RW
@@ -138,7 +189,7 @@ public class BFSPath {
           } else {
             wantRW = (byte) (this.wantRW - 1);
           }
-          return new BFSPath(legal, BitRels.rawDifference(want, rel), wantRW, RWMode.NONADJACENT_TAKEN, index,
+          return new BFSPath(legal, checkOffRelInPackedSet(want, rel), wantRW, RWMode.NONADJACENT_TAKEN, index,
               indexSet.add(lastIndex), ops.addLast(op));
         // Can't take two RWs in a row (unless legal)
         case NONADJACENT_TAKEN:
@@ -168,7 +219,7 @@ public class BFSPath {
     }
 
     // Now, what rels do we want to take eventually?
-    final byte wantMask = BitRels.rawDifference(want, rwMask);
+    final byte wantMask = BitRels.rawDifference(packedSetToMask(want), rwMask);
 
     // And what rels are otherwise legal?
     final byte legalMask = BitRels.rawDifference(BitRels.rawDifference(legal, rwMask), wantMask);
@@ -258,7 +309,7 @@ public class BFSPath {
 
   public String toString() {
     return "(Path :legal " + new BitRels(legal)
-        + " :want " + new BitRels(want)
+        + " :want " + unpackRelsSet(want)
         + " :want-rw " + wantRW
         + " :rw-mode " + rwMode
         + " :last-index " + lastIndex

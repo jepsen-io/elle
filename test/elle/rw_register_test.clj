@@ -568,22 +568,23 @@
         ; value, plus the direct wr dep, that this constitutes a G-single
         ; anomaly!
         (is (= {:valid? false
-                :anomaly-types [:G-single]
-                :not           #{:consistent-view}
-                :anomalies {:G-single [{:cycle [t1' t2' t1']
-                                        :steps
-                                        [{:key :x,
-                                          :value nil,
-                                          :value' 2,
-                                          :type :rw,
-                                          :a-mop-index 0,
-                                          :b-mop-index 1}
-                                         {:type :wr,
-                                          :key :y,
-                                          :value 1,
-                                          :a-mop-index 0,
-                                          :b-mop-index 1}],
-                                        :type :G-single}]}}
+                :anomaly-types [:G-single-item]
+                :not           #{:consistent-view :repeatable-read}
+                :anomalies {:G-single-item
+                            [{:cycle [t1' t2' t1']
+                              :steps
+                              [{:key :x,
+                                :value nil,
+                                :value' 2,
+                                :type :rw,
+                                :a-mop-index 0,
+                                :b-mop-index 1}
+                               {:type :wr,
+                                :key :y,
+                                :value 1,
+                                :a-mop-index 0,
+                                :b-mop-index 1}],
+                              :type :G-single-item}]}}
                (c {:consistency-models [:serializable]} [t1 t2 t2' t1'])))))
 
     (testing "wfr"
@@ -597,9 +598,9 @@
                   h)))
         ; But if we use WFR, we know 1 < 2, and can see the G-single
         (is (= {:valid? false
-                :anomaly-types [:G-single]
-                :not           #{:consistent-view}
-                :anomalies {:G-single
+                :anomaly-types [:G-single-item]
+                :not           #{:consistent-view :repeatable-read}
+                :anomalies {:G-single-item
                             [{:cycle [t2 t1 t2]
                               :steps
                               [{:key :y,
@@ -613,7 +614,7 @@
                                 :value 1,
                                 :a-mop-index 1,
                                 :b-mop-index 0}],
-                              :type :G-single}]}}
+                              :type :G-single-item}]}}
                (c {:wfr-keys? true
                    :consistency-models [:serializable]}
                   h)))))

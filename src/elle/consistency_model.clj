@@ -76,6 +76,16 @@
      :G1           [:G1-process] ; Trivial
      :G1-process   [:G1-realtime]
 
+     ; G-single-item is a special case of G-single, G-nonadjacent-item
+     :G-single-item          [:G-single
+                              :G-single-item-process
+                              :G-nonadjacent-item]
+     :G-single-item-process  [:G-single-process
+                              :G-single-item-realtime
+                              :G-nonadjacent-item-process]
+     :G-single-item-realtime [:G-single-realtime
+                              :G-nonadjacent-item-realtime]
+
      ; G-single is a special case of G-nonadjacent
      :G-single          [:G-nonadjacent
                          ; Adya; if there's a cycle with one rw edge in DSG,
@@ -86,6 +96,18 @@
      :G-single-process  [:G-nonadjacent-process :G-single-realtime]
      :G-single-realtime [:G-nonadjacent-realtime]
 
+     ; G-nonadjacent-item is a special case of G-nonadjacent restricted to item
+     ; rw edges, which means it's also G2-item.
+     :G-nonadjacent-item          [:G-nonadjacent
+                                   :G2-item
+                                   :G-nonadjacent-item-process]
+     :G-nonadjacent-item-process  [:G-nonadjacent-process
+                                   :G2-item-process
+                                   :G-nonadjacent-item-realtime]
+     :G-nonadjacent-item-realtime [:G2-item-realtime
+                                   :G-nonadjacent-realtime]
+
+     ; G-nonadjacent is a special kind of G2 where rw edges alternate
      :G-nonadjacent           [:G2                     ; Adya
                                :G-nonadjacent-process] ; Trivial
      :G-nonadjacent-process   [:G2-process :G-nonadjacent-realtime]
@@ -455,6 +477,7 @@
                                     ; visibility order.
                                     :future-read]       ; Cerone (incomplete)
         :repeatable-read           [:G1 :G2-item       ; Adya
+                                    :PL-2.99-cycle-exists
                                     :lost-update]      ; Bailis
         :ROLA                      [:lost-update]      ; ROLA
         :strict-serializable       [:G1                ; Adya

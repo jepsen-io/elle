@@ -456,7 +456,7 @@
                                          (version< all-versions k v v')
                                          (xor (eval-pred pred v)
                                               (eval-pred pred v')))
-                                  {:type           :rw
+                                  {:type           :rwp
                                    :key            k
                                    :value          v
                                    :value'         v'
@@ -492,7 +492,7 @@
   P matches x2 but not x1."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/op-digraph))]
+   (loopr [g (g/linear (g/op-rel-graph))]
           [op          (h/oks history)
            [f :as mop] (:value op)]
           (recur
@@ -506,7 +506,7 @@
                          ; Don't generate self-edges
                          g
                          ; write overwrote this op.
-                         (g/link g op write))
+                         (g/link g op write rw))
                        ; Don't know who wrote the next version
                        g)
                      ; No known next version
@@ -528,16 +528,14 @@
                                       ; Don't generate self-edges
                                       (if (= op write)
                                         g
-                                        (g/link g op write))
+                                        (g/link g op write rwp))
                                       ; No writer known
                                       g)
                                     ; Didn't change the predicate
                                     g))))
                     ; Some other kind of mop
                     g))
-          ; Later we should break out predicate vs non-predicate deps so we can
-          ; distinguish G2 from G2-item?
-          (g/named-graph rw (g/forked g)))
+          (g/forked g))
    :explainer (RWExplainer. all-versions vsets)})
 
 (defrecord WRExplainer [all-versions vsets]
@@ -562,7 +560,7 @@
                  [mop   (filter pred-mop? (:value b))
                   [k v] (vsets mop)]
                  (if (= v (get writes k))
-                   {:type  :wr
+                   {:type  :wrp
                     :key   k
                     :value v
                     :predicate-read mop
@@ -587,7 +585,7 @@
   VSet(pred)."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/op-digraph))]
+   (loopr [g                (g/linear (g/op-rel-graph))]
           [op               (h/oks history)
            [f k v :as mop]  (:value op)]
           (recur
@@ -598,7 +596,7 @@
                      ; Don't generate self-edges
                      (if (= op write)
                        g
-                       (g/link g write op))
+                       (g/link g write op wr))
                      ; No writer known
                      g))
               ; Predicate read
@@ -613,12 +611,12 @@
                              (if-let [write (get-in ext-writes [k v])]
                                (if (= write op)
                                  g ; No self-edges
-                                 (g/link g write op))
+                                 (g/link g write op wrp))
                                ; No writer known
                                g))))
               ; Some other mop
               g))
-          (g/named-graph wr (g/forked g)))
+          (g/forked g))
    :explainer (WRExplainer. all-versions vsets)})
 
 (defrecord WWExplainer [all-versions]

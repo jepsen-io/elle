@@ -365,20 +365,22 @@
           (h/history [(op "ax1ay1")
                       (op "ax2ay2")
                       (op "rx12ry21")])
-          msg {:cycle [t1 t2 t1]
+          msg {:cycle [t2 t1 t2]
                :steps
-               [{:type :ww,
-                 :key :x,
-                 :value 1,
-                 :value' 2,
-                 :a-mop-index 0,
-                 :b-mop-index 0}
+               [
                 {:type :ww,
                  :key :y,
                  :value 2,
                  :value' 1,
                  :a-mop-index 1,
-                 :b-mop-index 1}]
+                 :b-mop-index 1}
+                {:type :ww,
+                 :key :x,
+                 :value 1,
+                 :value' 2,
+                 :a-mop-index 0,
+                 :b-mop-index 0}
+                ]
                :type :G0}]
       ; G1 and G0 both catch this, because technically G0 *is* G1.
       (is (= {:valid? false
@@ -464,18 +466,18 @@
       ; questionable. Might change this later?
       (is (= {:valid? false
               :not #{:read-committed}
-              :anomaly-types [:G-single]}
+              :anomaly-types [:G-single-item]}
              (-> (c {:consistency-models nil, :anomalies [:G2]} h)
                  (select-keys [:valid? :not :anomaly-types]))))
       ; But, say, strict-1SR will
       (is (= {:valid? false
-              :anomaly-types  [:G-single :G1b]
+              :anomaly-types  [:G-single-item :G1b]
               :not            #{:read-committed}
               :anomalies {:G1b [{:op      t2'
                                  :writer  t1'
                                  :mop     [:r :x [1]]
                                  :element 1}]
-                          :G-single
+                          :G-single-item
                           [{:cycle [t2' t1' t2']
                             :steps
                             [{:type :rw,
@@ -489,7 +491,7 @@
                               :value 1,
                               :a-mop-index 0,
                               :b-mop-index 0}],
-                            :type :G-single}]}}
+                            :type :G-single-item}]}}
              (c {:consistency-models [:strict-serializable]} h)))))
 
   (testing "G1c"
@@ -543,20 +545,20 @@
                  :value' 2,
                  :a-mop-index 0,
                  :b-mop-index 0}],
-               :type :G-single}]
+               :type :G-single-item}]
       ; G0 and G1 won't catch this
       (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G0]} h)))
       (is (= {:valid? true} (c {:consistency-models nil, :anomalies [:G1]} h)))
       ; But G-single and G2 will!
       (is (= {:valid? false
-              :anomaly-types [:G-single]
-              :not           #{:consistent-view}
-              :anomalies {:G-single [msg]}}
+              :anomaly-types [:G-single-item]
+              :not           #{:consistent-view :repeatable-read}
+              :anomalies {:G-single-item [msg]}}
              (c {:consistency-models nil, :anomalies [:G-single]} h)))
       (is (= {:valid? false
-              :anomaly-types [:G-single]
-              :not           #{:consistent-view}
-              :anomalies {:G-single [msg]}}
+              :anomaly-types [:G-single-item]
+              :not           #{:consistent-view :repeatable-read}
+              :anomalies {:G-single-item [msg]}}
              (c {:consistency-models nil, :anomalies [:G2]} h)))))
 
   (testing "G2"
@@ -616,10 +618,10 @@
              (c {:consistency-models [:serializable]} h)))
       ; But it will if we ask for strict-serializable.
       (is (= {:valid?         false
-              :anomaly-types  [:G-single-realtime]
+              :anomaly-types  [:G-single-item-realtime]
               :not            #{:strong-snapshot-isolation}
               :anomalies
-              {:G-single-realtime
+              {:G-single-item-realtime
                [{:cycle [t2' t1' t2']
                  :steps
                  [{:type :rw,
@@ -631,7 +633,7 @@
                   {:type :realtime,
                    :a' t1'
                    :b  t2}],
-                 :type :G-single-realtime}]}}
+                 :type :G-single-item-realtime}]}}
              (c {:consistency-models [:strict-serializable]}
                 h)))))
 
@@ -652,10 +654,10 @@
              (c {:consistency-models [:serializable]} h)))
       ; But it will if we ask for strict-serializable.
       (is (= {:valid?         false
-              :anomaly-types  [:G-single-process]
+              :anomaly-types  [:G-single-item-process]
               :not            #{:strong-session-snapshot-isolation}
               :anomalies
-              {:G-single-process
+              {:G-single-item-process
                [{:cycle [t2' t1' t2']
                  :steps
                  [{:type :rw,
@@ -666,7 +668,7 @@
                    :b-mop-index 0}
                   {:type :process
                    :process 1}]
-                 :type :G-single-process}]}}
+                 :type :G-single-item-process}]}}
              (c {:consistency-models [:strong-session-snapshot-isolation]}
                 h)))))
 
@@ -694,10 +696,10 @@
              (c {:consistency-models [:serializable]} h)))
       ; But it will if we ask for strong session SI.
       (is (= {:valid?         false
-              :anomaly-types  [:G-nonadjacent-process]
+              :anomaly-types  [:G-nonadjacent-item-process]
               :not            #{:strong-session-snapshot-isolation}
               :anomalies
-              {:G-nonadjacent-process
+              {:G-nonadjacent-item-process
                [{:cycle [t0' t1' t2' t3' t0']
                  :steps [{:type :rw,
                           :key :x
@@ -715,7 +717,7 @@
                           :value 1
                           :a-mop-index 0
                           :b-mop-index 1}]
-                 :type :G-nonadjacent-process}]}}
+                 :type :G-nonadjacent-item-process}]}}
              (c {:consistency-models [:strong-session-snapshot-isolation]}
                 h)))))
 
@@ -859,10 +861,10 @@
     ; ry -rw-> w1, since y fails to observe w1
     ; w3 is a red herring; just there to create multiple final edges
     (is (= {:valid?         false
-            :anomaly-types  [:G-single :G0]
+            :anomaly-types  [:G-single-item :G0]
             :anomalies
             ; We know this is G-single because ry -rw-> w1 -ww-> w2 -wr-> ry
-            {:G-single
+            {:G-single-item
              [{:cycle [ry' w1' w2' ry']
                :steps
                [{:type :rw,
@@ -882,7 +884,7 @@
                  :value 2,
                  :a-mop-index 1,
                  :b-mop-index 0}],
-               :type :G-single}],
+               :type :G-single-item}],
              ; But worse, it's G0 because w2 -ww-> w1 -ww->w2
              :G0
              [{:cycle [w2' w1' w2']
@@ -959,9 +961,9 @@
         [t4 t4'] (pair (op "ry1rx"))
         h (h/history [t1 t1' t2 t2' t3 t3' t4 t4'])]
     (is (= {:valid?         false
-            :not            #{:snapshot-isolation}
-            :anomaly-types  [:G-nonadjacent]
-            :anomalies      {:G-nonadjacent
+            :not            #{:snapshot-isolation :repeatable-read}
+            :anomaly-types  [:G-nonadjacent-item]
+            :anomalies      {:G-nonadjacent-item
                              [{:cycle (mapv h [3 5 7 1 3])
                                :steps [{:type :rw,
                                         :key :y,
@@ -985,7 +987,7 @@
                                         :value 1,
                                         :a-mop-index 0,
                                         :b-mop-index 0}]
-                               :type :G-nonadjacent}]}}
+                               :type :G-nonadjacent-item}]}}
                              (c {} h))))
 
   ; We should *not* detect a cycle like rw rw wr rw wr, because two of the rw
@@ -1074,6 +1076,75 @@
               :type :G1c-process}]},
            :not #{:strong-session-read-committed}}
            (c {:consistency-models [:strong-session-snapshot-isolation]} h)))))
+
+(deftest rr-g-single-item-test
+  ; Repeatable Read prohibits some, but not all, G-single anomalies. This
+  ; prevented us from identifying repeatable read violations when all such
+  ; violations were G-single. We now have a special G-single-item anomaly which
+  ; does not involve predicates.
+  (let [[t1 t1'] (pair (op "ax1ay1"))  ; rw: appends y=1 after t2 reads
+        [t2 t2'] (pair (op "rx1ry")) ; wr: observes t1's append of 1 to x
+        [t1 t1' t2 t2' :as h] (h/history [t1 t1' t2 t2'])
+        r (c {:consistency-models [:repeatable-read]} h)]
+    (is (= {:valid? false,
+            :anomaly-types [:G-single-item],
+            :anomalies
+            {:G-single-item
+             [{:cycle [t2' t1' t2']
+               :steps
+               [{:type :rw,
+                 :key :y,
+                 :value :elle.list-append/init,
+                 :value' 1,
+                 :a-mop-index 1,
+                 :b-mop-index 1}
+                {:type :wr, :key :x, :value 1, :a-mop-index 0, :b-mop-index 0}],
+               :type :G-single-item}]},
+            :not #{:consistent-view :repeatable-read}}
+           r))))
+
+(deftest rr-g-nonadjacent-item-test
+  ; Repeatable Read prohibits some, but not all, G-nonadjacent anomalies. This
+  ; prevented us from identifying repeatable read violations when all such
+  ; violations were G-nonadjacent. We now have a special G-nonadjacent-item
+  ; anomaly which does not involve predicates.
+  (let [[t1 t1' t2 t2' t3 t3' t4 t4' :as h]
+        (h/history (mapcat (comp pair op)
+                           ["ax1at1"     ; rw: overwrites t4's read of t=nil
+                            "rx1ry"      ; wr: observes t1's append to x
+                            "ay1az2"     ; rw: overwrites t2's read of y=nil
+                            "rz2rt"]))    ; wr: observes t3's append to z
+        r (c {:consistency-models [:repeatable-read]} h)]
+    (is (= {:valid? false,
+            :anomaly-types [:G-nonadjacent-item],
+            :anomalies
+            {:G-nonadjacent-item
+             [{:cycle [t2' t3' t4' t1' t2']
+               :steps [{:type :rw,
+                  :key :y,
+                  :value :elle.list-append/init,
+                  :value' 1,
+                  :a-mop-index 1,
+                  :b-mop-index 0}
+                 {:type :wr,
+                  :key :z,
+                  :value 2,
+                  :a-mop-index 1,
+                  :b-mop-index 0}
+                 {:type :rw,
+                  :key :t,
+                  :value :elle.list-append/init,
+                  :value' 1,
+                  :a-mop-index 1,
+                  :b-mop-index 1}
+                 {:type :wr,
+                  :key :x,
+                  :value 1,
+                  :a-mop-index 0,
+                  :b-mop-index 0}]
+               :type :G-nonadjacent-item}]}
+            :not #{:repeatable-read :snapshot-isolation}}
+           r))))
 
 (deftest future-read-test
   ; When a transaction performs an external read of its own external writes, we
@@ -1168,13 +1239,14 @@
             :anomalies      {:PL-SI-cycle-exists
                              [{:type      :PL-SI-cycle-exists
                                :not       :snapshot-isolation
-                               :subgraph  [:extension [:union :ww :wr] :rw]
+                               :subgraph  [:extension [:union :ww :wwp :wr :wrp]
+                                           [:union :rw :rwp]]
                                :scc-size  n
                                :scc       (set (map #(inc (* 2 %))
                                                     (range n)))}]
                              :cycle-search-timeout
                               [{:type :cycle-search-timeout,
-                                :anomaly-spec-type :G-single,
+                                :anomaly-spec-type :G-single-item,
                                 :does-not-contain [],
                                 :scc-size (dec (/ (count h) 2))}]
                              }}

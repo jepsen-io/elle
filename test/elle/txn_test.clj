@@ -67,9 +67,15 @@
               (g/link op0 op1 ww)
               (g/link op1 op0 rw))
         cases (cycle-exists-cases g)]
-    (is (= [{:type :PL-SI-cycle-exists
-             :not  :snapshot-isolation
-             :subgraph [:extension [:union :ww :wr] :rw]
-             :scc-size 2
-             :scc #{0 1}}]
+    (is (= [{:type      :PL-SI-cycle-exists
+             :not       :snapshot-isolation
+             :subgraph  [:extension [:union :ww :wwp :wr :wrp]
+                         [:union :rw :rwp]]
+             :scc-size  2
+             :scc       #{0 1}}
+            {:type      :PL-2.99-cycle-exists
+             :not       :repeatable-read
+             :subgraph  [:union :ww :wwp :wr :wrp :rw]
+             :scc-size  2
+             :scc       #{0 1}}]
            cases))))
