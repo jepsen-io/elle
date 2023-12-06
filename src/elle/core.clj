@@ -250,8 +250,8 @@
          ; And build a graph out of them
          (reduce (fn [g [[v1 ops1] [v2 ops2]]]
                    (g/link-all-to-all g ops1 ops2 ww))
-                 (g/linear (g/op-digraph)))
-         g/forked)))
+                 (b/linear (g/op-digraph)))
+         b/forked)))
 
 (defn monotonic-key-graph
   "Analyzes ops where the :value of each op is a map of keys to values. Assumes
@@ -277,8 +277,8 @@
        (h/filter (comp #{process} :process))
        (partition 2 1)
        (reduce (fn [g [op1 op2]] (g/link g op1 op2 rels/process))
-               (g/linear (g/op-digraph)))
-       g/forked))
+               (b/linear (g/op-digraph)))
+       b/forked))
 
 (defrecord ProcessExplainer []
   DataExplainer

@@ -92,7 +92,9 @@
 
   We represent the unborn version as :elle/unborn, and the dead version as
   :elle/dead."
-  (:require [clojure [pprint :refer [pprint]]
+  (:require [bifurcan-clj [core :as b]
+                          [graph :as bg]]
+            [clojure [pprint :refer [pprint]]
                      [set :as set]]
             [clojure.tools.logging :refer [info warn]]
             [dom-top.core :as dt :refer [loopr]]
@@ -492,7 +494,7 @@
   P matches x2 but not x1."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/op-digraph))]
+   (loopr [g (b/linear (g/op-digraph))]
           [op          (h/oks history)
            [f :as mop] (:value op)]
           (recur
@@ -535,7 +537,7 @@
                                     g))))
                     ; Some other kind of mop
                     g))
-          (g/forked g))
+          (b/forked g))
    :explainer (RWExplainer. all-versions vsets)})
 
 (defrecord WRExplainer [all-versions vsets]
@@ -585,7 +587,7 @@
   VSet(pred)."
   [{:keys [all-versions vsets ext-writes]} history]
   {:graph
-   (loopr [g                (g/linear (g/op-digraph))]
+   (loopr [g                (b/linear (g/op-digraph))]
           [op               (h/oks history)
            [f k v :as mop]  (:value op)]
           (recur
@@ -616,7 +618,7 @@
                                g))))
               ; Some other mop
               g))
-          (g/forked g))
+          (b/forked g))
    :explainer (WRExplainer. all-versions vsets)})
 
 (defrecord WWExplainer [all-versions]
@@ -651,7 +653,7 @@
   directly precedes x' in the version order."
   [{:keys [all-versions ext-writes]} history]
   {:graph
-   (loopr [g (g/linear (g/op-digraph))]
+   (loopr [g (b/linear (g/op-digraph))]
           [op (h/possible history)
            [f k v :as mop] (:value op)]
           (recur
@@ -670,7 +672,7 @@
 
               ; Some other mop
               g))
-          (g/forked g))
+          (b/forked g))
    :explainer (WWExplainer. all-versions)})
 
 (defn graph

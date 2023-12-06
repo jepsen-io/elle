@@ -346,7 +346,7 @@
 (def all-models
   "A set of all models."
   (into (sorted-set)
-        (concat (g/vertices models)
+        (concat (bg/vertices models)
                 (keys canonical-model-names)
                 (vals canonical-model-names))))
 
@@ -581,7 +581,7 @@
 (defn possible-models
   "Given a set of ruled-out models, returns all models that *are* possible."
   [impossible]
-  (->> (g/vertices models)
+  (->> (bg/vertices models)
        g/->clj
        (remove (set impossible))))
 
@@ -610,7 +610,7 @@
 
 (defn plot-graph!
   [g filename]
-  (let [dot (graph->dot (g/vertices g)
+  (let [dot (graph->dot (bg/vertices g)
                         (partial g/out g)
                         :node->descriptor (fn [x] {:label (name x)}))
         img (rv/dot->image dot)]

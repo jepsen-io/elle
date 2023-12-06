@@ -1,5 +1,7 @@
 (ns elle.viz
-  (:require [clojure.string :as str]
+  (:require [bifurcan-clj [core :as b]
+                          [graph :as bg]]
+            [clojure.string :as str]
             [clojure.java.io :as io]
             [clojure.tools.logging :refer [info warn]]
             [elle [core :as elle]
@@ -134,7 +136,7 @@
   "Given an analysis, node index, and pair of operations, yields an edge AST
   node."
   [analysis node-index a b]
-  (let [edge      (g/edge (:graph analysis) a b)
+  (let [edge      (bg/edge (:graph analysis) a b)
         explainer (:explainer analysis)
         ex        (elle/explain-pair-data explainer a b)
         ; _         (prn ex)

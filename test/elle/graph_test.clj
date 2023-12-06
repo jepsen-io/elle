@@ -143,15 +143,6 @@
       (is (= nil
              (find-cycle (op-graph (bg/select g (bs/from #{0 2 4})))))))))
 
-(deftest find-cycle-starting-with-test
-  (let [initial   (op-graph (map->bdigraph {0 [1 2]}))
-        ; Remaining HAS a cycle, but we don't want to find it.
-        remaining (op-graph (map->bdigraph {1 [3]
-                                            3 [1 0]}))]
-    (is (= [0 1 3 0]
-           (indices
-             (find-cycle-starting-with initial remaining))))))
-
 (deftest fallback-cycle-test
   (is (= [2 3 4 2] (fallback-cycle
                      (map->bdigraph {1 [2]
@@ -159,96 +150,11 @@
                                      3 [4]
                                      4 [2]})))))
 
-(deftest find-cycle-satisfying-test
-  ; This transition function considers every path legal.
-  (let [trivial (fn trivial
-                  ([v] :trivial)
-                  ([state path rel v'] state))
-        ; This fn ensures that no :rw is next to another by testing successive
-        ; edge types. In addition, we ensure that the first edge in the cycle
-        ; is not an rw. Cycles must have at least two edges, and in order for
-        ; no two rw edges to be adjacent, there must be at least one non-rw
-        ; edge among them. This constraint ensures a sort of boundary condition
-        ; for the first and last nodes--even if the last edge is rw, we don't
-        ; have to worry about violating the nonadjacency property when we jump
-        ; to the first.
-        nonadjacent (fn
-                      ([v] true) ; To start, pretend we just came along an rw
-                      ([last-was-rw? path rel v']
-                       ; It's fine to follow *non* rw links, but if you've only
-                       ; got rw, and we just did one, this path is invalid.
-                       (let [rw? (= rw rel)]
-                         (if (and last-was-rw? rw?)
-                           :elle.graph/invalid
-                           rw?))))
-
-        ; This predicate is always true.
-        always (fn [_] true)]
-
-    (testing "empty graph"
-      (is (= nil (find-cycle-with- trivial always
-                                   (op-graph
-                                     (map->bdigraph {}))))))
-
-    (testing "singleton scc"
-      (is (= (->PathState (mapv op [1 1]) [nil] :trivial)
-             (find-cycle-with- trivial
-                                   always
-                                   (op-graph
-                                     (map->bdigraph {1 [1]}))))))
-
-    (testing "basic cycle"
-      (is (= (->PathState (mapv op [3 2 3]) [nil nil] :trivial)
-             (find-cycle-with- trivial
-                               always
-                               (op-graph
-                                 (map->bdigraph {1 [2]
-                                                 2 [3]
-                                                 3 [2]}))))))
-
-    (testing "non-adjacent"
-      (testing "double rw"
-        (is (= nil (find-cycle-with nonadjacent
-                                    always
-                                    (-> (digraph)
-                                        (link 1 2 rw)
-                                        (link 2 1 rw)
-                                        op-graph)))))
-      (testing "rw, rw+ww"
-        (is (= [2 1 2]
-               (indices (find-cycle-with nonadjacent
-                                         always
-                                         (-> (digraph)
-                                             (link 1 2 rw)
-                                             (link 2 1 rw)
-                                             (link 2 1 ww)
-                                             op-graph))))))
-
-      (testing "rw, ww, rw"
-        (is (= nil (find-cycle-with nonadjacent
-                                    always
-                                    (-> (digraph)
-                                        (link 1 2 rw)
-                                        (link 2 3 ww)
-                                        (link 3 1 rw)
-                                        op-graph)))))
-
-      (testing "rw, ww, rw, ww"
-        (is (= [2 3 4 1 2] (indices
-                             (find-cycle-with nonadjacent
-                                            always
-                                            (-> (digraph)
-                                                (link 1 2 rw)
-                                                (link 2 3 ww)
-                                                (link 3 4 rw)
-                                                (link 4 1 ww)
-                                                op-graph)))))))))
-
 (deftest link-test
   (let [g (-> (digraph)
               (link 1 2 ww)
               (link 1 2 wr))]
-    (is (= (union ww wr) (->clj (edge g 1 2))))))
+    (is (= (union ww wr) (->clj (bg/edge g 1 2))))))
 
 (deftest collapse-graph-test
   (testing "simple"
@@ -271,12 +177,12 @@
     (is (= (map->bdigraph {}) (map-vertices identity (map->bdigraph {})))))
 
   (testing "complex"
-    (is (= (-> (linear (digraph))
+    (is (= (-> (b/linear (digraph))
                (link 1 1 ww)
                (link 1 2 wr)
                (link 1 2 rw))
            (map-vertices {1 1, 2 1, 3 2, 4 2}
-                         (-> (linear (digraph))
+                         (-> (b/linear (digraph))
                              (link 1 2 ww) ; becomes a self-edge
                              (link 1 3 wr) ; becomes 1->2
                              (link 2 4 rw) ; becomes 1->2

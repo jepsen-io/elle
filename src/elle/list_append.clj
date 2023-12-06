@@ -638,7 +638,7 @@
   ([history]
    (ww-graph (preprocess history) nil))
   ([{:keys [history append-index write-index read-index]} _]
-   {:graph (g/forked
+   {:graph (b/forked
              (reduce-mops (fn [g op [f :as mop]]
                             ; Only appends have dependencies, cuz we're
                             ; interested in ww cycles.
@@ -648,7 +648,7 @@
                                              append-index write-index op mop)]
                                 (g/link g dep op ww)
                                 g)))
-                          (g/linear (g/op-digraph))
+                          (b/linear (g/op-digraph))
                           history))
     :explainer (WWExplainer. append-index write-index read-index)}))
 
@@ -677,7 +677,7 @@
   ([history]
    (wr-graph (preprocess history) nil))
   ([{:keys [history append-index write-index read-index]} _]
-   {:graph (g/forked
+   {:graph (b/forked
              (reduce-mops (fn [g op [f :as mop]]
                             (if (not= f :r)
                               g
@@ -686,7 +686,7 @@
                                 (g/link g dep op wr)
                                 ; No dep
                                 g)))
-                          (g/linear (g/op-digraph))
+                          (b/linear (g/op-digraph))
                           history))
     :explainer (WRExplainer. append-index write-index read-index)}))
 
@@ -737,7 +737,7 @@
    {:graph (loopr [; Yourkit claims we were burning time in NamedGraph/link, so
                    ; we'll fall back to the concrete digraph then wrap.
                    ; Maybe inliner got confused?
-                   g (g/linear (g/op-digraph))]
+                   g (b/linear (g/op-digraph))]
                   [op           history
                    [f :as mop]  (:value op)]
                   (if (identical? f :append)
@@ -748,7 +748,7 @@
                       (recur (g/link-all-to g deps op rw))
                       (recur g))
                     (recur g))
-                  (g/forked g))
+                  (b/forked g))
     :explainer (RWExplainer. append-index write-index read-index)}))
 
 (defn graph

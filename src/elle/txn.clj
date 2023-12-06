@@ -21,8 +21,7 @@
             [jepsen.history.fold :refer [loopf]]
             [tesser.core :as t]
             [unilog.config :refer [start-logging!]])
-  (:import (elle.graph PathState)
-           (elle BitRels)
+  (:import (elle BitRels)
            (io.lacuna.bifurcan IGraph
                                LinearMap
                                Map)
@@ -526,77 +525,6 @@
                                {:keys [type cycle steps] :as ex}]
       (elle/render-cycle-explanation
         elle/cycle-explainer pair-explainer ex))))
-
-(defn trivial-path-transition
-  "A path transition function which is always legal."
-  ([vertex] nil)
-  ([_ path edge vertex'] nil))
-
-(defn first-path-transition
-  "Takes a set of relationships like #{:rw}. Constructs a path transition
-  function for use with g/find-cycle-with. Ensures that the first edge, and no
-  later edge, is a subset of rels."
-  [rels]
-  (let [rels (bs/from rels)]
-    (fn transition
-      ([v] true) ; Our state is true if we're starting, false otherwise.
-      ([starting? path edge v']
-       (let [match? (bs/contains-all? rels edge)]
-         (if starting?
-           (if match? false :elle.graph/invalid)
-           (if match? :elle.graph/invalid false)))))))
-
-(defn nonadjacent-path-transition
-  "Takes a set of relationships like #{:rw}. Constructs a function suitable for
-  use with g/find-cycle-with. Ensures that no pair of adjacent edges can both
-  be subsets of rels.
-
-  This fn ensures that no :rw is next to another by testing successive edge
-  types. In addition, we ensure that the first edge in the cycle is not an rw.
-  Cycles must have at least two edges, and in order for no two rw edges to be
-  adjacent, there must be at least one non-rw edge among them. This constraint
-  ensures a sort of boundary condition for the first and last nodes--even if
-  the last edge is rw, we don't have to worry about violating the nonadjacency
-  property when we jump to the first."
-  [rels]
-  (let [rels (bs/from rels)]
-    (fn transition
-      ([v] true) ; Our accumulator here is a boolean: whether our last edge was (potentially? rw).
-      ([last-matched? path edge v']
-       ; It's fine to follow *non* rw links, but if you've only
-       ; got rw, and we just did one, this path is invalid.
-       (let [match? (bs/contains-all? rels edge)]
-         (if (and last-matched? match?)
-           :elle.graph/invalid
-           match?))))))
-
-(defn multiple-path-state-pred
-  "Takes a graph and a set of rels. Constructs a predicate over PathStates
-  which returns true iff multiple edges are subsets of rels."
-  [g rels]
-  (let [rels (bs/from rels)]
-    (fn pred? [^PathState ps]
-      (loopr [seen? false]
-             [edge (.edges ps)]
-             (if (bs/contains-all? rels edge)
-               (if seen? ; We have two; done
-                 true
-                 (recur true))
-               (recur seen?))
-             false))))
-
-(defn required-path-state-pred
-  "Takes a graph and a collection of rels. Constructs a predicate over
-  PathStates which returns true iff at least one edge is a subset of rels."
-  [g rels]
-  (let [rels (bs/from rels)]
-    (fn pred? [^PathState ps]
-      (loopr []
-             [edge (.edges ps)]
-             (if (bs/contains-all? rels edge)
-               true
-               (recur))
-             false))))
 
 (def base-cycle-anomaly-specs
   "We define a specification language for different anomaly types, and a small

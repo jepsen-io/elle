@@ -35,7 +35,9 @@
 
   We can alternate between expanding the transaction graph and expanding the
   version graph until we reach a fixed point. This isn't implemented yet."
-  (:require [bifurcan-clj [core :as b]]
+  (:require [bifurcan-clj [core :as b]
+                          [graph :as bg]
+                          [set :as bs]]
             [clojure.core.reducers :as r]
             [clojure [set :as set]
                      [pprint :refer [pprint]]]
@@ -282,7 +284,7 @@
   (reduce (fn [^IMap downstream k]
             ; (prn :local k :op (:index op))
             (let [bs (.get downstream k (LinearSet.))]
-              (.put downstream k (g/set-add bs op))))
+              (.put downstream k (bs/add bs op))))
           downstream
           ext-keys))
 
@@ -362,7 +364,7 @@
                 ; move on to the next op in the stack.
                 (do ;(prn :complete (.index op))
                     (recur g
-                           (.put kg op (g/forked downstream))
+                           (.put kg op (b/forked downstream))
                            (pop ops)))))))))))
 
 (defn ^IMap ext-key-graph
@@ -382,7 +384,7 @@
   ; 2. Under the assumption that our graph *roughly* points forward in time,
   ;    we traverse ops in reverse time (:index) order. This gives our memoized
   ;    data structure the maximum chance to work.
-  (->> (g/vertices g)
+  (->> (bg/vertices g)
        (sort-by :index)
        reverse
        ; Build up the key graph
@@ -392,7 +394,7 @@
                  ;(print :kg (kg-str kg))
                  (downstream-ops-by-ext-key g kg [op]))
                (LinearMap.))
-       g/forked))
+       b/forked))
 
 (defn transaction-graph->version-graphs
   "Takes a graph of transactions (operations), and yields a map of keys to
@@ -630,9 +632,9 @@
   [history version-graphs]
   (let [ext-read-index  (ext-index txn/ext-reads  history)
         ext-write-index (ext-index txn/ext-writes history)]
-    (loopr [g (g/linear (g/op-digraph))]
+    (loopr [g (b/linear (g/op-digraph))]
            [[k version-graph] version-graphs
-            ^IEdge edge (g/edges version-graph)]
+            ^IEdge edge (bg/edges version-graph)]
            (let [v1        (.from edge)
                  v2        (.to edge)
                  k-writes  (get ext-write-index k)
@@ -752,7 +754,7 @@
         ext-reads  (ext-index txn/ext-reads  history)]
     ; Take all reads and relate them to prior writes.
     {:graph
-     (g/forked
+     (b/forked
        (reduce (fn [graph [k values->reads]]
                  ; OK, we've got a map of values to ops that read those values
                  (reduce (fn [graph [v reads]]

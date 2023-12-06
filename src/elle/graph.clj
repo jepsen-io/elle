@@ -104,39 +104,21 @@
   []
   (DirectedGraph. index-hash index=))
 
-(defn linear
-  "Bifurcan's analogue to (transient x)"
-  [^ICollection x]
-  (.linear x))
-
-(defn forked
-  "Bifurcan's analogue to (persistent! x)"
-  [^ICollection x]
-  (.forked x))
-
-(defn size
-  "How big is a thing?"
-  [^ICollection c]
-  (.size c))
-
-(defn ^ISet vertices
-  "The set of all vertices in the node."
-  [^IGraph g]
-  (.vertices g))
-
 (defn contains-node?
   "Is this node in the graph?"
   [^IGraph g v]
-  (.contains (vertices g) v))
+  (.contains (bg/vertices g) v))
 
 (defn in
-  "Inbound edges to v in graph g."
+  "Inbound edges to v in graph g. Returns nil instead of throwing when given a
+  vertex not in the graph."
   [^IGraph g v]
   (try (.in g v)
        (catch IllegalArgumentException e)))
 
 (defn ^Set out
-  "Outbound edges from v in graph g."
+  "Outbound vertices from v in graph g. Returns nil instead of throwing when
+  given a vertex not in the graph."
   [^IGraph g v]
   (try (.out g v)
        (catch IllegalArgumentException e)))
@@ -161,41 +143,6 @@
       (cond (nil? a) b
             (nil? b) a
             true     (.union ^BitRels a ^BitRels b)))))
-
-(defn ^IEdge edge
-  "Returns the edge between two vertices."
-  [^IGraph g a b]
-  (.edge g a b))
-
-(defn edges
-  "A lazy seq of all edges."
-  [^IGraph g]
-  (.edges g))
-
-(defn add
-  "Add a node to a graph."
-  [^DirectedGraph graph node]
-  (.add graph node))
-
-(defn ^Set bset
-  "Constructs a new Bifurcan Set, either empty or containing the given object."
-  ([]
-   Set/EMPTY)
-  ([x]
-   (.. Set/EMPTY linear (add x) forked)))
-
-(defn ^Set ->bset
-  "Turns any reducible into a Bifurcan Set."
-  [xs]
-  (loopr [^ISet s (.linear Set/EMPTY)]
-         [x xs]
-         (recur (.add s x))
-         (.forked s)))
-
-(defn set-add
-  "Add an element to a set."
-  [^ISet s x]
-  (.add s x))
 
 (defn link
   "Helper for linking Bifurcan graphs of ops. Optionally takes a BitRels
@@ -287,12 +234,12 @@
   sets that might intersect, and instead of writing all-new versions of link-*
   that suppress self-edges, we'll just remove self-edges after."
   [^DirectedGraph g nodes-of-interest]
-  (loop [g      (linear g)
+  (loop [g      (.linear g)
          nodes  nodes-of-interest]
     (if (seq nodes)
       (let [node (first nodes)]
         (recur (unlink g node node) (next nodes)))
-      (forked g))))
+      (.forked g))))
 
 (defn bfs
   "Takes a function of a vertex yielding neighbors, and a collection of
@@ -359,10 +306,10 @@
                      [g' (-> memo
                              (.add v) ; Memoize even negative result!
                              (link-to-all v downstream))])))
-               [(linear (digraph))
-                (linear (digraph))])
+               [(.linear (digraph))
+                (.linear (digraph))])
        first
-       forked))
+       b/forked))
 
 (defn map->bdigraph
   "Turns a sequence of [node, successors] pairs (e.g. a map) into a bifurcan
@@ -409,15 +356,15 @@
   "Takes a function of vertices, and a graph, and returns graph with all
   vertices mapped via f. Edge values are merged with set union."
   [f g]
-  (forked
+  (b/forked
     (reduce (fn [^DirectedGraph g ^IEdge edge]
               (.link g
                      (f (.from edge))
                      (f (.to edge))
                      (.value edge)
                      union-rels))
-            (linear (digraph))
-            (edges g))))
+            (.linear (digraph))
+            (bg/edges g))))
 
 (defn ^IGraph sequential-composition
   "The sequential composition (ish; see below) of two graphs A; B. Returns a
@@ -472,44 +419,8 @@
                c))
            (b/forked c))))
 
-; Advanced graph search
-;
-; Given a graph and a strongly connected component in it, we're interested in
-; finding cycles in that graph which satisfy certain properties. For instance,
-; we might want to restrict ourselves to only ww or wr edges (for G1c), or
-; find a cycle in which every rw edge is *not* adjacent to another rw edge.
-; (for G2-nonadjacent). Enumeration of all paths and filtering them for these
-; criteria after the fact may be hugely expensive. Instead, we push the
-; filtering process into the enumeration process, making sure that we only
-; explore paths which would satisfy the target cycle requirements.
-;
-; To do this, we define a PathState as a sequence of adjacent vertices in the
-; graph, a sequence of the edges between those vertices, and an arbitrary
-; state. As a part of our search, we take a state machine transition function
-; (f state path edge-value vertex), which evaluates whether we can append that
-; vertex to the given path. A search for G-single could say, for instance "this
-; state tells me we already saw a rw edge, so we can't add another to this
-; particular path.
-;
-; f returns a new state if it is possible to extend the path to that vertex, or
-; ::invalid if it is not possible.
-
-(defrecord PathState [path edges state])
-
-(defn prune-alternate-path-states
-  "If we have two paths [a b e] and [a c d e], and they have the same state, we
-  don't need to retain both of them during the search. We take a set of paths,
-  and collapse it to just those which have distinct start and endpoints, and
-  distinct states. Since all paths in our search *start* from the same place,
-  we can do this efficiently by just selecting one from the set of all paths
-  that end in the same place with the same state."
-  [path-states]
-  (->> path-states
-       (group-by (fn [ps] [(peek (:path ps)) (:state ps)]))
-       vals
-       (map first)))
-
-;; Graph search helpers
+;; Very simple graph search. elle.txn doesn't use this. See elle.bfs for the
+;; smarter version.
 
 (defn prune-alternate-paths
   "If we have two paths [a b d] and [a c d], we don't need both of them,
@@ -523,27 +434,6 @@
        vals
        (map first)))
 
-(defn grow-path-states
-  "Given a transition function f, graph g, and a set of PathStates, constructs
-  a new set of Pathstates by taking the tip t of each PathState p and extending
-  it to all vertices t can reach, such that (f state path edge next-vertex)
-  returns anything but ::invalid."
-  [f g path-states]
-  (mapcat (fn grow-path-state [^PathState ps]
-            (maybe-interrupt)
-            (let [path    (:path ps)
-                  tip     (peek path)
-                  state   (:state ps)]
-              (keep (fn to [tip']
-                      (let [edge   (edge g tip tip')
-                            state' (f state path edge tip')]
-                        (when-not (= ::invalid state')
-                          (PathState. (conj path tip')
-                                      (conj (.edges ps) edge)
-                                      state'))))
-                    (out g tip))))
-          path-states))
-
 (defn grow-paths
   "Given a graph g, and a set of paths (each a sequence like [a b c]),
   constructs a new set of paths by taking the tip c of each path p, and
@@ -555,16 +445,6 @@
                  (let [tip (peek path)]
                    ; Expand the tip to all nodes it can reach
                    (map (partial conj path) (.out g tip)))))))
-
-(defn path-state-shells
-  "Given a graph, and a starting collection of path states, constructs shells
-  outwards from those paths: collections of longer and longer path states."
-  [f g starting-path-states]
-  ; The longest possible cycle is the entire graph, plus one.
-  (take (inc (size g))
-        (iterate (comp prune-alternate-path-states
-                       (partial grow-path-states f g))
-                 starting-path-states)))
 
 (defn path-shells
   "Given a graph, and a starting collection of paths, constructs shells
@@ -583,110 +463,10 @@
   (and (< 1 (count v))
        (h/index= (first v) (peek v))))
 
-(defn path-state-loop?
-  "Is the given PathState a loop?"
-  [path-state]
-  (loop? (:path path-state)))
-
-(defn find-cycle-starting-with
-  "Some anomalies consist of a cycle with exactly, or at least, one edge of a
-  particular type. This fuction works like find-cycle, but allows you to pass
-  *two* graphs: an initial graph, which is used for the first step, and a
-  remaining graph, which is used for later steps."
-  [^IGraph initial-graph ^IGraph remaining-graph]
-  (let [; Think about the structure of these two graphs
-        ;
-        ;  I        R
-        ; ┌── d ┆
-        ; ↓   ↑ ┆
-        ; a ──┤ ┆
-        ;     ↓ ┆
-        ; b → c ┆ c → a
-        ;
-        ; In this graph, a cycle starting with I and completing with R can't
-        ; include d, since there is no way for d to continue in R--it's not
-        ; present in that set. Note that this is true even though [a d a] is a
-        ; cycle--it's just a cycle purely in I, rather than a cycle starting in
-        ; I and continuing in R, which is what we're looking for.
-        ;
-        ; Similarly, b can't be in a cycle, because there's no way to *return*
-        ; to b from R, and we know that the final step in our cycle must be a
-        ; transition from R -> I.
-        ;
-        ; In general, a cycle which has one edge from I must cross the boundary
-        ; from I to R, and from R back to I again--otherwise it would not be a
-        ; cycle. We therefore know that the first two vertices must be elements
-        ; of both I *and* R. To encode this, we restrict I to only vertices
-        ; present in R.
-        ig  (.select initial-graph (.vertices remaining-graph))]
-    ;(info :start-search)
-    ; Start with a vertex in the initial graph
-    (->> (.vertices ig)
-         (keep (fn [start]
-                 ;(info :vertex start)
-                 ; Expand this vertex out one step using the initial graph
-                 (->> (grow-paths ig [[start]])
-                      ; Then expand those paths into surrounding shells
-                      (path-shells remaining-graph)
-                      ; Flatten those into a list of paths
-                      (mapcat identity)
-                      (filter loop?)
-                      first)))
-         first)))
-
-(defn unchunk
-  "Unchunks a possible chunked collection. We do this to avoid finding more
-  solutions than necessary during graph search."
-  [coll]
-  (lazy-seq
-    (when-let [[x] (seq coll)]
-      (cons x (unchunk (rest coll))))))
-
-(defn find-cycle-with-
-  "Searches for a cycle in a graph, along which path a state machine holds. The
-  state machine is given as a transition function f.
-
-  (transition vertex) gives the initial state for a path which consists of just
-  [vertex].
-
-  (transition state path relationship vertex) yields the state when we append
-  vertex to path; relationship is the value of the edge which we take to get to
-  vertex.
-
-  The special state ::invalid indicates that the given path should not be
-  followed.
-
-  Any cycle found must pass (pred path-state). This is helpful for enforcing
-  criteria that can't be rejected incrementally by `transition`--for instance,
-  that a cycle must contain at least two edges of a certain type.
-
-  Returns the resulting PathState."
-  [transition pred ^IGraph g]
-  ; First, restrict the graph to the SCC.
-  (let [cycle (->> (vertices g)
-                   (keep (fn [start]
-                           (let [state (transition start)
-                                 init-path-state (PathState. [start] [] state)]
-                             (when (not= ::invalid? init-path-state)
-                               (->> (path-state-shells transition g
-                                                       [init-path-state])
-                                    (mapcat identity)
-                                    unchunk
-                                    (filter path-state-loop?)
-                                    (filter pred)
-                                    first)))))
-                   first)]
-    cycle))
-
-(defn find-cycle-with
-  "Like find-cycle-with-, but just returns the cycle, not the full PathState."
-  [transition pred g]
-  (:path (find-cycle-with- transition pred g)))
-
 (defn find-cycle
   "Given a strongly connected graph, finds a short cycle in it."
   [^IGraph g]
-  (->> (vertices g)
+  (->> (.vertices g)
        (keep (fn [start]
                (->> (path-shells g [[start]])
                     (mapcat identity)
@@ -731,39 +511,3 @@
                   DirectedAcyclicGraph/from)
               (inc depth)
               (reduce #(assoc! %1 %2 depth) m top))))))
-
-(defn ^IGraph materialize
-  "Tarjan on RelGraphs spends most of its time in .vertices and .out: it has to
-  union the vertex sets and every individual out query across rels. We can burn
-  memory to materialize this graph in parallel, speeding up the search
-  process.
-
-  Takes a history (for its task scheduler) and a RelGraph over ops in the
-  history. Returns an equivalent IGraph over ops which, when the graph is large
-  enough, has its components materialized."
-  [history g]
-  ; Since this graph's vertices must be a subset of the history, we can fold
-  ; over the history. This efficiently partitions the graph.
-  (let [vertices (bg/vertices g)
-        fold
-        (loopf {:name :materialize-graph}
-               ; Reducer over ops
-               ([g' (b/linear (op-digraph))]
-                [^Op op]
-                (recur
-                  (if (bs/contains? vertices op)
-                    ; Copy all edges outbound from this op
-                    (loopr [g' g']
-                           [op' (bg/out g op) :via :iterator]
-                           ; We'll never have to merge edges here
-                           (recur (bg/link g' op op' (bg/edge g op op'))))
-                    g')))
-               ; Combiner over subgraphs
-               ([g (b/linear (op-digraph))]
-                [g']
-                ; Because we partitioned by ops out, we'll never have to merge
-                ; here
-                (recur (.merge ^IGraph g g' union-rels))
-                (b/forked g)))]
-    ; Fold over history
-    (h/fold history fold)))

@@ -953,9 +953,9 @@
            (:anomaly-types r)))
     (let [cst (-> r :anomalies :cycle-search-timeout first)]
       ; This might change if we get faster or adjust timeouts
-      (is (= []                 (:does-not-contain cst)))
-      (is (= :G-single-realtime (:anomaly-spec-type cst)))
-      (is (number?              (:scc-size cst))))))
+      (is (= []                      (:does-not-contain cst)))
+      (is (= :G-single-item-realtime (:anomaly-spec-type cst)))
+      (is (number?                   (:scc-size cst))))))
 
 (deftest G-nonadjacent-test
   ; For G-nonadjacent, we need two rw edges (just one would be G-single), and
