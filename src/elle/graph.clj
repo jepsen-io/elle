@@ -367,33 +367,29 @@
             (bg/edges g))))
 
 (defn ^IGraph sequential-composition
-  "The sequential composition (ish; see below) of two graphs A; B. Returns a
-  graph C such that iff x -> y in A, and y -> z in B, then x -> y -> z in C.
-  This is similar to relational composition, treating each graph as a set of
-  [in-vert out-vert] pairs.
+  "The sequential composition of two graphs A; B. Returns an op digraph C such
+  that iff x -> y in A, and y -> z in B, then x -> z in C. This is similar to
+  relational composition, treating each graph as a set of [in-vert out-vert]
+  pairs.
 
-  Note that unlike A; B, we actually preserve the intermediate vertex and
-  original edges in this graph. This has two advantages: first, Bifurcan's SCC
-  search can't distinguish between singleton SCCs with/ or without self edges;
-  preserving the intermediate vertex means any SCC has at least 2 ops. Second,
-  it means cycles detected here are isomorphic to the real cycles we're looking
-  for."
-  [a b]
-  (let [b-vertices (bg/vertices b)]
-    (loopr [c (b/linear (op-digraph))]
-           [x->y (bg/edges a) :via :iterator]
-           (recur
-             (let [y (bg/edge-to x->y)]
-               (if (bs/contains? b-vertices y)
-                 (loopr [c c]
-                        [z (bg/out b y) :via :iterator]
-                        (-> c
-                            (bg/add-edge x->y)
-                            (bg/link y z (bg/edge b y z))
-                            recur))
-                 ; y not in b
-                 c)))
-           (b/forked c))))
+  The third-arity form takes an initial value for c, and allows both sequential
+  composition and sequential extension to share code."
+  ([a b]
+   (sequential-composition a b (op-digraph)))
+  ([a b init-c]
+   (let [b-vertices (bg/vertices b)]
+     (loopr [c (b/linear init-c)]
+            [x->y (bg/edges a) :via :iterator]
+            (recur
+              (let [x (bg/edge-from x->y)
+                    y (bg/edge-to x->y)]
+                (if (bs/contains? b-vertices y)
+                  (loopr [c c]
+                         [z (bg/out b y) :via :iterator]
+                         (recur (link c x z BitRels/NONE)))
+                  ; y not in b
+                  c)))
+            (b/forked c)))))
 
 (defn ^IGraph sequential-extension
   "Takes two graphs A and B. Returns A U (A; B): the union of A with the
@@ -404,20 +400,7 @@
   produces a graph where cycles are mostly in A, but can take non-adjacent
   jumps through B."
   [a b]
-  (let [b-vertices (bg/vertices b)]
-    (loopr [c (b/linear a)]
-           ; Iterate over vertices in a with some inbound edge
-           [y (r/filter (fn has-inbound? [y]
-                          (< 0 (b/size (bg/in a y))))
-                        (bg/vertices a))]
-           (recur
-             (if (bs/contains? b-vertices y)
-               (loopr [c c]
-                      [z (bg/out b y) :via :iterator]
-                      (recur (bg/link c y z (bg/edge b y z))))
-               ; y not in b
-               c))
-           (b/forked c))))
+  (sequential-composition a b a))
 
 ;; Very simple graph search. elle.txn doesn't use this. See elle.bfs for the
 ;; smarter version.

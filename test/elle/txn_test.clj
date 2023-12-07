@@ -4,6 +4,7 @@
             [clojure [pprint :refer [pprint]]
                      [test :refer :all]]
             [elle [graph :as g]
+                  [graph-test :refer [ops og]]
                   [rels :refer :all]
                   [txn :refer :all]]
             [jepsen [history :as h]]))
@@ -31,7 +32,7 @@
 (deftest cycle-exists-subgraph-test
   ; A simple G-single; stresses the AST interpreter for subgraphs, union,
   ; composition, extension.
-  (let [[op0 op1 op2 op3] (map (fn [i] (h/op {:index i})) (range 4))
+  (let [[op0 op1 op2 op3] ops
         g (-> (g/op-digraph)
               (g/link op0 op1 wr)
               (g/link op1 op2 ww)
@@ -48,31 +49,27 @@
                  (g/link op1 op2 ww))
              (cycle-exists-subgraph g [:union ww wr]))))
     (testing "composition"
-      (is (= (-> (g/op-digraph)
-                 (g/link op1 op2 ww)  ; Through ww-rw
-                 (g/link op2 op0 rw)) ; Through ww-rw
+      (is (= (og op1 none op0) ; Through ww-rw
              (cycle-exists-subgraph g [:composition ww rw]))))
     (testing "extension"
-      (is (= (-> (g/op-digraph)
-                 (g/link op0 op1 wr)  ; Original wr edge
-                 (g/link op1 op2 ww)  ; Original ww edge
-                 (g/link op2 op0 rw)) ; Through ww-rw
+      (is (= (og op0 wr op1    ; Original wr edge
+                 op1 ww op2    ; Original ww edge
+                 op1 none op0) ; Through ww-rw
              (cycle-exists-subgraph g [:extension [:union ww wr] rw]))))))
 
 (deftest cycle-exists-cases-G-single-test
   ; A simple G-single; stresses the AST interpreter for subgraphs and also the
   ; sequential extension mechanism
-  (let [[op0 op1] (map (fn [i] (h/op {:index i})) (range 2))
-        g (-> (g/op-digraph)
-              (g/link op0 op1 ww)
-              (g/link op1 op0 rw))
+  (let [[op0 op1] ops
+        g (og op0 ww op1
+              op1 rw op0)
         cases (cycle-exists-cases g)]
     (is (= [{:type      :PL-SI-cycle-exists
              :not       :snapshot-isolation
              :subgraph  [:extension [:union :ww :wwp :wr :wrp]
                          [:union :rw :rwp]]
-             :scc-size  2
-             :scc       #{0 1}}
+             :scc-size  1 ; Because of our sequential extension trick!
+             :scc       #{0}}
             {:type      :PL-2.99-cycle-exists
              :not       :repeatable-read
              :subgraph  [:union :ww :wwp :wr :wrp :rw]

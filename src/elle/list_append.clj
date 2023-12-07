@@ -413,15 +413,20 @@
 
 (defn write-index
   "Takes a history and constructs a map of keys to append values to the
-  operations that appended those values."
+  completion operations that appended those values."
   [history]
   (reduce (fn [index op]
-            (reduce (fn [index [f k v]]
-                      (if (= :append f)
-                        (assoc-in index [k v] op)
-                        index))
-                    index
-                    (:value op)))
+            (if (h/invoke? op)
+              ; Skip invocations; downstream consumers of this structure are
+              ; going to assume we're always a completion, and we don't care
+              ; about being correct for partial histories.
+              index
+              (reduce (fn [index [f k v]]
+                        (if (= :append f)
+                          (assoc-in index [k v] op)
+                          index))
+                      index
+                      (:value op))))
           {}
           history))
 

@@ -18,6 +18,15 @@
          (take-while identity)
          h/history)))
 
+(defn op-graph
+  "Builder for op digraphs. Takes a flat series of [from edge to] triples and
+  builds an operation digraph with those bitrels."
+  [& triples]
+  (reduce (fn [g [from edge to]]
+            (g/link g from to edge))
+          (g/op-digraph)
+          (partition 3 triples)))
+
 (deftest process-graph-test
   (let [[o1 o2 o3 o4 :as h]
         (h/history [{:index 0 :process 1 :type :ok}

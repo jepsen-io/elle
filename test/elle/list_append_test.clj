@@ -1178,6 +1178,15 @@
           :not #{:read-committed}}
          (c {:consistency-models [:read-committed]} h)))))
 
+(deftest intermediate-sequential-extension-test
+  ; An experiment with sequential extension incorrectly left intermediate
+  ; vertices present in the graph, causing us to claim e.g. SI violations which
+  ; did not actually exist.
+  (let [r (cf {:consistency-models [:snapshot-isolation :repeatable-read]}
+              "histories/si-without-g-single.edn")]
+    (is (= [:G2-item] (:anomaly-types r)))
+    (is (= #{:repeatable-read} (:not r)))))
+
 (deftest unfindable-g-single
   ; In this test, we construct a single G-single cycle awash in a sea of
   ; spurious G2-item cycles. This cycle times out our G-single search, but our
@@ -1254,9 +1263,11 @@
                                :not       :snapshot-isolation
                                :subgraph  [:extension [:union :ww :wwp :wr :wrp]
                                            [:union :rw :rwp]]
-                               :scc-size  n
+                               ; Note that we don't include the linchpin txn,
+                               ; because of our sequential extension trick.
+                               :scc-size  (dec n)
                                :scc       (set (map #(inc (* 2 %))
-                                                    (range n)))}]
+                                                    (range (dec n))))}]
                              :cycle-search-timeout
                               [{:type :cycle-search-timeout,
                                 :anomaly-spec-type :G-single-item,
@@ -1264,6 +1275,8 @@
                                 :scc-size (dec (/ (count h) 2))}]
                              }}
            res))))
+
+
 
 ;; Perf testing
 
@@ -1332,7 +1345,7 @@
     (is (= (* 2 n) (count h)))
     (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
 
-(deftest ^:perf ^:focus sloppy-perf-test
+(deftest ^:perf sloppy-perf-test
   ; An end-to-end performance test based on a sloppy database which takes
   ; locks... sometimes.
   (let [n           (long 1e6)

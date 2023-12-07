@@ -1,0 +1,19 @@
+; T1 ww T3 on 9
+; T1 wr T4 on 9
+; T2 rw T1 on 9
+; T3 rw T2 on 8
+; T3 rw T4 on 6
+; T4 rw T3 on 9
+
+; T1: read by T4
+{:index 10, :time 0, :type :invoke, :process 2, :f :txn, :value [[:append 9 2]]}
+{:index 11, :time 0, :type :ok, :process 2, :f :txn, :value [[:append 9 2]]}
+; T2: Does not see T1's append to 9
+{:index 20, :time 0, :type :invoke, :process 4, :f :txn, :value [[:append 8 1] [:r 9 nil]]}
+{:index 21, :time 0, :type :ok, :process 4, :f :txn, :value [[:append 8 1] [:r 9 nil]]}
+; T3: Does not see T2's append to 8 or T4's append to 6, overwrites T1 on 9
+{:index 30, :time 0, :type :invoke, :process 7, :f :txn, :value [[:r 6 nil] [:r 8 nil] [:append 9 5]]}
+{:index 31, :time 0, :type :ok, :process 7, :f :txn, :value [[:r 6 nil] [:r 8 nil] [:append 9 5]]}
+; T4: does not see T3's append to 9
+{:index 40, :time 0, :type :invoke, :process 9, :f :txn, :value [[:append 6 2] [:r 9 nil]]}
+{:index 41, :time 0, :type :ok, :process 9, :f :txn, :value [[:append 6 2] [:r 9 [2]]]}

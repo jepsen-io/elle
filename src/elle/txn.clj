@@ -399,6 +399,18 @@
 
         true x))
 
+(defn nontrivial-scc?
+  "Given a graph g, is an SCC (bifurcan set of vertices) in it a nontrivial
+  one? By that we mean it is either bigger than one vertex, or if it has a
+  single vertex, it has a self-edge."
+  [g scc]
+  (case (b/size scc)
+    0 false ; how did you even get here
+    ; .in is slightly faster on graphs than .out
+    1 (let [v (b/nth scc 0)]
+        (bs/contains? (bg/in g v) v))
+    true))
+
 (defn cycle-exists-cases
   "Finding cycles can be expensive, but we can actually distinguish between
   several levels simply by proving an SCC exists. This function takes a graph.
@@ -417,7 +429,9 @@
          (if (redundant? model)
            (recur errs redundant?)
            (let [sg   (cycle-exists-subgraph g subgraph)
-                 sccs (->> (bg/strongly-connected-components sg)
+                 ; We have to find singleton SCCs: a ww b rw a yields a -> a.
+                 sccs (->> (bg/strongly-connected-components sg true)
+                           (filter (partial nontrivial-scc? sg))
                            (sort-by b/size))
                  scc  (g/->clj (first sccs))]
              (if-not (seq sccs)

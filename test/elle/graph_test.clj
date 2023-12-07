@@ -3,7 +3,8 @@
                           [graph :as bg]
                           [set :as bs]]
             [clojure [pprint :refer [pprint]]]
-            [elle [graph :refer :all]
+            [elle [core-test :as core-test]
+                  [graph :refer :all]
                   [rels :refer :all]]
             [jepsen [history :as h]
                     [txn :as txn]]
@@ -17,6 +18,10 @@
   [index]
   (h/op {:index index}))
 
+(def ops
+  "An infinite series of ops with indices 0, 1, 2, ..."
+  (map op (range)))
+
 (defn op-graph
   "Takes a graph of integers and lifts them into a graph of Ops where the
   integers are their index fields. We do this because our graph search is
@@ -24,10 +29,17 @@
   [g]
   (map-vertices op g))
 
+(def og core-test/op-graph)
+
 (defn indices
   "Takes a collection of Ops and extracts their indexes."
   [ops]
   (mapv :index ops))
+
+(defn prng
+  "Prints a graph, just indices."
+  [g]
+  (println (map-vertices :index g)))
 
 (deftest tarjan-test
   (let [tarjan (comp set tarjan)]
@@ -208,24 +220,72 @@
     (is (= #{o6} (->clj (.out g o5))))))
 
 (deftest sequential-composition-test
-  (let [[x1 y1 y2 z1 z2 z3 q r s] (map (fn [i] (h/op {:index i})) (range 8))
-        a (-> (bg/digraph)
-              (bg/link x1 y1)
-              (bg/link x1 y2)
-              (bg/link r  s))
-        b (-> (bg/digraph)
-              (bg/link y1 z1)
-              (bg/link y1 z2)
-              (bg/link y2 z3)
-              (bg/link r  q)
-              (bg/link q  r))]
-    (is (= (-> (bg/digraph)
-               (bg/link x1 y1)
-               (bg/link x1 y2)
-               (bg/link y1 z1)
-               (bg/link y1 z2)
-               (bg/link y2 z3))
+  (let [[x1 y1 y2 z1 z2 z3 q r s] ops
+        a (og x1 ww y1
+              x1 ww y2
+              r  ww s)
+        b (og y1 ww z1
+              y1 ww z2
+              y2 ww z3
+              r  ww q
+              q  ww r)]
+    (is (= (og x1 none z1
+               x1 none z2
+               x1 none z3)
            (sequential-composition a b)))))
+
+(deftest sequential-composition-omit-intermediates-test
+  ; A neat little G2 graph that found a bug, I think
+  (let [[t1 t2 t3 t4] ops
+        g (og t1 ww t3
+              t1 wr t4
+              t2 rw t1
+              t3 rw t2
+              t3 rw t4
+              t4 rw t3)
+        g-ww+wr (project-rels (union ww wr) g)
+        g-rw    (project-rels rw g)]
+    (is (= (og t1 ww t3
+               t1 wr t4)
+           g-ww+wr))
+    (is (= (og t2 rw t1
+               t3 rw t2
+               t3 rw t4
+               t4 rw t3)
+           g-rw))
+    ; The sequential composition `ww+wr ; rw`, if we followed the mathematical
+    ; definition, would be:
+    ;
+    ; t1 -> t2 (via t3)
+    ; t1 -> t3 (via t4)
+    ; t1 -> t4 (via t3)
+    ;
+    ; Which would make the sequential extension ww+wr U (ww+wr ; rw):
+    ;
+    ; t1 -> t2
+    ; t1 -> t3
+    ; t1 -> t4
+    ;
+    ; Note that both these graphs are acyclic. We thought we'd be clever and
+    ; retain the intermediate vertices in the sequential composition. But this
+    ; causes us to include extra edges in the graph. In particular, this pair
+    ; of double-hops:
+    ;
+    ; t1 ww t3 rw t4   should collapse to t1 -> t4
+    ; t1 wr t4 rw t3   should collapse to t1 -> t3
+    ;
+    ; ... if we retain the original edges, we include an rw cycle between t3
+    ; and t4! This is *not* acyclic!
+    ;
+    ; This is why we must omit intermediate edges.
+    (is (= (og t1 none t2  ; Via t3
+               t1 none t3  ; Via t4
+               t1 none t4) ; Via t3
+           (sequential-composition g-ww+wr g-rw)))
+    (is (= (og t1 none t2  ; Via t3
+               t1 ww   t3  ; Via t4
+               t1 wr   t4) ; Via t3
+           (sequential-extension g-ww+wr g-rw)))))
 
 (deftest topo-depths-test
   (is (= {:a1 0 :a2 0
