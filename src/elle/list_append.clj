@@ -874,39 +874,40 @@
   file in elle/incompatible-orders/ showing all the reads of that key, and
   where they were incompatible with the longest value."
   [directory history sorted-values incompatible-orders]
-  (let [; What keys are we interested in?
-        ks (->> incompatible-orders
-                (map :key)
-                set)
-        ; Find ops that might be relevant, and group them by key.
-        ops (reduce (fn [by-k {:keys [type value] :as op}]
-                      (if (= type :ok)
-                        ; Find what keys we intersected with
-                        (->> value
-                             (filter (comp #{:r} first))
-                             (map second)
-                             set
-                             (set/intersection ks)
-                             ; And add this op to the list of ops for each
-                             ; relevant key
-                             (reduce (fn add-to-ks [by-k k]
-                                       (let [ops (get by-k k [])]
-                                         (assoc by-k k (conj ops op))))
-                                     by-k))
-                        ; Not an OK op
-                        by-k))
-                    {}
-                    history)]
-    (doseq [k ks]
-      (let [; What's our longest version of k?
-            longest (->> (get sorted-values k)
-                         last)
-            ; Where are we writing?
-            path (io/file directory "incompatible-order" (str (pr-str k)
-                                                              ".html"))
-            _ (io/make-parents path)]
-        (spit path
-              (hiccup/html (incompatible-order-viz k longest (get ops k))))))))
+  (when directory
+    (let [; What keys are we interested in?
+          ks (->> incompatible-orders
+                  (map :key)
+                  set)
+          ; Find ops that might be relevant, and group them by key.
+          ops (reduce (fn [by-k {:keys [type value] :as op}]
+                        (if (= type :ok)
+                          ; Find what keys we intersected with
+                          (->> value
+                               (filter (comp #{:r} first))
+                               (map second)
+                               set
+                               (set/intersection ks)
+                               ; And add this op to the list of ops for each
+                               ; relevant key
+                               (reduce (fn add-to-ks [by-k k]
+                                         (let [ops (get by-k k [])]
+                                           (assoc by-k k (conj ops op))))
+                                       by-k))
+                          ; Not an OK op
+                          by-k))
+                      {}
+                      history)]
+      (doseq [k ks]
+        (let [; What's our longest version of k?
+              longest (->> (get sorted-values k)
+                           last)
+              ; Where are we writing?
+              path (io/file directory "incompatible-order" (str (pr-str k)
+                                                                ".html"))
+              _ (io/make-parents path)]
+          (spit path
+                (hiccup/html (incompatible-order-viz k longest (get ops k)))))))))
 
 (defn check
   "Full checker for append and read histories. Options are:
