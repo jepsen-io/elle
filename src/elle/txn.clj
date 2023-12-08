@@ -352,12 +352,12 @@
                       :friendly-model (cm/friendly-model-name model))))))
 
 (defn cycle-exists-subgraph
-  "Takes a transaction graph and a subgraph spec ala cycle-exists-specs.
-  Computes the given subgraph from it."
-  [g spec]
+  "Takes a filtered-graphs fn for a transaction graph, and a subgraph spec ala
+  cycle-exists-specs. Computes the given subgraph from it."
+  [fg spec]
   (if (rels/bit-rels? spec)
     ; Ah, good, we have specific rels to project to
-    (g/project-rels spec g)
+    (fg spec)
     ; AST interpreter
     (let [[f & args] spec]
       (case f
@@ -367,11 +367,10 @@
         ; get their union in constant time.
         (let [split (group-by rels/bit-rels? args)
               kws   (when-let [kws (get split true)]
-                      (g/project-rels
-                        (reduce rels/union rels/none kws) g))
+                      (fg (reduce rels/union rels/none kws)))
               other (when-let [other (get split false)]
                       (->> other
-                           (mapv (partial cycle-exists-subgraph g))
+                           (mapv (partial cycle-exists-subgraph fg))
                            (apply g/digraph-union)))]
           (cond (nil? other) kws
                 (nil? kws)   other
@@ -379,13 +378,13 @@
 
         :extension
         (do (assert (= 2 (count args)))
-            (g/sequential-extension (cycle-exists-subgraph g (first args))
-                                    (cycle-exists-subgraph g (second args))))
+            (g/sequential-extension (cycle-exists-subgraph fg (first args))
+                                    (cycle-exists-subgraph fg (second args))))
 
         :composition
         (do (assert (= 2 (count args)))
-            (g/sequential-composition (cycle-exists-subgraph g (first args))
-                                      (cycle-exists-subgraph g (second args))))))))
+            (g/sequential-composition (cycle-exists-subgraph fg (first args))
+                                      (cycle-exists-subgraph fg (second args))))))))
 
 (defn cycle-exists-friendly-subgraph
   "Takes a subgraph spec and converts it to one with keywords instead of
@@ -413,8 +412,8 @@
 
 (defn cycle-exists-cases
   "Finding cycles can be expensive, but we can actually distinguish between
-  several levels simply by proving an SCC exists. This function takes a graph.
-  It returns a vector of anomaly maps like:
+  several levels simply by proving an SCC exists. This function takes a
+  filtered-graphs fn for an op graph. It returns a vector of anomaly maps like:
 
     {:type     :PL-2-cycle-exists ; A cycle violating PL-2 exists... somewhere
      :not      :read-committed  ; The isolation level which must not hold
@@ -422,13 +421,13 @@
      :scc-size 4                ; The size of the smallest SCC found
      :scc      #{1, 5, 7, 8}}   ; The set of indices of the transactions in
                                 ; that SCC"
-  [g]
+  [fg]
   (loopr [errs       []
           redundant? #{}]
          [{:keys [model friendly-model subgraph type]} cycle-exists-specs]
          (if (redundant? model)
            (recur errs redundant?)
-           (let [sg   (cycle-exists-subgraph g subgraph)
+           (let [sg   (cycle-exists-subgraph fg subgraph)
                  ; We have to find singleton SCCs: a ww b rw a yields a -> a.
                  sccs (->> (bg/strongly-connected-components sg true)
                            (filter (partial nontrivial-scc? sg))
@@ -842,7 +841,7 @@
   [opts g fg pair-explainer]
   ; (info "Checking scc of size" (b/size g))
   (let [; First, check for cycle existence. We'll use this to guide our search.
-        cycle-exists-cases (cycle-exists-cases g)
+        cycle-exists-cases (cycle-exists-cases fg)
         ;_ (info "cycle-exists-cases")
         ;_ (pprint (map :type cycle-exists-cases))
         ;_ (info "We're going to skip"

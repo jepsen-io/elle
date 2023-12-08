@@ -29,6 +29,11 @@
     ; and their frequency (for the first 3 anyway) should be in ascending order.
     (is (< (key-dist 0) (key-dist 1) (key-dist 2)))))
 
+(defn fg
+  "Wraps a graph in a filtered-graphs fn."
+  [g]
+  #(g/project-rels % g))
+
 (deftest cycle-exists-subgraph-test
   ; A simple G-single; stresses the AST interpreter for subgraphs, union,
   ; composition, extension.
@@ -38,24 +43,25 @@
               (g/link op1 op2 ww)
               (g/link op2 op0 rw)
               ; Double-rw link to op3
-              (g/link op0 op3 rw))]
+              (g/link op0 op3 rw))
+        fg (fg g)]
     (testing "simple keyword"
       (is (= (-> (g/op-digraph)
                  (g/link op1 op2 ww))
-             (cycle-exists-subgraph g ww))))
+             (cycle-exists-subgraph fg ww))))
     (testing "union"
       (is (= (-> (g/op-digraph)
                  (g/link op0 op1 wr)
                  (g/link op1 op2 ww))
-             (cycle-exists-subgraph g [:union ww wr]))))
+             (cycle-exists-subgraph fg [:union ww wr]))))
     (testing "composition"
       (is (= (og op1 none op0) ; Through ww-rw
-             (cycle-exists-subgraph g [:composition ww rw]))))
+             (cycle-exists-subgraph fg [:composition ww rw]))))
     (testing "extension"
       (is (= (og op0 wr op1    ; Original wr edge
                  op1 ww op2    ; Original ww edge
                  op1 none op0) ; Through ww-rw
-             (cycle-exists-subgraph g [:extension [:union ww wr] rw]))))))
+             (cycle-exists-subgraph fg [:extension [:union ww wr] rw]))))))
 
 (deftest cycle-exists-cases-G-single-test
   ; A simple G-single; stresses the AST interpreter for subgraphs and also the
@@ -63,7 +69,7 @@
   (let [[op0 op1] ops
         g (og op0 ww op1
               op1 rw op0)
-        cases (cycle-exists-cases g)]
+        cases (cycle-exists-cases (fg g))]
     (is (= [{:type      :PL-SI-cycle-exists
              :not       :snapshot-isolation
              :subgraph  [:extension [:union :ww :wwp :wr :wrp]
