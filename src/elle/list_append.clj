@@ -897,17 +897,23 @@
                           ; Not an OK op
                           by-k))
                       {}
-                      history)]
-      (doseq [k ks]
-        (let [; What's our longest version of k?
-              longest (->> (get sorted-values k)
-                           last)
-              ; Where are we writing?
-              path (io/file directory "incompatible-order" (str (pr-str k)
-                                                                ".html"))
-              _ (io/make-parents path)]
-          (spit path
-                (hiccup/html (incompatible-order-viz k longest (get ops k)))))))))
+                      history)
+          tasks (mapv (fn [k]
+                        (h/task history incompatible-order []
+                                (let [; What's our longest version of k?
+                                      longest (->> (get sorted-values k) last)
+                                      ; Where are we writing?
+                                      path (io/file directory
+                                                    "incompatible-order"
+                                                    (str (pr-str k)
+                                                         ".html"))]
+                                      (io/make-parents path)
+                                      (spit path
+                                            (hiccup/html
+                                              (incompatible-order-viz
+                                                k longest (get ops k)))))))
+                      ks)]
+      (mapv deref tasks))))
 
 (defn check
   "Full checker for append and read histories. Options are:
