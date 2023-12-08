@@ -144,6 +144,15 @@
             (nil? b) a
             true     (.union ^BitRels a ^BitRels b)))))
 
+(defn ^DirectedGraph digraph-union
+  "Takes the union of n graphs, merging BitRels edges with BitRels union."
+  ([] (DirectedGraph.))
+  ([a] a)
+  ([^DirectedGraph a ^DirectedGraph b]
+   (.merge a b union-rels))
+  ([a b & more]
+   (reduce digraph-union a (cons b more))))
+
 (defn link
   "Helper for linking Bifurcan graphs of ops. Optionally takes a BitRels
   relationship, which is unioned into BitRels of the edge."
@@ -215,6 +224,36 @@
   (if (seq xs)
     (recur (unlink g (first xs) y) (next xs) y)
     g))
+
+(defn parallel-project-rels-chunk
+  "Helper for parallel-project-rels; handles one chunk of vertices."
+  [^BitRels target-rels ^DirectedGraph g vertices]
+  (loopr [^DirectedGraph g' (b/linear (op-digraph))]
+         [v  vertices   :via :iterator
+          v' (.out g v) :via :iterator]
+         (recur
+           (let [rel (.intersection target-rels ^BitRels (.edge g v v'))]
+             (if (.isEmpty rel)
+               g'
+               (link g' v v' rel))))))
+
+(defn parallel-project-rels
+  "Takes a history (for its task executor) and a target BitRels set and op
+  digraph like project-rels. Returns a directed graph with just those
+  relationships in the given BitRels, but executes in parallel. This buys us a
+  small but noticeable (~10%) speedup when we hit a huge SCC. Burns a ton of
+  time in merge though."
+  [history ^BitRels target-rels ^DirectedGraph g]
+  (let [vs      (bg/vertices g)
+        chunks  (b/split vs (.availableProcessors (Runtime/getRuntime)))]
+    (->> chunks
+         (mapv (fn proj-chunk [vertices]
+                 (h/task history project-rels-chunk []
+                         (parallel-project-rels-chunk target-rels g vertices))))
+         (reduce (fn [g task]
+                   (digraph-union g @task))
+                 (b/linear (op-digraph)))
+         b/forked)))
 
 (defn project-rels
   "Takes a BitRels and a directed graph where edges are BitRels. Returns a
@@ -330,15 +369,6 @@
           succ          succs]
          (recur (bg/link g node succ))
          (b/forked g)))
-
-(defn ^DirectedGraph digraph-union
-  "Takes the union of n graphs, merging BitRels edges with BitRels union."
-  ([] (DirectedGraph.))
-  ([a] a)
-  ([^DirectedGraph a ^DirectedGraph b]
-   (.merge a b union-rels))
-  ([a b & more]
-   (reduce digraph-union a (cons b more))))
 
 (defn strongly-connected-components
   "Finds the strongly connected components of a graph, greater than 1 element."

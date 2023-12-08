@@ -16,6 +16,7 @@
                   [util :refer [map-vals]]]
             [jepsen [history :as h]
                     [txn :as txn]]
+            [jepsen.history [sim :as sim]]
             [slingshot.slingshot :refer [try+ throw+]])
   (:import (java.util ArrayList
                       HashMap)))
@@ -1285,7 +1286,94 @@
                              }}
            res))))
 
+;; Generative tests
 
+(deftest sim-prefix-test
+  ; A short prefix-consistent history has all kinds of errors
+  (let [h  (:history (sim/run {:db    :prefix
+                               :limit 32}))
+        r (c {:consistency-models [:serializable]} h)]
+
+    (is (= [:G0 :incompatible-order] (:anomaly-types r)))
+    ; Lost updates yields incompatible orders
+    (is (= [{:key 8, :values [[1 2 3 4 8] [1 2 3 4 5]]}
+            {:key 9, :values [[3] [1]]}]
+           (:incompatible-order (:anomalies r))))
+    ; 35 [[:append 8 6] [:r 8 [1 2 3 4 6]] [:r 9 [3 4 5 6 7 10]] [:append 8 7]]
+    ; 57 [[:append 8 12] [:append 9 22] [:append 8 13]]
+    ; 62 [[:append 9 26] [:r 9 [3 4 5 6 7 10 13 14 17 18 22 26]] [:r 9 [3 4 5 6 7 10 13 14 17 18 22 26]]]
+    ; 23 [[:append 8 4] [:r 8 [1 2 3 4]] [:append 9 9]]
+    (is (= {:type :G0
+            :cycle (mapv h [35 57 62 23 35])
+            :steps [{:type :ww
+                     :key 8
+                     :value 7
+                     :value' 12     ; 12 never appears in key 8, must follow 7
+                     :a-mop-index 3
+                     :b-mop-index 0}
+                    {:type :ww
+                     :key 9
+                     :value 22
+                     :value' 26     ; ... 22 26
+                     :a-mop-index 1
+                     :b-mop-index 0}
+                    {:type :ww,
+                     :key 9,
+                     :value 26,
+                     :value' 9,    ; 9 missing from longest read
+                     :a-mop-index 0,
+                     :b-mop-index 2}
+                    {:type :ww,
+                     :key 8,
+                     :value 4,
+                     :value' 6,    ; [1 2 3 4 6]
+                     :a-mop-index 0,
+                     :b-mop-index 0}]}
+           (first (:G0 (:anomalies r)))))
+    ;(mapv prn h)
+    ;(pprint r)
+    ))
+
+(deftest sim-si-test
+  ; A snapshot isolation history will exhibit g2-item
+  (let [h (:history (sim/run {:db          :si
+                              :limit       20
+                              :concurrency 10}))
+        r (c {:consistency-models [:serializable]} h)]
+    ;(mapv (comp prn h) [18 10 22])
+    (is (= {:valid? false,
+            :anomaly-types [:G2-item],
+            :anomalies
+            {:G2-item
+             [{:cycle (mapv h [18 10 22 18])
+               :steps
+               [; doesn't see 10's append of 5 to 9
+                {:type :rw,
+                 :key 9,
+                 :value :elle.list-append/init,
+                 :value' 5,
+                 :a-mop-index 1,
+                 :b-mop-index 0}
+                ; writes of 9 are visible to 22
+                {:type :wr, :key 9, :value 6, :a-mop-index 1, :b-mop-index 0}
+                ; failed to observe 18's append to 6
+                {:type :rw,
+                 :key 6,
+                 :value :elle.list-append/init,
+                 :value' 1,
+                 :a-mop-index 1,
+                 :b-mop-index 0}],
+               :type :G2-item}]},
+            :not #{:repeatable-read}}
+           r))))
+
+(deftest sim-ssi-test
+  ; A serializable snapshot isolation history won't have any errors
+  (let [h (:history (sim/run {:db          :ssi
+                              :limit       1000
+                              :concurrency 5}))
+        r (c {:consistency-models [:strict-serializable]} h)]
+    (is (= {:valid? true} r))))
 
 ;; Perf testing
 
@@ -1310,6 +1398,49 @@
                      test-name n run-time (/ n run-time)
                      check-time (/ n check-time)))
     analysis))
+
+(deftest ^:perf sim-prefix-perf-test
+  ; Performance test on a long prefix consistent history
+  (let [n   (long 3e5)
+        t0  (System/nanoTime)
+        h   (:history (sim/run {:db :prefix, :limit n, :concurrency 10}))
+        res (perf-check "sim-prefix-perf-test" t0 h)
+        as  (:anomalies res)]
+      (is (= (* 2 n) (count h)))
+      (is (= false (:valid? res)))
+      (is (= #{:read-uncommitted} (:not res)))
+      (is (= {:incompatible-order 11164
+              :lost-update 5226
+              :PL-1-cycle-exists 1
+              :G-single-item-realtime 1
+              :cycle-search-timeout 1}
+            (into {} (map (juxt key (comp count val)) (:anomalies res)))))
+      ))
+
+(deftest ^:perf sim-si-perf-test
+  ; Performance test on a long snapshot isolated history
+  (let [n   (long 1e6)
+        t0  (System/nanoTime)
+        h   (:history (sim/run {:db :si, :limit n, :concurrency 10}))
+        res (perf-check "sim-si-perf-test" t0 h)
+        as  (:anomalies res)]
+      (is (= (* 2 n) (count h)))
+      (is (= false (:valid? res)))
+      (is (= #{:repeatable-read} (:not res)))
+      (is (= [:G2-item :G2-item-realtime] (:anomaly-types res)))
+      (is (= 16336 (count (:G2-item as))))
+      (is (= 3986 (count (:G2-item-realtime as))))
+      ))
+
+(deftest ^:perf sim-ssi-perf-test
+  ; Performance test on a long serializable snapshot isolated history
+  (let [n   (long 1e6)
+        t0  (System/nanoTime)
+        h   (:history (sim/run {:db :ssi, :limit n, :concurrency 10}))
+        res (perf-check "sim-ssi-perf-test" t0 h)
+        as  (:anomalies res)]
+      (is (= (* 2 n) (count h)))
+      (is (= {:valid? true} res))))
 
 (deftest ^:perf perfect-perf-test
   ; An end-to-end performance test based on a perfect strict-1SR system

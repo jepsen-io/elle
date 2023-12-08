@@ -698,10 +698,13 @@
         (into (:additional-graphs opts)))))
 
 (defn filtered-graphs
-  "Takes a graph g. Returns a function that takes a set of relationships, and
-  yields g filtered to just those relationships. Memoized."
-  [graph]
-  (memoize (fn [rels] (g/project-rels rels graph))))
+  "Takes a history and graph g. Returns a function that takes a set of
+  relationships, and yields g filtered to just those relationships. Memoized."
+  [history graph]
+  (memoize (fn filter-graph [rels]
+             (if (< 16384 (b/size graph))
+               (g/parallel-project-rels history rels graph)
+               (g/project-rels rels graph)))))
 
 (defn warm-filtered-graphs!
   "I thought memoizing this and making it lazy was a good idea, and it might be
@@ -912,9 +915,13 @@
   There's no point in exploring beyond the bounds of a single SCC; there can't
   possibly be a cycle out there. This means we can avoid materializing filtered
   graphs and searching the entire graph."
-  [opts pair-explainer graph]
+  [history opts pair-explainer graph]
   ; (info "Checking SCC of" (b/size graph) "ops")
-  (let [fg (-> (filtered-graphs graph) warm-filtered-graphs!)]
+  (let [fg (-> (filtered-graphs history graph)
+               ; Warming filtered graphs may actually be more trouble than it's
+               ; worth now: graphs are smaller and we only filter some, not all
+               ; relationships, depending on how our exploration goes.
+               #_ warm-filtered-graphs!)]
     (->> (cycle-cases-in-scc opts graph fg pair-explainer)
          (group-by :type))))
 
@@ -937,15 +944,17 @@
 
         ; Spawn a task to check each SCC
         scc-tasks (mapv (fn per-scc [scc]
-                          (let [g (bg/select graph (bs/from scc))]
-                            (h/task history cycle-cases-in-graph []
-                                    (cycle-cases-in-graph opts explainer g))))
+                          (h/task history cycle-cases-in-graph []
+                                  (let [g (bg/select graph (bs/from scc))]
+                                    (cycle-cases-in-graph
+                                      history opts explainer g))))
                         sccs)
 
         ; And merge together
         anomalies (reduce (partial merge-with into)
                           anomalies
                           (map deref scc-tasks))]
+
     ;(pprint anomalies)
     ; Merge our cases into the existing anomalies map.
     {:graph     graph

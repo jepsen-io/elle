@@ -21,6 +21,7 @@
   :javac-options ["-target" "1.8" "-source" "1.8"
                   ]
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.14"]
+                                  [io.jepsen/history.sim "0.1.0-SNAPSHOT"]
                                   [org.clojure/test.check "1.1.1"]
                                   [spootnik/unilog "0.7.31"]]}}
   :jvm-opts ["-server"
