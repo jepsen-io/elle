@@ -960,17 +960,18 @@
   (let [analysis (cycles opts analyzer history)
         anomalies (select-keys (:anomalies analysis)
                                (reportable-anomaly-types opts))]
-    ; First, text files.
-    (doseq [[type cycles] anomalies]
-      (when (cycle-types type)
-        (elle/write-cycles! (assoc opts
-                                   :pair-explainer  (:explainer analysis)
-                                   :cycle-explainer cycle-explainer
-                                   :filename        (str (name type) ".txt"))
-                            cycles)))
-
-    ; Then (in case they break), GraphViz plots.
+    ; Shall we render output?
     (when-let [d (:directory opts)]
+      ; First, text files.
+      (doseq [[type cycles] anomalies]
+        (when (cycle-types type)
+          (elle/write-cycles! (assoc opts
+                                     :pair-explainer  (:explainer analysis)
+                                     :cycle-explainer cycle-explainer
+                                     :filename        (str (name type) ".txt"))
+                              cycles)))
+
+      ; Then (in case they break), GraphViz plots.
       ; We do a directory for SCCs...
       (viz/plot-analysis! analysis (io/file d "sccs") opts)
 
@@ -985,7 +986,7 @@
                     (viz/plot-analysis! (assoc analysis :sccs sccs)
                                         (io/file d (name type))
                                         opts))))
-        anomalies)))
+              anomalies)))
 
     ; And return analysis
     analysis))
