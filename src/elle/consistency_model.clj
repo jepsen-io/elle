@@ -256,8 +256,7 @@
        {
         ; Might merge this into normal causal later? I'm not sure
         ; how to unify them exactly.
-        :causal-cerone          [:ROLA                        ; ROLA
-                                 :read-atomic]                ; Cerone
+        :causal-cerone          [:read-atomic]                ; Cerone
         :consistent-view        [:cursor-stability            ; Adya
                                  :monotonic-view]             ; Adya
         :conflict-serializable  [:view-serializable]
@@ -274,7 +273,8 @@
         :monotonic-atomic-view  [:read-committed]             ; Bailis
         :monotonic-view         [:PL-2]                       ; Adya
         :monotonic-snapshot-read [:PL-2]                      ; Adya
-        :parallel-snapshot-isolation [:causal-cerone]         ; Cerone, ROLA
+        :parallel-snapshot-isolation [:causal-cerone          ; Cerone
+                                      :ROLA]                  ; ROLA
         :prefix                 [:causal-cerone]              ; Cerone
         :read-atomic            [; EXT guarantees atomic visibility, and
                                  ; monotonicity within the txn is trivially
