@@ -176,7 +176,7 @@
                :monotonic-atomic-view
                :snapshot-isolation
                :repeatable-read
-               :ROLA
+               :update-atomic
                :serializable
                :strong-serializable
                :update-serializable
@@ -202,7 +202,7 @@
                :parallel-snapshot-isolation
                :prefix
                :read-atomic
-               :ROLA
+               :update-atomic
                :serializable
                :snapshot-isolation
                :strong-serializable
@@ -240,7 +240,7 @@
                         :prefix
                         :read-atomic
                         :repeatable-read
-                        :ROLA
+                        :update-atomic
                         :serializable
                         :strong-read-committed
                         :strong-read-uncommitted
@@ -259,7 +259,7 @@
             :also-not #{:causal-cerone
                         :parallel-snapshot-isolation
                         :prefix
-                        :ROLA
+                        :update-atomic
                         :serializable
                         :snapshot-isolation
                         :strong-serializable
@@ -271,7 +271,7 @@
   (testing "G1a"
     (is (= {:not      #{:read-committed}
             :also-not #{:read-atomic
-                        :ROLA :causal-cerone :consistent-view :cursor-stability
+                        :update-atomic :causal-cerone :consistent-view :cursor-stability
                         :forward-consistent-view :monotonic-atomic-view
                         :monotonic-snapshot-read :monotonic-view
                         :parallel-snapshot-isolation :prefix :repeatable-read
@@ -299,7 +299,7 @@
 
   (testing "internal and G2"
     (is (= {:not #{:read-atomic}
-            :also-not #{:ROLA :causal-cerone
+            :also-not #{:update-atomic :causal-cerone
                         :parallel-snapshot-isolation
                         :prefix
                         :serializable
@@ -311,7 +311,7 @@
            (friendly-boundary [:G2 :internal]))))
 
   (testing "lost update"
-    (is (= #{:ROLA :cursor-stability}
+    (is (= #{:update-atomic :cursor-stability}
            (:not (friendly-boundary [:lost-update])))))
 
   (testing "G-single-realtime"
