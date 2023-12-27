@@ -646,7 +646,7 @@
           [t2 t2'] (pair (op 1 :ok "rx0wx2"))
           [t1 t1' t2 t2' :as h] (h/history [t1 t1' t2 t2'])]
       (is (= {:valid? false
-              :not    #{:ROLA :cursor-stability}
+              :not    #{:update-atomic :cursor-stability}
               :anomaly-types [:lost-update]
               :anomalies {:lost-update
                           [{:key :x

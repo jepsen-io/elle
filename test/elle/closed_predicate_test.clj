@@ -258,7 +258,7 @@
              :strong-session-serializable
              :strong-session-snapshot-isolation
              :update-serializable
-             :ROLA
+             :update-atomic
              :causal-cerone
              :parallel-snapshot-isolation
              :prefix

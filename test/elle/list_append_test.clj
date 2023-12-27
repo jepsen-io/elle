@@ -1025,7 +1025,7 @@
         [t2 t2'] (pair (op "rx0ax2"))
         [t0 t0' t1 t1' t2 t2' :as h] (h/history [t0 t0' t1 t1' t2 t2'])]
     (is (= {:valid?         false
-            :not            #{:ROLA :cursor-stability}
+            :not            #{:update-atomic :cursor-stability}
             :anomaly-types  [:G2-item :lost-update]
             :anomalies      {:lost-update
                              [{:key   :x
