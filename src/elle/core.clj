@@ -27,6 +27,7 @@
   the graph has any strongly connected components--e.g. cycles."
   (:require [bifurcan-clj [core :as b]
                           [graph :as bg]
+                          [map :as bm]
                           [set :as bs]]
             [clojure.tools.logging :refer [info error warn]]
             [clojure.core.reducers :as r]
@@ -38,13 +39,15 @@
                   [rels :as rels :refer [ww wr rw process realtime]]
                   [util :as util]]
             [clojure.java.io :as io]
-            [jepsen [history :as h]
-                     [txn :as txn]]
-            [jepsen.history.task :as task]
+            [jepsen [history :as h]]
+            [jepsen.history [fold :refer [loopf]]
+                            [task :as task]]
             [jepsen.txn.micro-op :as mop]
             [slingshot.slingshot :refer [try+ throw+]])
-  (:import (io.lacuna.bifurcan ISet
-                               Set)))
+  (:import (io.lacuna.bifurcan IEntry
+                               ISet
+                               Set)
+           (jepsen.history Op)))
 
 ; This is going to look a bit odd. Please bear with me.
 ;
@@ -269,17 +272,6 @@
 
 ;; Processes
 
-(defn process-order
-  "Given a history and a process ID, constructs a partial order graph based on
-  all operations that process performed."
-  [history process]
-  (->> history
-       (h/filter (comp #{process} :process))
-       (partition 2 1)
-       (reduce (fn [g [op1 op2]] (g/link g op1 op2 rels/process))
-               (b/linear (g/op-digraph)))
-       b/forked))
-
 (defrecord ProcessExplainer []
   DataExplainer
   (explain-pair-data [_ a b]
@@ -296,14 +288,60 @@
   process, such that every operation a process performs is ordered (but
   operations across different processes are not related)."
   [history]
-  (let [oks (h/oks history) ; TODO: order infos?
-        graph (->> oks
-                   (h/map :process)
-                   distinct
-                   (map (partial process-order oks))
-                   (reduce g/digraph-union (g/op-digraph)))]
-    {:graph     graph
-     :explainer (ProcessExplainer.)}))
+  (let [fold
+        (loopf {:name :process-order}
+               ; Reducer
+               ([; Graph of ops related by process edges
+                 graph     (b/linear (g/op-digraph))
+                 ; Map of process -> first op they performed
+                 first-ops (b/linear bm/empty)
+                 ; Map of process -> last op they performed
+                 last-ops  (b/linear bm/empty)]
+                [^Op op]
+                (if (h/ok? op)
+                  (let [process   (.process op)
+                        last-op   (bm/get last-ops process)
+                        last-ops' (bm/put last-ops process op)]
+                    (if (nil? last-op)
+                      ; First time we've seen this process
+                      (recur graph (bm/put first-ops process op) last-ops')
+                      ; Link previous op to this one
+                      (recur (g/link graph last-op op rels/process)
+                             first-ops
+                             last-ops')))
+                  ; Invoke, info, or fail
+                  (recur graph first-ops last-ops))
+                ; All done; pass our structures to the combiner
+                {:graph     graph ; We just smash these together; it's fine
+                 :first-ops (b/forked first-ops)
+                 :last-ops  (b/forked last-ops)})
+
+               ; Combiner
+               ([graph    (b/linear (g/op-digraph))
+                 last-ops (b/linear bm/empty)]
+                [b]
+                ; Merge together graphs from each chunk
+                (loopr [graph    (g/digraph-union graph (:graph b))
+                        last-ops last-ops]
+                       [^IEntry pair (:first-ops b)]
+                       (let [process  (.key pair)
+                             first-op (.value pair)]
+                         ; Try to connect unresolved last-ops to first ops in
+                         ; this chunk
+                         (if-let [last-op (bm/get last-ops process)]
+                           ; We have a connection
+                           (recur (g/link graph last-op first-op rels/process)
+                                  (bm/remove last-ops process))
+                           ; No connection
+                           (recur graph last-ops)))
+                         ; When we're finished, any last-ops from the current
+                         ; chunk override those we already have.
+                         (recur graph
+                                (bm/merge last-ops (:last-ops b))))
+                ; All done
+                {:graph     (b/forked graph)
+                 :explainer (ProcessExplainer.)}))]
+    (h/fold history fold)))
 
 ; Realtime order
 

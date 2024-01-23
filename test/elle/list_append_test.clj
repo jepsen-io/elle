@@ -1386,13 +1386,14 @@
             "histories/small-slow-scc.edn")))
 
 (defn perf-check
-  "Takes a test name, the time it started generating the history, and the
-  history. Checks it for strict-1SR and prints out perf statistics. Returns
+  "Takes a test name, the time it started generating the history, options for
+  check, and the history. Checks it and prints out perf statistics. Returns
   analysis."
-  [test-name t0 h]
+  [test-name t0 opts h]
   (let [n  (/ (count h) 2)
         t1 (System/nanoTime)
-        analysis (check ;{:cycle-search-timeout 10000}
+        analysis (check opts
+                        ;{:cycle-search-timeout 10000}
                         h)
         t2 (System/nanoTime)
         run-time   (/ (- t1 t0) 1e9)
@@ -1407,14 +1408,16 @@
   (let [n   (long 3e5)
         t0  (System/nanoTime)
         h   (:history (sim/run {:db :prefix, :limit n, :concurrency 10}))
-        res (perf-check "sim-prefix-perf-test" t0 h)
+        res (perf-check "sim-prefix-perf-test" t0 {} h)
         as  (:anomalies res)]
       (is (= (* 2 n) (count h)))
       (is (= false (:valid? res)))
       (is (= #{:read-uncommitted} (:not res)))
       (is (= {:incompatible-order 11164
               :lost-update 5226
-              :PL-1-cycle-exists 1
+              ; :PL-1-cycle-exists 1 ; Slower machines might see this instead of finding the G0/G-single-item-realtime
+              :G0 1
+              :G-nonadjacent-item 1
               :G-single-item-realtime 1
               :cycle-search-timeout 1}
             (into {} (map (juxt key (comp count val)) (:anomalies res)))))
@@ -1425,7 +1428,7 @@
   (let [n   (long 1e6)
         t0  (System/nanoTime)
         h   (:history (sim/run {:db :si, :limit n, :concurrency 10}))
-        res (perf-check "sim-si-perf-test" t0 h)
+        res (perf-check "sim-si-perf-test" t0 {} h)
         as  (:anomalies res)]
       (is (= (* 2 n) (count h)))
       (is (= false (:valid? res)))
@@ -1435,12 +1438,33 @@
       (is (= 3986 (count (:G2-item-realtime as))))
       ))
 
+(deftest ^:perf sim-si-strong-session-serializable-perf-test
+  ; Performance test on a long snapshot isolated history, checking strong
+  ; session serializable. We want to stress the parallel fold for the process
+  ; graph.
+  (let [n   (long 1e6)
+        t0  (System/nanoTime)
+        h   (:history (sim/run {:db :si, :limit n, :concurrency 10}))
+        res (perf-check "sim-si-strong-session-serializable-perf-test" t0
+                        {:consistency-models [:strong-session-serializable]}
+                        h)
+        as  (:anomalies res)]
+      (is (= (* 2 n) (count h)))
+      (is (= false (:valid? res)))
+      (is (= #{:repeatable-read} (:not res)))
+      (is (= [:G2-item :G2-item-process] (:anomaly-types res)))
+      ; It's a little weird that this finds fewer G2-items than the full
+      ; strong-1SR test above. Not quite sure what to make of that.
+      (is (= 16352 (count (:G2-item as))))
+      (is (= 1685 (count (:G2-item-process as))))
+      ))
+
 (deftest ^:perf sim-ssi-perf-test
   ; Performance test on a long serializable snapshot isolated history
   (let [n   (long 1e6)
         t0  (System/nanoTime)
         h   (:history (sim/run {:db :ssi, :limit n, :concurrency 10}))
-        res (perf-check "sim-ssi-perf-test" t0 h)
+        res (perf-check "sim-ssi-perf-test" t0 {} h)
         as  (:anomalies res)]
       (is (= (* 2 n) (count h)))
       (is (= {:valid? true} res))))
@@ -1486,7 +1510,7 @@
                              :have-indices? true
                              :already-ops? true}))]
     (is (= (* 2 n) (count h)))
-    (is (= true (:valid? (perf-check "perfect-perf-test" t0 h))))))
+    (is (= true (:valid? (perf-check "perfect-perf-test" t0 {} h))))))
 
 (deftest ^:perf sloppy-perf-test
   ; An end-to-end performance test based on a sloppy database which takes
@@ -1548,7 +1572,7 @@
                             (recur))))))
          dorun)
     (let [h   (h/history @h)
-          res (perf-check "sloppy-perf-test" t0 h)
+          res (perf-check "sloppy-perf-test" t0 {} h)
           as  (:anomalies res)]
       (is (= (* 2 n) (count h)))
       (is (= false (:valid? res)))
