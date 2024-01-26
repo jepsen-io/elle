@@ -241,9 +241,18 @@ end of the history.
 
 ## Performance
 
+Elle has been extensively optimized and many of its components are parallelized.
+It can check real-world histories of 22 million transactions for (e.g.) strong
+session serializability in in roughly two minutes, consuming ~60 GB of heap.
+100-160,000 transactions/sec is readily attainable on modern hardware. Most of Elle's analyses scale linearly or as `n log(n)`.
+
 ![Graphs of Elle's performance vs Knossos](images/perf.svg)
 
-These plots show Elle's performance vs the [Knossos](https://github.com/jepsen-io/knossos) linearizability checker, verifying histories of various lengths (l) and concurrencies (c), recorded from a simulated serializable snapshot isolated in-memory database. Lower is better.
+These plots, from the original Elle paper before optimization, show Elle's
+performance vs the [Knossos](https://github.com/jepsen-io/knossos)
+linearizability checker, verifying histories of various lengths (l) and
+concurrencies (c), recorded from a simulated serializable snapshot isolated
+in-memory database. Lower is better.
 
 In general, Elle checks real-world histories in a matter of seconds to minutes,
 rather than seconds to millennia. Where Knossos is often limited to a few
@@ -254,11 +263,6 @@ Knossos runtimes diverge exponentially with concurrency; Elle is effectively
 constant. There's a slight drop in runtime as concurrency increases, as more
 transactions abort due to conflicts. Knossos is also mildly superlinear in
 history length; Elle is effectively linear.
-
-I haven't really optimized Elle yet---I'm sure it can be made faster with time.
-There are some spots (especially in inferring version orders from transaction
-graphs during register tests) which might be painful; I'll sand off rough edges
-as I go.
 
 ## License
 
