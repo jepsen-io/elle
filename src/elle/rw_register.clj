@@ -47,7 +47,8 @@
                   [txn :as ct]
                   [graph :as g]
                   [rels :refer [ww wr rw]]
-                  [util :as util :refer [map-vals
+                  [util :as util :refer [empty->nil
+                                         map-vals
                                          index-of
                                          op-memoize]]]
             [jepsen [history :as h]
@@ -551,11 +552,18 @@
   "Given a map of version graphs, returns a sequence (or nil) of cycles in that
   graph."
   [version-graphs]
-  (seq
+  (empty->nil
     (reduce (fn [cases [k version-graph]]
-              (let [sccs (g/strongly-connected-components version-graph)]
+              (let [sccs (g/strongly-connected-components version-graph)
+                    ; It's nice, for test stability, to sort these somehow, but
+                    ; if we get something polymorphic don't worry too much
+                    ; about it.
+                    sccs (try (sort-by (partial reduce min) sccs)
+                              (catch java.lang.NullPointerException e
+                                (sort-by count sccs))
+                              (catch java.lang.ClassCastException e
+                                (sort-by count sccs)))]
                 (->> sccs
-                     (sort-by (partial reduce min))
                      (map (fn [scc]
                             {:key k
                              :scc scc}))

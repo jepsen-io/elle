@@ -3,6 +3,7 @@
   (:require [clojure.pprint :refer [pprint]]
             [dom-top.core :refer [loopr real-pmap]]
 						[elle [core :as elle]
+                  [core-test :refer [read-history]]
                   [graph :as g]
                   [rw-register :refer :all]
                   [util :refer [map-vals]]]
@@ -654,6 +655,44 @@
                             :txns [t1' t2']}]}}
              (c {} h)))))
 
+  (deftest scc-sort-bug-test
+    ; Here, linearizable keys tell us the version order went 1, nil, but that
+    ; contradicts the initial version order.
+    (let [[t1 t1'] (pair (op 0 :ok "rx1"))
+          [t2 t2'] (pair (op 0 :ok "rx_"))
+          ; Now the version order goes 4, 3 by wfr, but 3,4 by time
+          [t3 t3'] (pair (op 0 :ok "rx4wx3"))
+          [t4 t4'] (pair (op 0 :ok "wx4"))
+          [t1 t1' t2 t2' t3 t3' t4 t4' :as h]
+          (h/history [t1 t1' t2 t2' t3 t3' t4 t4'])]
+      (is (= {:valid? false
+              :anomaly-types [:G1c-realtime :cyclic-versions]
+              :not #{:read-uncommitted}
+              :anomalies
+              {:G1c-realtime
+               [{:type :G1c-realtime
+                 :cycle [t3' t4' t3']
+                 :steps [{:type :realtime
+                          :a' t3'
+                          :b t4}
+                         {:type :wr
+                          :key :x
+                          :value 4
+                          :a-mop-index 0
+                          :b-mop-index 0}]}]
+               :cyclic-versions
+               [{:key :x
+                 :scc #{nil 1}
+                 :sources [:initial-state :wfr-keys :linearizable-keys]}
+                {:key :x
+                 :scc #{3 4}
+                 :sources [:initial-state :wfr-keys :linearizable-keys]}]}}
+             (c {:consistency-models  [:strong-serializable]
+                 :wfr-keys?           true
+                 :linearizable-keys?  true}
+                h)))
+              #_(read-history "histories/wr-scc-sort-bug.edn")
+              ))
 	)
 
 ; This is here for pasting in experimental histories when we hit checker bugs.
