@@ -20,7 +20,7 @@
   ;             "compile"]
   :javac-options ["-target" "1.8" "-source" "1.8"
                   ]
-  :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.14"]
+  :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.15"]
                                   [io.jepsen/history.sim "0.1.1"]
                                   [org.clojure/test.check "1.1.1"]
                                   [spootnik/unilog "0.7.32"]]}}
