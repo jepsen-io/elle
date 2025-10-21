@@ -17,6 +17,7 @@
                   [util :as util]
                   [viz :as viz]]
             [jepsen [history :as h]
+                    [random :as rand]
                     [txn :as txn :refer [reduce-mops]]]
             [jepsen.history.fold :refer [loopf]]
             [tesser.core :as t]
@@ -1043,8 +1044,8 @@
   vector of active keys. Returns a random active key."
   [key-dist key-dist-base key-dist-scale active-keys]
   (case key-dist
-    :uniform     (rand-nth active-keys)
-    :exponential (let [ki (-> (rand key-dist-scale)
+    :uniform     (rand/nth active-keys)
+    :exponential (let [ki (-> (rand/double key-dist-scale)
                               (+ key-dist-base)
                               Math/log
                               (/ (Math/log key-dist-base))
@@ -1104,8 +1105,8 @@
            ; Choosing our random numbers from this range converts them to an
            ; index in the range [0, key-count).
            key-dist-scale       (key-dist-scale key-dist-base key-count)
-           length               (+ min-length (rand-int (- (inc max-length)
-                                                           min-length)))
+           length               (+ min-length (rand/long (- (inc max-length)
+                                                            min-length)))
            [txn state] (loop [length  length
                               txn     []
                               state   state]
@@ -1115,7 +1116,7 @@
                              ; All done!
                              [txn state]
                              ; Add an op
-                             (let [f (rand-nth [:r :w])
+                             (let [f (rand/nth [:r :w])
                                    k (rand-key key-dist key-dist-base
                                                key-dist-scale active-keys)
                                    v (when (= f :w) (get state k 1))]

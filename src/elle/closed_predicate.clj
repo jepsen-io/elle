@@ -106,6 +106,7 @@
                   [util :as util :refer [index-of]]]
             [slingshot.slingshot :refer [try+ throw+]]
             [jepsen [history :as h]
+                    [random :as rand]
                     [txn :as txn]]))
 
 (defn xor
@@ -727,11 +728,11 @@
 (defn gen-pred
   "Generates a random predicate."
   []
-  (case (long (rand-int 3))
+  (case (long (rand/long 3))
     ; Equality: either 0 or 1, our initial values.
-    0 [:= (rand-int 2)]
+    0 [:= (rand/long 2)]
     ; Modulo: mod 2 should be either 0 or 1.
-    1 [:mod 2 (rand-int 2)]
+    1 [:mod 2 (rand/long 2)]
     ; Trivial
     2 :true))
 
@@ -758,14 +759,14 @@
          ; but we only get to do one mutation per key. Ask gen-key-type what
          ; kind of operation we'll do on each key, and create an init txn for
          ; keys with writes and deletes.
-         ks  (shuffle (range key-count))
+         ks  (rand/shuffle (range key-count))
          init-ks (filter (comp #{:w :delete} (partial gen-key-type opts)) ks)]
      (cons {:type  :invoke
             :f     :init
             :value (into (sorted-map)
                          (zipmap init-ks
                                  ; Assign them random values, all 0 or 1.
-                                 (repeatedly (partial rand-int 2))))}
+                                 (repeatedly (partial rand/long 2))))}
            (gen {:key-count      key-count
                  :min-txn-length min-txn-length
                  :max-txn-length max-txn-length
@@ -779,7 +780,7 @@
      (let [{:keys [key-count min-txn-length max-txn-length]} opts
            {:keys [ks next-write]} state]
        (when (seq ks)
-         (loop [i          (+ min-txn-length (rand-int max-txn-length))
+         (loop [i          (+ min-txn-length (rand/long max-txn-length))
                 ks         ks
                 next-write next-write
                 txn        (transient [])]
@@ -789,10 +790,10 @@
                    (gen opts {:ks ks, :next-write next-write}))
              ; Read, predicate reads, or mutation?
              (let [i' (dec i)]
-               (case (long (rand-int 3))
+               (case (long (rand/long 3))
                  ; Read
                  0 (recur i' ks next-write
-                          (conj! txn [:r (rand-int key-count) nil]))
+                          (conj! txn [:r (rand/long key-count) nil]))
                  ; Predicate read
                  1 (recur i' ks next-write (conj! txn [:rp (gen-pred) nil]))
                  ; Mutation

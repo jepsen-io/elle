@@ -12,6 +12,7 @@
                  [org.clojure/tools.logging "1.3.0"]
                  [rhizome "0.2.9"]
                  [io.jepsen/history "0.1.5"]
+                 [io.jepsen/generator "0.1.0-SNAPSHOT"]
                  [jepsen.txn "0.1.2"]]
   :java-source-paths ["src"]
   ; We need jepsen.history.Op available before we can compile our java code
