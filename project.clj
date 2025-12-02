@@ -1,4 +1,4 @@
-(defproject elle "0.2.5-SNAPSHOT"
+(defproject elle "0.2.5"
   :description "Black-box transactional consistency checker based on cycle detection"
   :url "https://github.com/jepsen-io/elle"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
@@ -11,8 +11,8 @@
                  [hiccup "2.0.0"]
                  [org.clojure/tools.logging "1.3.0"]
                  [rhizome "0.2.9"]
-                 [io.jepsen/history "0.1.5"]
-                 [io.jepsen/generator "0.1.0-SNAPSHOT"]
+                 [io.jepsen/history "0.1.6"]
+                 [io.jepsen/generator "0.1.0"]
                  [jepsen.txn "0.1.2"]]
   :java-source-paths ["src"]
   ; We need jepsen.history.Op available before we can compile our java code
@@ -23,7 +23,7 @@
                   ]
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.15"]
                                   [io.jepsen/history.sim "0.1.1"]
-                                  [org.clojure/test.check "1.1.1"]
+                                  [org.clojure/test.check "1.1.2"]
                                   [spootnik/unilog "0.7.32"]]}}
   :jvm-opts ["-server"
              "-XX:-OmitStackTraceInFastThrow"
