@@ -9,9 +9,10 @@
   are *item* dependencies. But predicate dependencies *also* cover versions a
   transaction does *not* read or write. Indeed, any predicate operation a
   transaction performs captures a 'Version Set' (vset) including some version
-  of(basically) every object in the database. Even unborn and dead ones. How
+  of (basically) every object in the database. Even unborn and dead ones. How
   are we going to infer these additional predicate dependencies, given they
-  cover records which do not match the predicate?
+  cover records which do not match the predicate, and hence do not appear in
+  the transaction itself?
 
   How do you take a photograph of something invisible?
 
