@@ -735,9 +735,9 @@
           [t1 t2 t3 t4 t5 :as h]
           (h/history (h/strip-indices [t1 t2 t3 t4 t5]))]
       ; Delete output files
-      (->> (file-seq (io/file "test-output"))
+      (->> (file-seq (io/file "test-output/contradictory-read-orders"))
            reverse
-           (mapv io/delete-file))
+           (mapv (fn [file] (io/delete-file file true))))
       (is (= {:valid? false
               :anomaly-types [:G1c :incompatible-order]
               :not           #{:read-committed}
@@ -765,7 +765,7 @@
                       :type :G1c}]}}
              (c {:consistency-models nil
                  :anomalies [:G1]
-                 :directory "test-output"}
+                 :directory "test-output/contradictory-read-orders"}
                 h)))
       ; Check that we wrote the file
       (is (= "<html><head><style>th { text-align: left; }</style></head><body><h1>All Reads of :x</h1><table><thead><tr><th>Index</th><th>Time (s)</th><th>Process</th><th>Fun</th><th colspan=\"32\">Value</th></tr></thead><tbody><tr><td>3</td><td>0.00</td><td>0</td><td>txn</td><td>1</td><td style=\"background: #d6aa9d\">3</td></tr><tr><td>4</td><td>0.00</td><td>0</td><td>txn</td><td>1</td><td>2</td><td>3</td></tr></tbody></table></body></html>"

@@ -347,7 +347,7 @@
   ; This catches a bug in wr-explainer when a cycle involves the init txn.
   (let [[t0 t0' t1 t1' :as h]
         (h/history
-          ; T0 init creates key 7 = 1
+          ; T0 (init) creates key 7 = 1
           [{:index 1, :type :invoke, :process 4, :f :init, :value {7 1}}
            {:index 4, :type :ok, :process 4, :f :init, :value {7 1}}
            ; T1 implicitly selects version 1 of 7 in its predicate read, since

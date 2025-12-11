@@ -80,18 +80,21 @@
   (case rel
     :realtime "rt"
     :process  "p"
-    (str rel)))
+    (name rel)))
 
 (defn rel->color
   "Colors for each type of relationship in a graph."
   [rel]
   (case rel
-   :ww "#C02700"
-   :wr "#C000A5"
-   :rw "#5B00C0"
+   :ww       "#C02700"
+   :wwp      "#FF6740"
+   :wr       "#C000A5"
+   :wrp      "#FF46E5"
+   :rw       "#5B00C0"
+   :rwp      "#9D45FF"
    :realtime "#0050C0"
-   :process "#00C0C0"
-   #"#585858"))
+   :process  "#00C0C0"
+   "#585858"))
 
 (def rel-priority
   "Which relationships have the highest priorities? Lower is more relevant."
