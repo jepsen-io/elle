@@ -10,7 +10,7 @@
             [jepsen [history :as h]
                     [txn :as txn]]
             [clojure.test :refer :all]
-            [slingshot.slingshot :refer [try+ throw+]]))
+            [clj-commons.slingshot :refer [try+ throw+]]))
 
 (defn op
   "Generates an operation from a string language like so:

@@ -15,7 +15,7 @@
                   [util :refer [map-vals]]]
             [jepsen [history :as h]
                     [txn :as txn]]
-            [slingshot.slingshot :refer [try+ throw+]]))
+            [clj-commons.slingshot :refer [try+ throw+]]))
 
 (defn op
   "Generates an operation from a string language like so:

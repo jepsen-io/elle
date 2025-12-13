@@ -7,7 +7,7 @@
                   [graph :as g]]
             [jepsen [history :as h]
                     [txn :as txn]]
-            [slingshot.slingshot :refer [try+ throw+]])
+            [clj-commons.slingshot :refer [try+ throw+]])
   (:import (java.io PushbackReader)))
 
 (defn read-history

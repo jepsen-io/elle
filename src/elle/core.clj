@@ -43,7 +43,7 @@
             [jepsen.history [fold :refer [loopf]]
                             [task :as task]]
             [jepsen.txn.micro-op :as mop]
-            [slingshot.slingshot :refer [try+ throw+]])
+            [clj-commons.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan IEntry
                                ISet
                                Set)

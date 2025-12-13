@@ -24,7 +24,7 @@
                     [txn :as txn :refer [reduce-mops]]]
             [jepsen.history [fold :refer [loopf]]]
             [jepsen.txn.micro-op :as mop]
-            [slingshot.slingshot :refer [try+ throw+]]
+            [clj-commons.slingshot :refer [try+ throw+]]
             [tesser.core :as t])
   (:import (io.lacuna.bifurcan DirectedGraph
                                Graphs

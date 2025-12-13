@@ -11,7 +11,7 @@
                   [txn :as t]]
             [jepsen [history :as h]]
             [clojure.test :refer :all]
-            [slingshot.slingshot :refer [try+ throw+]])
+            [clj-commons.slingshot :refer [try+ throw+]])
   (:import (io.lacuna.bifurcan IMap
                                Map)
            (elle BFSPath)))

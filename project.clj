@@ -3,7 +3,7 @@
   :url "https://github.com/jepsen-io/elle"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
-  :dependencies [[slingshot "0.12.2"]
+  :dependencies [[org.clj-commons/slingshot "0.13.0"]
                  [com.aphyr/bifurcan-clj "0.1.3"]
                  ; Has to be here for our java classes to use Clojure
                  [org.clojure/clojure "1.12.3"]

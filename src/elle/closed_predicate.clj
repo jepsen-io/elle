@@ -105,7 +105,7 @@
                   [rw-register :as rw-register]
                   [txn :as ct]
                   [util :as util :refer [index-of]]]
-            [slingshot.slingshot :refer [try+ throw+]]
+            [clj-commons.slingshot :refer [try+ throw+]]
             [jepsen [history :as h]
                     [random :as rand]
                     [txn :as txn]]))

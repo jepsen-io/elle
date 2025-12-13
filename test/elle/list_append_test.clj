@@ -17,7 +17,7 @@
             [jepsen [history :as h]
                     [txn :as txn]]
             [jepsen.history [sim :as sim]]
-            [slingshot.slingshot :refer [try+ throw+]])
+            [clj-commons.slingshot :refer [try+ throw+]])
   (:import (java.util ArrayList
                       HashMap)))
 
