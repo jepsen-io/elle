@@ -433,6 +433,87 @@
                (c {:consistency-models [:repeatable-read]}
                   h)))))
 
+      (testing "G-single transaction-order"
+        (let [
+              t1 (op "rx_wy2")
+              t2 (op "wx3wy4")
+              [t1 t2 :as h] (h/history [t1 t2])
+              msg {:cycle [t1 t2 t1]
+                   :steps
+                   [{:type :rw,
+                     :key :x,
+                     :value nil,
+                     :value' 3,
+                     :a-mop-index 0,
+                     :b-mop-index 0}
+                    {:type :ww,
+                     :key :y,
+                     :value 4,
+                     :value' 2,
+                     :a-mop-index 1,
+                     :b-mop-index 1}],
+                   :type :G-single-item}]
+          ; Without explicit transaction order specified, the rw edge between T1 and T2 will not be inferred.
+          (is (= {:valid? true}
+                 (c {:consistency-models [:serializable]}
+                    h)))
+          ;; With explicitly specified transaction order, the rw edge will be inferred and G-single should manifest
+          (is (= {:valid? false
+                  :anomaly-types [:G-single-item]
+                  :not       #{:consistent-view :repeatable-read}
+                  :anomalies {:G-single-item [msg]}}
+                 (c {:consistency-models [:serializable] 
+                     ;; Txn commit order: T2 -> T1
+                     :transaction-order {0 2 1 1}}
+                    h)))          
+          ))
+    
+    (testing "G2-item transaction-order"
+      (let [t1 (op "wx1wy2wz3")
+            t2 (op "rx1wy5")
+            t3 (op "rz3wx4")
+            t4 (op "wz7wy8")
+            [t1 t2 t3 t4 :as h] (h/history [t1 t2 t3 t4])
+            msg {:cycle [t2 t3 t4 t2]
+                 :steps
+                 [{:type :rw,
+                   :key :x,
+                   :value 1,
+                   :value' 4,
+                   :a-mop-index 0,
+                   :b-mop-index 1}
+                  {:type :rw,
+                   :key :z,
+                   :value 3,
+                   :value' 7,
+                   :a-mop-index 0,
+                   :b-mop-index 0}
+                  {:type :ww,
+                   :key :y,
+                   :value 8,
+                   :value' 5,
+                   :a-mop-index 1,
+                   :b-mop-index 1}],
+                 :type :G2-item}]
+        ;; Without explicit transaction order specified, the rw/ww edges will not be inferred.
+        (is (= {:valid? true}
+               (c {:consistency-models [:serializable]}
+                  h)))
+        ;; With explicitly specified transaction order, the ww and rw edges will be inferred and G2-item should manifest.
+        (is (= {:valid? false
+                :anomaly-types [:G2-item]
+                :not       #{:repeatable-read}
+                :anomalies {:G2-item [msg]}}
+               (c {:consistency-models [:serializable] 
+                   ;; Txn commit order: T1 -> T3 -> T4 -> T2    
+                   :transaction-order {
+                                       0 1 
+                                       1 4 
+                                       2 2 
+                                       3 3}}
+                  h)))
+        ))
+
     (testing "G1c"
       (let [; T2 observes T1's write of x, and vice versa on y.
             t1 (op "wx1ry1")

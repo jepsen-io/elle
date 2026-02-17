@@ -202,6 +202,54 @@
           {}
           history))
 
+
+(defn history-with-txn-versions
+  "Takes a history and a mapping from transaction completion indices to transaction orders
+   and annotates each history event with this info as a :version field."
+  [history transaction-order]
+  (map (fn [op]
+         (if (contains? transaction-order (:index op))
+           (assoc op :version (get transaction-order (:index op)))
+           op))
+       history))
+
+(defn key-writes-version-sorted 
+  "Given a history where every op is annotated with a numeric 'version' for the
+   writes in that op, generate a map of keys to a vector of all values (i.e.
+   versions) written to that key, sorted ascendingly by version."
+  [history]
+  (->
+    (reduce (fn [m op]
+            (if (or (h/invoke? op)
+                    (h/fail?   op))
+              m
+              (let [txn (:value op)
+                    writes (txn/ext-writes txn)
+                    version (:version op)]
+                (reduce (fn [m [k v]] (update m k (fn [vs] (conj vs {:value v :version version})))) m writes))))
+            {}
+            history)
+    (update-vals ,,, (fn [vs] (sort-by :version vs)))
+  )
+)
+
+(defn transaction-order-graphs
+  "Take a mapping from transaction event completion indices to a transaction total order and 
+   returns a map from keys to version graphs inferred from the transaction order. That is,
+   we assume that each key written in a transaction is assigned the version of its owning transaction."
+  [history opts]
+  (let [versionEdgeMap (-> 
+      ;; Extract map of writes for each key, sorted ascending by version.
+      (key-writes-version-sorted (history-with-txn-versions history (:transaction-order opts))) 
+      ;; Convert each ascending version write list into list of version graph edges.
+      ;; e.g. write list [w1,w2,w3] into edges [[w1 w2] [w2 w3]]
+      (update-vals ,,, (fn [vs] (partition 2 1 (sort-by :version vs)))))
+    ]              
+   ;; Now, for each key in the map of keys, reduce over its list of version graph edges,
+   ;; building the version graph for that key.
+   (update-vals versionEdgeMap (fn [edges] (reduce (fn [vg [ei ej]] (g/link vg (:value ei) (:value ej))) (g/digraph) edges)))
+))
+
 (defn wfr-version-graphs
   "If we assume that within a transaction, writes follow reads, then we can
   infer the version order wherever a transaction performs an external read of
@@ -578,6 +626,10 @@
   [opts history]
   (loop [analyzers (cond-> [{:name    :initial-state
                              :grapher initial-state-version-graphs}]
+                      
+                     (:transaction-order opts)
+                     (conj {:name     :transaction-order-keys
+                            :grapher  (fn [history] (transaction-order-graphs history opts))})
 
                      (:wfr-keys? opts)
                      (conj {:name     :wfr-keys
@@ -844,6 +896,12 @@
     :additional-graphs      A collection of graph analyzers (e.g. realtime)
                             which should be merged with our own dependency
                             graph.
+   
+    :transaction-order      A map from completed transaction operation indices in the history
+                            to a numeric, total transaction order. This is used to allow external, 
+                            'whitebox' dependency order information from a database system to be passed in 
+                            for automatic inference of additional dependency edges. Assumes that events
+                            in the given history can be uniquely identified by their :index fields.
 
     :cycle-search-timeout   How many milliseconds are we willing to search a
                             single SCC for a cycle?
