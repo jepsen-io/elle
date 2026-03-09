@@ -7,13 +7,13 @@
                  [com.aphyr/bifurcan-clj "0.1.3"]
                  ; Has to be here for our java classes to use Clojure
                  [org.clojure/clojure "1.12.4"]
-                 [dom-top "1.0.9"]
+                 [dom-top "1.0.10"]
                  [hiccup "2.0.0"]
                  [org.clojure/tools.logging "1.3.1"]
                  [rhizome "0.2.9"]
                  [io.jepsen/history "0.1.7"]
-                 [io.jepsen/generator "0.1.0"]
-                 [jepsen.txn "0.1.2"]]
+                 [io.jepsen/generator "0.1.1"]
+                 [jepsen.txn "0.1.3"]]
   :java-source-paths ["src"]
   ; We need jepsen.history.Op available before we can compile our java code
   ;:prep-tasks [["compile" "jepsen.history"]
