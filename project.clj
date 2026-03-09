@@ -24,7 +24,9 @@
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.15"]
                                   [io.jepsen/history.sim "0.1.2"]
                                   [org.clojure/test.check "1.1.3"]
-                                  [spootnik/unilog "0.7.32"]]}}
+                                  [spootnik/unilog "0.7.32"
+                                   :exclusions
+                                   [com.fasterxml.jackson.core/jackson-core]]]}}
   :jvm-opts ["-server"
              "-XX:-OmitStackTraceInFastThrow"
              ;"-XX:+PrintGC"
