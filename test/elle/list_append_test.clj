@@ -1413,15 +1413,22 @@
       (is (= (* 2 n) (count h)))
       (is (= false (:valid? res)))
       (is (= #{:read-uncommitted} (:not res)))
-      (is (= {:incompatible-order 11164
-              :lost-update 5226
-              ; :PL-1-cycle-exists 1 ; Slower machines might see this instead of finding the G0/G-single-item-realtime
-              :G0 1
-              :G-nonadjacent-item 1
-              :G-single-item-realtime 1
-              :cycle-search-timeout 1}
-            (into {} (map (juxt key (comp count val)) (:anomalies res)))))
-      ))
+      (let [as (into {} (map (juxt key (comp count val)) (:anomalies res)))]
+        (is (or (= {:incompatible-order 11164
+                    :lost-update 5226
+                    :G0 1
+                    :G-nonadjacent-item 1
+                    :G-single-item-realtime 1
+                    :cycle-search-timeout 1}
+                   as)
+                 ; Depends on performance; slower/faster machines might hit a
+                 ; timeout or not.
+                 (= {:incompatible-order 11164
+                     :lost-update 5226
+                     :G-single-item-realtime 1
+                     :PL-1-cycle-exists 1
+                     :cycle-search-timeout 1}
+                    as))))))
 
 (deftest ^:perf sim-si-perf-test
   ; Performance test on a long snapshot isolated history
