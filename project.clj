@@ -11,7 +11,7 @@
                  [hiccup "2.0.0"]
                  [org.clojure/tools.logging "1.3.1"]
                  [rhizome "0.2.9"]
-                 [io.jepsen/history "0.1.6"]
+                 [io.jepsen/history "0.1.7"]
                  [io.jepsen/generator "0.1.0"]
                  [jepsen.txn "0.1.2"]]
   :java-source-paths ["src"]
@@ -22,7 +22,7 @@
   :javac-options ["-target" "1.8" "-source" "1.8"
                   ]
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.15"]
-                                  [io.jepsen/history.sim "0.1.1"]
+                                  [io.jepsen/history.sim "0.1.2"]
                                   [org.clojure/test.check "1.1.3"]
                                   [spootnik/unilog "0.7.32"]]}}
   :jvm-opts ["-server"
