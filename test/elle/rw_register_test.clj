@@ -774,7 +774,33 @@
                 h)))
               #_(read-history "histories/wr-scc-sort-bug.edn")
               ))
-	)
+
+    (deftest cyclic-versions-bug-test
+      ; This was a bug in ext-key-graph which inappropriately took the union of
+      ; linear sets of dependencies, causing Elle to infer incorrectly that
+      ; there were version order cycles. It depended specifically on the iteration order
+      ; through the history, which is why we need these *specific* indexes to trigger it.
+      ;
+      ; Six hours, one word fix: changing from LinearSet to Set. Wow.
+      (let [h (h/history
+                [{:index 1,   :time 33189116, :type :invoke,  :process 0, :f :txn, :value []}
+                 {:index 2,   :time 34621247, :type :ok,      :process 0, :f :txn, :value []}
+                 {:index 3,   :time 36022782, :type :invoke,  :process 0, :f :txn, :value [[:r 1 nil]]}
+                 {:index 4,   :time 36230324, :type :invoke,  :process 1, :f :txn, :value [[:w 1 4]]}
+                 {:index 5,   :time 36827540, :type :invoke,  :process 2, :f :txn, :value []}
+                 ; Why is this index special? Why 320 exactly?
+                 {:index 320, :time 37708797, :type :ok,      :process 0, :f :txn, :value [[:r 1 nil]]}
+                 {:index 322, :time 37894295, :type :ok,      :process 1, :f :txn, :value [[:w 1 4]]}
+                 {:index 323, :time 37992467, :type :ok,      :process 2, :f :txn, :value []}
+                 {:index 324, :time 38532405, :type :invoke,  :process 0, :f :txn, :value []}
+                 {:index 325, :time 39475568, :type :ok,      :process 0, :f :txn, :value []}
+                 {:index 326, :time 39956694, :type :invoke,  :process 0, :f :txn, :value [[:r 1 nil]]}
+                 {:index 327, :time 40746079, :type :ok,      :process 0, :f :txn, :value [[:r 1 4]]}])
+            r (c {:consistency-models [:serializable]
+                  :linearizable-keys? true}
+                 h)]
+        (is (:valid? r))))
+)
 
 ; This is here for pasting in experimental histories when we hit checker bugs.
 ; It's a helpful skeleton for refining a test case.

@@ -37,6 +37,7 @@
   version graph until we reach a fixed point. This isn't implemented yet."
   (:require [bifurcan-clj [core :as b]
                           [graph :as bg]
+                          [map :as bm]
                           [set :as bs]]
             [clojure.core.reducers :as r]
             [clojure [set :as set]
@@ -65,7 +66,8 @@
                                LinearMap
                                LinearSet
                                Map
-                               Set)
+                               Set
+                               SortedSet)
            (java.util.function BinaryOperator
                                BiFunction)
            (jepsen.history Op)))
@@ -275,53 +277,64 @@
           writes (txn/ext-writes txn)]
       (keys (merge reads writes)))))
 
-;(defn kg-str
-;  "Prints a key graph to a string. You'll want this to optimize
-;  downstream-ops-by-ext-key."
-;  [kg]
-;  (-> kg
-;       g/->clj
-;       (update-keys :index)
-;       (update-vals (fn [k->ops]
-;                      (update-vals k->ops
-;                                   (fn [ops]
-;                                     (sort (map :index ops))))))
-;       pprint
-;       with-out-str))
+#_(defn ekig
+  "External key index graph. A more compact representation of external key
+  graphs, for debugging."
+  [ekg]
+  (-> ekg
+      g/->clj
+      (update-keys :index)
+      (update-vals (fn [k->ops]
+                     (update-vals k->ops
+                                  (fn [ops]
+                                    (into (sorted-set) (map :index ops))))))
+      (into (sorted-map))))
+
+#_(defn kg-str
+  "Prints a key graph to a string. You'll want this to optimize
+  downstream-ops-by-ext-key."
+  [kg]
+  (-> kg
+      ekig
+      pprint
+      with-out-str))
 
 (defn downstream-ops-by-ext-key-transitive!
   "Takes a downstream map and adds transitive dependencies to it. Uses a
-  partial ext-key graph (a map of ops to keys to downstream txns), a set of ext
-  keys for the op under consideration, and a transitive downstream map taken
-  from the key graph for this op.
+  partial ext-key graph (a map of ops to keys to downstream txns), a set of
+  external keys for the op under consideration, and a transitive downstream map
+  taken from the key graph for this op.
 
   We use the downstream information from the key graph kg, and override it with
   whatever is in the node itself. Returns a new downstream LinearMap."
   [^LinearMap downstream, ^IMap kg, ^ISet ext-keys,
    ^LinearMap transitive-downstream]
+  ; For each [k -> bs] in the transitive downstream map taken from the partial
+  ; ext key graph, merge into the downstream map
   (reduce (fn [^IMap downstream ^IEntry k->bs']
             (let [k   (.key k->bs')
                   bs' ^ISet (.value k->bs')]
-              ;(prn :trans k (map :index bs'))
+              ; (prn :trans k (map :index bs'))
               (if (.contains ext-keys k)
                 ; We'll handle this in downstream-ops-by-ext-key-local!
                 downstream
                 ; Use transitive bs
                 (do ;(prn :trans-union
-                    ;     (sort (map :index bs))
+                    ;     (sort (map :index (bm/get downstream k)))
                     ;     (sort (map :index bs')))
                     (.put downstream k bs' g/union-bset)))))
           downstream
           transitive-downstream))
 
 (defn downstream-ops-by-ext-key-local!
-  "Enlarges a downstream map with local dependencies. Takes a downstream map, a
-  collection of ext keys, and an operation. Returns the downstream map with op
-  added for each key in ext-keys."
+  "Enlarges a linear downstream map with local dependencies. Takes a downstream
+  map, a collection of external keys, and an operation. Returns the downstream
+  map with op added for each key in ext-keys."
   [downstream ext-keys op]
   (reduce (fn [^IMap downstream k]
             ; (prn :local k :op (:index op))
-            (let [bs (.get downstream k (LinearSet.))]
+            (let [bs (.get downstream k (Set.))]
+              ; (prn :local :downstream bs)
               (.put downstream k (bs/add bs op))))
           downstream
           ext-keys))
@@ -332,9 +345,11 @@
   - `kg`, a (perhaps partial) ext-key graph
   - `out`, a set of ops downstream from some op
 
-  Returns a pair of a new downstream map (a map of k -> #{op1 op2 ...}), and a
-  vector of unexplored ops we need to look at before we can check this one."
+  For that (implicit) op, returns a pair of a new downstream map (a map of k ->
+  #{op1 op2 ...}), and a vector of unexplored ops we need to look at before we
+  can check this one."
   [^IMap kg out]
+  ; (prn :downstream-ops-by-key-ext-explore (kg-str kg) (g/->clj out))
   (loopr [downstream  (LinearMap.) ; map of k => #{op1, op2}
           unexplored  []]          ; list of ops to explore
           [op out]
@@ -342,9 +357,11 @@
                 ext-keys (if (nil? ext-keys)
                            (Set/empty)
                            (Set/from ^Iterable ext-keys))]
-            ;(prn :checking-descendent n)
+            ; (prn :downstream-ops-by-key-ext-explore :checking-descendent
+            ;     (.index op))
             ; Transitive k->vs
             (if-let [trans-downstream (.get kg op nil)]
+              ; The ext key graph already knows about this op.
               (if (< 0 (count unexplored))
                 ; There are unexplored nodes in this pass; we're not actually
                 ; going to use our downstream results here and there's no sense
@@ -356,29 +373,36 @@
                 (recur (-> downstream
                            (downstream-ops-by-ext-key-transitive!
                              kg ext-keys trans-downstream)
-                           ; OK, and now local deps!
+                           ; OK, and now local deps; we're saying that the
+                           ; implicit op this fn was called with has *this* op
+                           ; downstream for each key.
                            (downstream-ops-by-ext-key-local!
                              ext-keys op))
                        unexplored))
               ; Huh, this node hasn't been explored yet. If this happens we
               ; can't use the downstream results we've built so far.
-              (do ;(prn :unexplored!)
+              (do (prn :unexplored!)
                   (recur downstream (conj unexplored op)))))))
 
 (defn downstream-ops-by-ext-key
-  "Takes a transaction graph, a (perhaps partial) ext-key graph, a set of keys
-  to ignore, and a stack of ops to explore. Returns a more complete key graph
-  which contains an entry for every op in the ops stack as well as all their
-  downstream dependencies, transitively."
+  "Takes a transaction graph, a (perhaps partial) ext-key graph, and a stack of
+  ops to explore. Returns a more complete key graph which contains an entry for
+  every op in the ops stack as well as all their downstream dependencies,
+  transitively."
   [g ^IMap kg ops]
+  ; (prn)
+  ; (prn :downstream-ops-by-ext-key (mapv :index ops))
+  ; (println :downstream-ops-by-ext-key :kg (kg-str kg))
+  ;(doseq [kv kg]
+    ;(println "  From txn" (.index (.key kv)))
+    ;(println "    " (.value kv)))
   (if (empty? ops)
     ; Nowhere else to explore!
     kg
     (let [op (peek ops)]
-      ; (prn :op (.index op) :with (dec (count ops)) :more)
       (if (.contains kg op)
-        ; Well, we've already explored this op; no need to go further!
-        (do ;(prn :hit!)
+        ; We've already explored this op; no need to go further!
+        (do ; (prn :hit!)
             (recur g kg (pop ops)))
         (let [out (g/out g op)]
           (if (= 0 (.size out))
@@ -389,18 +413,19 @@
             ; explored.
             (let [[downstream unexplored]
                   (downstream-ops-by-ext-key-explore kg out)]
-              ;(prn :downstream (.size downstream)
+              ; (prn :downstream (.size downstream)
               ;     :unexplored (count unexplored))
               (if (< 0 (count unexplored))
                 ; If we have any unexplored, move on to them; we'll come
                 ; back to this later.
-                (do ;(prn :unexplored (count unexplored))
+                (do ; (prn :unexplored (count unexplored))
                     (recur g kg (into ops unexplored)))
 
                 ; Good, we explored everything; this means our results are
                 ; total. Update kg with our findings for this node and
                 ; move on to the next op in the stack.
-                (do ;(prn :complete (.index op))
+                (do ; (prn :downstream-ops-by-ext-key :complete (.index op)
+                    ;      :downstream (map-vals (partial map :index) (g/->clj downstream)))
                     (recur g
                            (.put kg op (b/forked downstream))
                            (pop ops)))))))))))
@@ -418,18 +443,19 @@
   ; the entire graph in O(n) time; this is n^2. To avoid this, we employ two
   ; tricks:
   ;
-  ; 1. Memoize
+  ; 1. Memoize by building the ext-key-graph incrementally.
   ; 2. Under the assumption that our graph *roughly* points forward in time,
-  ;    we traverse ops in reverse time (:index) order. This gives our memoized
-  ;    data structure the maximum chance to work.
+  ;    since that's usually how causality works, we traverse ops in reverse
+  ;    time (:index) order. This gives our memoized data structure the maximum
+  ;    chance to work.
   (->> (bg/vertices g)
        (sort-by :index)
        reverse
        ; Build up the key graph
        (reduce (fn red [kg op]
-                 ;(println "\n")
-                 ;(prn :ext-key-graph (:index op))
-                 ;(print :kg (kg-str kg))
+                 ;(println)
+                 ;(prn :ext-key-graph :considering (:index op))
+                 ; (print :ext-key-graph :kg (kg-str kg))
                  (downstream-ops-by-ext-key g kg [op]))
                (LinearMap.))
        b/forked))
@@ -455,25 +481,26 @@
 
     T1─t2─T3
 
-  Since t2 does not interact with k, this doesn't help us--but T3 *does*, so we
-  can infer v1 < v3.
+  Since t2 does not interact with k, it doesn't tell us anything directly about
+  k's version order. However, through t2 we can reach T3, which *did* interact
+  with k, so we can infer v1 < v3.
 
        ┌T2
     T1─┤
        └T3
 
   When a dependency chain splits, we have (at most) n dependencies we can
-  infer: x1 < x2, x1 < x3.
+  infer: v1 < v2, v1 < v3.
 
        ┌T2
     T1─┤
        └t3─T4
 
-  Clearly we can infer x1 < x2--and we need search no further, since T2's
+  Clearly we can infer v1 < v2--and we need search no further, since T2's
   dependencies will cover the rest of the chain transitively. We must search
-  past t3 however, to T4, to infer x1 < x4.
+  past t3 however, to T4, to infer v1 < v4.
 
-  In general, then, our program is to search the downstream transaction graph,
+  In general, our program is to search the downstream transaction graph,
   stopping and recording a dependency whenever we encounter a transaction which
   interacted with k.
 
@@ -495,10 +522,18 @@
   [txn-graph]
   ; These seem expensive according to Yourkit, but I'm not actually seeing
   ; a change in runtime memoizing em. Not sure what's up.
-  (let [ext-reads  (op-memoize (comp txn/ext-reads :value))
+  (let [;cg (fn [g]
+        ;     (->> (g/->clj g)
+        ;           (map (fn [[a bs]]
+        ;                  [(:index a) (sort (mapv :index bs))]))
+        ;           (into (sorted-map))))
+        ;_ (println "txn graph")
+        ;_ (pprint (cg txn-graph))
+        ext-reads  (op-memoize (comp txn/ext-reads :value))
         ext-writes (op-memoize (comp txn/ext-writes :value))
         ; Build up a map of t1 -> k -> #{t2 t3 ...}
         ext-key-graph (ext-key-graph txn-graph)
+        ;_ (println "final ext-key-graph "(kg-str ext-key-graph))
         ; This is really expensive, so we parallelize
         procs (.availableProcessors (Runtime/getRuntime))
         ext-key-graph-chunks (.split ext-key-graph (* 4 procs))
@@ -615,7 +650,7 @@
   [opts history]
   (loop [analyzers (cond-> [{:name    :initial-state
                              :grapher initial-state-version-graphs}]
-                      
+
                      (:transaction-order opts)
                      (conj {:name     :transaction-order-keys
                             :grapher  (fn [history] (transaction-order-graphs history (:transaction-order opts)))})
