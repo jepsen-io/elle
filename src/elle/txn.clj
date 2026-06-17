@@ -1039,8 +1039,8 @@
       (/ (- key-dist-base 1))))
 
 (defn rand-key
-  "Helper for generators. Takes a key distribution (e.g. :uniform or
-  :exponential), a key distribution scale, a key distribution base, and a
+  "Helper for generators. Takes a key distribution (e.g. :exponential,
+  :uniform, :zipf), a key distribution scale, a key distribution base, and a
   vector of active keys. Returns a random active key."
   [key-dist key-dist-base key-dist-scale active-keys]
   (case key-dist
@@ -1052,7 +1052,9 @@
                               (- 1)
                               Math/floor
                               long)]
-                   (nth active-keys ki))))
+                   (nth active-keys ki))
+    :zipf         (nth active-keys (rand/zipf key-dist-base
+                                              (count active-keys)))))
 
 (defn fresh-key
   "Takes a key and a vector of active keys. Returns the vector with that key
@@ -1063,22 +1065,31 @@
     (assoc active-keys i k')))
 
 (defn wr-txns
-  "A lazy sequence of write and read transactions over a pool of n numeric
-  keys; every write is unique per key. Options:
+  "A lazy sequence of write and read transactions over a map of longs to longs.
+  Each transaction is a vector of operations of the form:
+
+      [:r 3 nil]    Read key 3
+      [:w 5 6]      Write key 5, setting it to 6.
+
+  Writes are always unique per key. Options:
 
     :key-dist             Controls probability distribution for keys being
-                          selected for a given operation. Choosing :uniform
-                          means every key has an equal probability of appearing.
-                          :exponential means that key i in the current key pool
-                          is k^i times more likely than the first key to be
-                          chosen. Defaults to :exponential.
+                          selected for a given operation. Default: exponential.
+
+                          :exponential  Key i in the current key pool
+                                        is k^i times more likely than the
+                                        first key to be chosen.
+                          :zipf         Zipfian distribution. The probability
+                                        of key i is proportional to 1/i.
+                          :uniform      Every key has an equal probability.
 
     :key-dist-base        The base for an exponential distribution. Defaults
                           to 2, so the first key is twice as likely as the
                           second, which is twice as likely as the third, etc.
+                          For zipfian distributions, the base is the skew.
 
     :key-count            Number of distinct keys at any point. Defaults to
-                          10 for exponential, 3 for uniform.
+                          10 for exponential and zipf, 3 for uniform.
 
     :min-txn-length       Minimum number of operations per txn
 
@@ -1089,7 +1100,8 @@
    (let [key-dist  (:key-dist  opts :exponential)
          key-count (:key-count opts (case key-dist
                                       :exponential 10
-                                      :uniform     3))]
+                                      :uniform     3
+                                      :zipf        10))]
      (wr-txns (assoc opts
                      :key-dist  key-dist
                      :key-count key-count)
@@ -1097,8 +1109,8 @@
   ([opts state]
    (lazy-seq
      (let [min-length           (:min-txn-length      opts 1)
-           max-length           (:max-txn-length      opts 2)
-           max-writes-per-key   (:max-writes-per-key  opts 32)
+           max-length           (:max-txn-length      opts 4)
+           max-writes-per-key   (:max-writes-per-key  opts 256)
            key-dist             (:key-dist            opts :exponential)
            key-dist-base        (:key-dist-base       opts 2)
            key-count            (:key-count           opts)

@@ -7,7 +7,8 @@
                   [graph-test :refer [ops og]]
                   [rels :refer :all]
                   [txn :refer :all]]
-            [jepsen [history :as h]]))
+            [jepsen [history :as h]
+                    [random :as rand]]))
 
 (defn valid-mop?
   [[f k v]]
@@ -17,17 +18,51 @@
     :r (is (= nil v))
        (is (integer? v))))
 
-(deftest wr-txns-test
-  (let [txns (take 100 (wr-txns {:key-count 3}))
-        mops (mapcat identity txns)
-        ks   (map second mops)
-        key-dist (frequencies ks)]
-    (is (every? vector? txns))
-    (is (every? #(<= 1 (count %) 2) txns))
+(defn valid-txns?
+  "Basic validation on transactions for wr-txns-test"
+  [txns]
+  (is (every? vector? txns))
+  (is (every? #(<= 1 (count %) 4) txns))
+  (let [mops (mapcat identity txns)]
     (is (every? valid-mop? mops))
-    ; This is gonna vary by RNG, but there are 3 keys per pool by default,
-    ; and their frequency (for the first 3 anyway) should be in ascending order.
-    (is (< (key-dist 0) (key-dist 1) (key-dist 2)))))
+    ; Grouped by key, each write should be distinct
+    (doseq [[k mops] (->> mops
+                          (filter (comp #{:w} first))
+                          (group-by second))]
+      (is (= (count mops)
+             (count (set (map peek mops))))))))
+
+(defn key-dist
+  "Computes the frequency distribution of keys in a series of txns."
+  [txns]
+  (->> txns
+       (mapcat identity)
+       (map second)
+       frequencies
+       (into (sorted-map))))
+
+(deftest wr-txns-test
+  (rand/with-seed 53
+    ; We're intentioanally picking small histories here so we get a good look
+    ; at the distributions *before* they saturate.
+    (testing "exponential"
+      (let [txns (take 100 (wr-txns {:key-count 3, :key-dist :exponential}))]
+        (valid-txns? txns)
+        (is (= {0 34, 1 71, 2 142}
+               (key-dist txns)))))
+
+    (testing "uniform"
+      (let [txns (take 100 (wr-txns {:key-count 3, :key-dist :uniform}))]
+        (valid-txns? txns)
+        (is (= {0 81, 1 94, 2 87}
+               (key-dist txns)))))
+
+    (testing "zipf"
+      (let [txns (take 100 (wr-txns {:key-count 3, :key-dist :zipf}))]
+        (valid-txns? txns)
+        (is (= {0 183, 1 65, 2 22}
+               (key-dist txns)))))
+    ))
 
 (defn fg
   "Wraps a graph in a filtered-graphs fn."
