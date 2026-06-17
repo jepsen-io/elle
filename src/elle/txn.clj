@@ -1038,31 +1038,32 @@
       (* key-dist-base)
       (/ (- key-dist-base 1))))
 
-(defn rand-key
+(defn rand-key-i
   "Helper for generators. Takes a key distribution (e.g. :exponential,
-  :uniform, :zipf), a key distribution scale, a key distribution base, and a
-  vector of active keys. Returns a random active key."
-  [key-dist key-dist-base key-dist-scale active-keys]
+  :uniform, :zipf), a key distribution scale, a key distribution base, and the
+  number of keys n. Returns the index of a key in [0, n)."
+  [key-dist key-dist-base key-dist-scale n]
   (case key-dist
-    :uniform     (rand/nth active-keys)
-    :exponential (let [ki (-> (rand/double key-dist-scale)
+    :uniform     (rand/long n)
+    :exponential (-> (rand/double key-dist-scale)
                               (+ key-dist-base)
                               Math/log
                               (/ (Math/log key-dist-base))
                               (- 1)
                               Math/floor
-                              long)]
-                   (nth active-keys ki))
-    :zipf         (nth active-keys (rand/zipf key-dist-base
-                                              (count active-keys)))))
+                              long)
+    :zipf         (rand/zipf key-dist-base n)))
 
 (defn fresh-key
-  "Takes a key and a vector of active keys. Returns the vector with that key
-  replaced by a fresh key."
-  [^java.util.List active-keys k]
-  (let [i (.indexOf active-keys k)
+  "Takes the maximum number of writes per key, a state map from wr-txns, and
+  replaces key k with a fresh key."
+  [max-writes-per-key {:keys [active-keys max-writes] :as state} k]
+  (let [i (.indexOf ^java.util.List active-keys k)
         k' (inc (reduce max active-keys))]
-    (assoc active-keys i k')))
+    (-> state
+        (dissoc k)
+        (assoc :active-keys (assoc active-keys i k'))
+        (assoc :max-writes  (assoc max-writes i (inc (rand/zipf max-writes-per-key)))))))
 
 (defn wr-txns
   "A lazy sequence of write and read transactions over a map of longs to longs.
@@ -1097,54 +1098,66 @@
 
     :max-writes-per-key   Maximum number of operations per key"
   ([opts]
-   (let [key-dist  (:key-dist  opts :exponential)
+   (let [key-dist      (:key-dist  opts :exponential)
+         key-dist-base (:key-dist-base       opts 2)
+         min-length    (:min-txn-length      opts 1)
+         max-length    (:max-txn-length      opts 4)
          key-count (:key-count opts (case key-dist
                                       :exponential 10
                                       :uniform     3
-                                      :zipf        10))]
+                                      :zipf        10))
+         max-writes-per-key (:max-writes-per-key opts 256)
+         ; Choosing our random numbers from this range converts them to an
+         ; index in the range [0, key-count).
+         key-dist-scale       (key-dist-scale key-dist-base key-count)]
      (wr-txns (assoc opts
                      :key-dist  key-dist
-                     :key-count key-count)
-              {:active-keys (vec (range key-count))})))
-  ([opts state]
+                     :key-dist-base key-dist-base
+                     :key-dist-scale key-dist-scale
+                     :min-length min-length
+                     :max-length max-length
+                     :key-count key-count
+                     :max-writes-per-key max-writes-per-key)
+              ; Initial state
+              {:active-keys     (vec (range key-count))
+               ; How many writes can we perform for each of those keys?
+               :max-writes (->> (partial rand/zipf max-writes-per-key)
+                                repeatedly
+                                (take key-count)
+                                (mapv inc))})))
+  ([{:keys [key-dist key-dist-base key-dist-scale key-count min-length
+            max-length] :as opts} state]
    (lazy-seq
-     (let [min-length           (:min-txn-length      opts 1)
-           max-length           (:max-txn-length      opts 4)
-           max-writes-per-key   (:max-writes-per-key  opts 256)
-           key-dist             (:key-dist            opts :exponential)
-           key-dist-base        (:key-dist-base       opts 2)
-           key-count            (:key-count           opts)
-           ; Choosing our random numbers from this range converts them to an
-           ; index in the range [0, key-count).
-           key-dist-scale       (key-dist-scale key-dist-base key-count)
-           length               (+ min-length (rand/long (- (inc max-length)
-                                                            min-length)))
-           [txn state] (loop [length  length
-                              txn     []
-                              state   state]
-                         (let [^java.util.List active-keys
-                               (:active-keys state)]
-                           (if (zero? length)
-                             ; All done!
-                             [txn state]
-                             ; Add an op
-                             (let [f (rand/nth [:r :w])
-                                   k (rand-key key-dist key-dist-base
-                                               key-dist-scale active-keys)
-                                   v (when (= f :w) (get state k 1))]
-                               (if (and (= :w f)
-                                        (< max-writes-per-key v))
-                                 ; We've updated this key too many times!
-                                 (let [state' (update state :active-keys
-                                                      fresh-key k)]
-                                   (recur length txn state'))
-                                 ; Key is valid, OK
-                                 (let [state' (if (= f :w)
-                                                (assoc state k (inc v))
-                                                state)]
-                                   (recur (dec length)
-                                          (conj txn [f k v])
-                                          state')))))))]
+     (let [length (+ min-length (rand/long (- (inc max-length)
+                                              min-length)))
+           [txn state]
+           (loop [length  length
+                  txn     []
+                  state   state]
+             (let [active-keys (:active-keys state)
+                   max-writes  (:max-writes state)]
+               (if (zero? length)
+                 ; All done!
+                 [txn state]
+                 ; Add an op
+                 (let [f (rand/nth [:r :w])
+                       i (rand-key-i key-dist key-dist-base
+                                     key-dist-scale (count active-keys))
+                       k (nth active-keys i)
+                       v (when (= f :w) (get state k 1))]
+                   (if (and (= :w f)
+                            (< (max-writes i) v))
+                     ; We've updated this key too many times!
+                     (let [state' (fresh-key (:max-writes-per-key opts)
+                                             state k)]
+                       (recur length txn state'))
+                     ; Key is valid, OK
+                     (let [state' (if (= f :w)
+                                    (assoc state k (inc v))
+                                    state)]
+                       (recur (dec length)
+                              (conj txn [f k v])
+                              state')))))))]
        (cons txn (wr-txns opts state))))))
 
 (defn gen

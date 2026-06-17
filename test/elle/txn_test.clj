@@ -41,6 +41,16 @@
        frequencies
        (into (sorted-map))))
 
+(defn writes-per-key
+  "Computes a map of keys to the number of writes of that key in a series of txns."
+  [txns]
+  (->> txns
+       (mapcat identity)
+       (filter (comp #{:w} first))
+       (map second)
+       frequencies
+       (into (sorted-map))))
+
 (deftest wr-txns-test
   (rand/with-seed 53
     ; We're intentioanally picking small histories here so we get a good look
@@ -48,21 +58,29 @@
     (testing "exponential"
       (let [txns (take 100 (wr-txns {:key-count 3, :key-dist :exponential}))]
         (valid-txns? txns)
-        (is (= {0 34, 1 71, 2 142}
+        (is (= {0 11, 7 59, 1 1, 4 47, 6 26, 3 15, 2 23, 9 15, 5 39, 8 16}
                (key-dist txns)))))
 
     (testing "uniform"
       (let [txns (take 100 (wr-txns {:key-count 3, :key-dist :uniform}))]
         (valid-txns? txns)
-        (is (= {0 81, 1 94, 2 87}
+        (is (= {0 84, 1 72, 2 84, 3 8, 4 1, 5 11}
                (key-dist txns)))))
 
     (testing "zipf"
       (let [txns (take 100 (wr-txns {:key-count 3, :key-dist :zipf}))]
         (valid-txns? txns)
-        (is (= {0 183, 1 65, 2 22}
+        (is (= {0 185, 1 62, 2 22, 3 1}
                (key-dist txns)))))
-    ))
+
+    (testing "key rotation"
+      (let [txns (take 100 (wr-txns {:key-count 1, :max-writes-per-key 5}))]
+        (valid-txns? txns)
+        ; Never more than 5
+        (is (every? (partial >= 5) (vals (writes-per-key txns))))
+        ; And the distribution is zipfian
+        (is (= {1 20, 4 5, 2 17, 3 4, 5 5}
+               (frequencies (vals (writes-per-key txns)))))))))
 
 (defn fg
   "Wraps a graph in a filtered-graphs fn."
