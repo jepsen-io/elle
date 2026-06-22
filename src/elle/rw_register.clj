@@ -85,8 +85,9 @@
        (reduce (fn [[state error] [f k v :as mop]]
                  (case f
                    :w [(assoc! state k v) error]
-                   :r (let [s (get state k)]
-                        (if (and s (not= s v))
+                   :r (let [s (get state k ::unknown)]
+                        (if (and (not (identical? ::unknown s))
+                                 (not= s v))
                           ; Not equal!
                           (reduced [state
                                     {:op       op

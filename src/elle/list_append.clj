@@ -165,8 +165,9 @@
                           (conj (or (get state k [unknown-prefix]) []) v)))
 
            :r
-           (let [s (get state k)]
-             (if (and s ; We have an expected state
+           (let [s (get state k ::unknown)]
+             (if (and (not (identical? ::unknown s))
+                      ; Good, we have an expected state
                       (if (= unknown-prefix (first s))
                         ; We don't know the prefix.
                         (let [i (- (inc (count v)) (count s))]
@@ -447,7 +448,7 @@
                                (let [vs (conj vs v)
                                      t2 (get (get write-index k) v)]
                                  (assert t2 (str "No transaction wrote "
-                                                 (pr-str k) " " (pr-str v)))
+                                                 (pr-str k) " = " (pr-str v)))
                                  (case [(:type t1) (:type t2)]
                                    ; Moving along happily
                                    [:ok    :ok] [t2 [v] cases]

@@ -279,6 +279,13 @@
                                           [:append :x 4]
                                           [:r :x [1 2 3 4]]]}])))))
 
+  (testing "read nil, then something"
+    (let [[t1 t1' :as h] (h/history (pair (op "rxrx2")))]
+      (is (= {:internal [{:op t1'
+                          :mop [:r :x [2]]
+                          :expected nil}]}
+             (internal-cases h)))))
+
   (testing "read-append-read"
     (let [[stale bad-prefix extension short-read :as h]
           (h/history [{:process 0, :type :ok, :value [[:r :x [1 2]]

@@ -81,6 +81,11 @@
   (testing "stale"
     (let [[stale :as h] (h/history [(op "rx1wx2rx1")])]
       (is (= [{:op stale, :mop [:r :x 1], :expected 2}]
+             (internal-cases h)))))
+
+  (testing "nil read"
+    (let [[op :as h] (h/history [(op "rx_rx2")])]
+      (is (= [{:op op, :mop [:r :x 2], :expected nil}]
              (internal-cases h))))))
 
 (deftest g1a-cases-test
