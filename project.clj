@@ -1,4 +1,4 @@
-(defproject elle "0.2.7"
+(defproject elle "0.2.8-SNAPSHOT"
   :description "Black-box transactional consistency checker based on cycle detection"
   :url "https://github.com/jepsen-io/elle"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
@@ -19,7 +19,7 @@
   ;:prep-tasks [["compile" "jepsen.history"]
   ;             "javac"
   ;             "compile"]
-  :javac-options ["--release 21"
+  :javac-options ["--release" "21"
                   ]
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.15"]
                                   [io.jepsen/history.sim "0.1.3"]
