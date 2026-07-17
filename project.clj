@@ -19,7 +19,7 @@
   ;:prep-tasks [["compile" "jepsen.history"]
   ;             "javac"
   ;             "compile"]
-  :javac-options ["-target" "1.8" "-source" "1.8"
+  :javac-options ["--release 21"
                   ]
   :profiles {:dev {:dependencies [[com.gfredericks/test.chuck "0.2.15"]
                                   [io.jepsen/history.sim "0.1.3"]
