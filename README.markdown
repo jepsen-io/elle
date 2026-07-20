@@ -1,6 +1,7 @@
 # Elle
 
-[![Via Clojars](https://img.shields.io/clojars/v/elle.svg)](https://clojars.org/elle)
+[![Clojars](https://img.shields.io/clojars/v/elle.svg)](https://clojars.org/elle)
+[![Cljdoc Documentation](https://cljdoc.org/badge/elle/elle)](https://cljdoc.org/d/elle/elle)
 
 Elle is a transactional consistency checker for black-box databases. Based
 purely on client observations of transactions, and given some minimal
