@@ -377,6 +377,8 @@
   transitive reduction of that graph. We compute edges from txn a to subsequent
   invocations until a new operation b completes."
   [history]
+  ; Force lazy pair-index before fold to avoid nested fold deadlocks
+  (h/ensure-pair-index history)
   ; Our basic approach here is to iterate through the history, and for any
   ; given :ok op, create an edge from that :ok to the :ok or :info
   ; corresponding to subsequent :invokes--because our graph relates

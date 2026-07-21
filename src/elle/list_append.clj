@@ -601,6 +601,7 @@
    ; ops can't contribute to the state. TODO: do we... want to start inferring
    ; deps for failed ops too? Might simplify the dirty-update codepath.
    (let [history       (h/possible history)
+         _ (h/ensure-pair-index history)
          sorted-values (sorted-values history)]
      ; Compute indices
      (let [append-index (h/task history append-index []
@@ -948,6 +949,8 @@
    (check {} history))
   ([opts history]
    (let [history      (h/client-ops history)
+         ; Force lazy index computations to avoid nested fold deadlocks
+         _ (h/ensure-pair-index history)
          g1a          (h/task history g1a [] (g1a-cases history))
          g1b          (h/task history g1b [] (g1b-cases history))
          internal     (h/task history internal [] (internal-cases history))
@@ -959,6 +962,7 @@
          ; We don't want to detect duplicates or incompatible orders for
          ; aborted txns.
          history+      (h/possible history)
+         _ (h/ensure-pair-index history+)
          dups          (h/task history dups [] (duplicates history+))
          sorted-values (h/task history sorted-values+ []
                                (sorted-values history+))
