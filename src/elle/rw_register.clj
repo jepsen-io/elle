@@ -921,15 +921,23 @@
     :additional-graphs      A collection of graph analyzers (e.g. realtime)
                             which should be merged with our own dependency
                             graph.
-   
-    :transaction-order      A map from completion transaction operation indices in the history
-                            to a numeric, total transaction order. This is used to allow external, 
-                            'whitebox' dependency order information from a database system to be passed in 
-                            for automatic inference of additional dependency edges. Assumes that events
-                            in the given history can be uniquely identified by their :index fields.
+
+    :transaction-order      A map from completion transaction operation indices
+                            in the history to a numeric, total transaction
+                            order. This is used to allow external, 'whitebox'
+                            dependency order information from a database system
+                            to be passed in for automatic inference of
+                            additional dependency edges. Assumes that events in
+                            the given history can be uniquely identified by
+                            their :index fields.
 
     :cycle-search-timeout   How many milliseconds are we willing to search a
                             single SCC for a cycle?
+
+    WARNING: the following three options may not work correctly; I believe
+    :linearizable-keys? (at least) can report that there are cycles in the
+    version order for a given key even though no cycle exists. I'm
+    investigating.
 
     :sequential-keys?       Assume that each key is independently sequentially
                             consistent, and use each processes' transaction

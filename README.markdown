@@ -3,6 +3,10 @@
 [![Clojars](https://img.shields.io/clojars/v/elle.svg)](https://clojars.org/elle)
 [![Cljdoc Documentation](https://cljdoc.org/badge/elle/elle)](https://cljdoc.org/d/elle/elle)
 
+**WARNING: Elle's RW workload may incorrectly report that there are
+incompatible version orders when using `:linearizable-keys?`,
+`sequential-keys?`, or `:wfr-keys?`.**
+
 Elle is a transactional consistency checker for black-box databases. Based
 purely on client observations of transactions, and given some minimal
 constraints on datatypes and operations, it can tell you whether that
