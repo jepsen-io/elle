@@ -1,6 +1,12 @@
 (ns elle.rw-register-test
   (:refer-clojure :exclude [test])
-  (:require [clojure.pprint :refer [pprint]]
+  (:require [bifurcan-clj [core :as b]
+                          [map :as bm]
+                          [set :as bs]
+                          [graph :as bg]]
+            [clojure.pprint :refer [pprint]]
+            [clojure.test.check.generators :as gen]
+            [com.gfredericks.test.chuck.clojure-test :refer [checking]]
             [dom-top.core :refer [loopr real-pmap]]
 						[elle [core :as elle]
                   [core-test :refer [read-history]]
@@ -11,6 +17,10 @@
                     [txn :as txn]]
             [clojure.test :refer :all]
             [clj-commons.slingshot :refer [try+ throw+]]))
+
+(def test-check-n
+  "Number of iterations for generative tests."
+  1000)
 
 (defn op
   "Generates an operation from a string language like so:
@@ -175,6 +185,209 @@
              (ekg {(op 1 "wx1")     [(op 2 "wx2wy2")]
                    (op 2 "wx2wy2")  [(op 3 "wy3wz3")]
                    (op 3 "wy3wz3")  [(op 4 "wz4")]}))))))
+(def mop-gen
+  "Generator of a micro-op."
+  (gen/tuple (gen/elements [:r :w])
+             (gen/elements [:x :y :z])
+             (gen/elements [0 1 2 3])))
+
+(def op-gen
+  "Generates a transaction op."
+  (gen/fmap (fn [[process value]]
+              (h/op {:index -1
+                     :time -1
+                     :type :ok
+                     :process process
+                     :f :txn
+                     :value value}))
+            (gen/tuple (gen/elements [0 1 2])
+                       (gen/vector mop-gen 0 4))))
+
+(defn assocv
+  "Assoc for vectors with infinite extent. Adds nils if necessary."
+  [v i x]
+  (if (<= i (count v))
+    (assoc v i x)
+    (recur (conj v nil) i x)))
+
+(defn next-free-index
+  "Takes a vector v and an index i. Returns the index of the next free
+  (nonexistent or nil) element of v, at i or later."
+  [v ^long i]
+  (if (<= (count v) i)
+    i
+    (if (nil? (nth v i))
+      i
+      (recur v (inc i)))))
+
+(defn history-gen-unfold-invoke-ok
+  "Takes a vector of steps for history-gen and unfolds them into a vector of
+  invoke and ok ops based on the ok-delay."
+  [steps]
+  (loopr [i   0         ; Our index into the ops vector
+          ops []        ; Vector of ops
+          busy-til {}]  ; Map of process ID to the next index when it can invoke something
+         [[op ok-delay invoke-index-step invoke-time-step ok-index-step
+           ok-time-step] steps]
+         (let [process (:process op)
+               invoke (assoc op
+                             :type        :invoke
+                             :index-step  invoke-index-step
+                             :time-step   invoke-time-step)
+               ok     (assoc op
+                             :type        :ok
+                             :index-step  ok-index-step
+                             :time-step   ok-time-step)
+               ; Where can we put the invoke?
+               invoke-i (next-free-index ops (max i (busy-til process 0)))
+               ops (assocv ops invoke-i invoke)
+               ; Where can we put the complete?
+               ok-i (next-free-index ops (+ invoke-i ok-delay))
+               ops (assocv ops ok-i ok)
+               ; Which means this process will be busy until that point
+               busy-til (assoc busy-til process (max (busy-til process 0)
+                                                     ok-i))]
+           (recur invoke-i ops busy-til))
+
+         ; Finally, strip out nils.
+         (vec (remove nil? ops))))
+
+(defn history-gen-ensure-single-threaded
+  "For history-gen, rolls through the history and ensures that no process
+  executes something concurrently."
+  [ops]
+  ; Build a map of process to indexes in the ops vector where that process did something.
+  (loopr [ops' []
+         ; A map of process to pending completion
+         pending {}]
+         [{:keys [process] :as op} ops]
+         (if (h/invoke? op)
+           (if-let [p (get pending process)]
+             ; We need to complete this first
+             (recur (conj ops' p op)
+                    (assoc pending process op))
+             ; Idle processes can start an invoke
+             (recur (conj ops' op)
+                    (assoc pending process op)))
+           ; Complete an op
+           (recur (conj ops' op)
+                  (dissoc pending process)))
+         ops'))
+
+(defn history-gen-unroll-indexes-times
+  "For history-gen, turn each op's :index-step and :time-step into a monotonic
+  :index and :time."
+  [ops]
+  (loopr [ops'  []
+          index 0
+          time  0]
+          [{:keys [index-step time-step] :as op} ops]
+          (let [index' (+ index index-step)
+                time'  (+ time time-step)]
+            (recur (conj ops' (-> op
+                                  (dissoc :index-step :time-step)
+                                  (assoc :index index' :time time')))
+                   index'
+                   time'))
+          ops'))
+
+(def history-gen
+  "Generates a history of txn operations."
+  (gen/fmap
+    (fn [steps]
+      (-> steps
+          history-gen-unfold-invoke-ok
+          history-gen-ensure-single-threaded
+          history-gen-unroll-indexes-times
+          h/history))
+    (gen/vector
+      (gen/tuple op-gen                                       ; op
+                 (gen/large-integer* {:min 1 :max 3})         ; How many ops later does the OK happen?
+                 (gen/large-integer* {:min 1, :max 1024})     ; invoke index step
+                 (gen/large-integer* {:min 0, :max 1024})     ; invoke time step
+                 (gen/large-integer* {:min 1, :max 1024})     ; ok index step
+                 (gen/large-integer* {:min 0, :max 1024}))))) ; ok time step
+
+(defn naive-ext-key-graph-search
+  "Takes a txn graph g, a key k, and an op. Returns a vector of all downstream
+  ops that externally interacted with k--either [op], or operations following
+  op in g."
+  [g k op]
+  (if (contains? (set (ext-keys op)) k)
+    ; Done here
+    [op]
+    ; Search all children
+    (reduce into []
+            (map (partial naive-ext-key-graph-search g k)
+                 (bg/out g op)))))
+
+(defn naive-ext-key-graph
+  "A simple model of ext-key-graph that we use for generative tests. Takes a
+  transaction graph g, and returns an external key graph: a map of operations a
+  to keys k to downstream operations [b1 b2 ...], such that if a externally
+  interacted with k, b1, b2, ... did as well, and b1, b2, ... all follow a in
+  g."
+  ([g]
+   (loopr [ekg bm/empty]
+          [op (bg/vertices g)]
+          (recur
+            (bm/put ekg op (naive-ext-key-graph g op)))))
+  ; Computes the naive ext key graph for a single operation.
+  ([g op]
+   (loopr [ekg bm/empty]
+          [k (ext-keys op)]
+          (recur
+            (let [ops (->> (bg/out g op)
+                           (map (partial naive-ext-key-graph-search g k))
+                           (reduce into []))]
+              (if (seq ops)
+                (bm/put ekg k ops)
+                ekg))))))
+
+(deftest ext-key-graph-spec
+  (checking "ext-key-graph" test-check-n
+            [h history-gen]
+            (pprint h)
+            (let [g        (:graph (elle/realtime-graph h))
+                  expected (naive-ext-key-graph g)
+                  actual   (ext-key-graph g)]
+              (println g)
+              (println (kg-str expected))
+              (is (= expected actual)))))
+
+(defn tig
+  "A more compact data structure representation of a transaction graph. A
+  Clojure map of index -> #{i1 i2 ...}."
+  [g]
+  (reduce (fn [tig op]
+            (assoc tig (:index op)
+                   (into (sorted-set) (map :index (bg/out g op)))))
+          (sorted-map)
+          (bg/vertices g)))
+
+(deftest ^:focus ext-key-graph-examples
+  (let [h (h/history
+            [{:index 1, :time 0, :type :invoke, :process 0, :f :txn, :value []}
+             {:index 2, :time 0, :type :ok, :process 0, :f :txn, :value []}
+             {:index 3, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :x 0]]}
+             {:index 4, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :x 0]]}])
+        g        (:graph (elle/realtime-graph h))
+        expected (naive-ext-key-graph g)
+        actual   (ext-key-graph g)]
+    (println "History")
+    (mapv prn h)
+
+    (println "\nGraph")
+    (pprint (tig g))
+
+    (println "\nExpected")
+    (print (kg-str expected))
+
+    (println "\nActual")
+    (print (kg-str actual))
+
+    (is (= expected actual))))
+
 
 (deftest ext-key-graph-cache-test
   ; Trying to make sure this isn't quadratic; we construct a chain of ops and
@@ -810,19 +1023,26 @@
 ; This is here for pasting in experimental histories when we hit checker bugs.
 ; It's a helpful skeleton for refining a test case.
 (comment
-(deftest foo-test
-  (let [h [
+  (deftest foo-test
+    (let [h [
 
-           ]]
-    (is (= {:valid? false}
-           (checker/check (checker {:additional-graphs  [cycle/realtime-graph]
-                                    :consistency-models [:snapshot-isolation]
-                                    :sequential-keys?   true
-                                    :wfr-keys?          true})
-                          nil
-                          (h/history h)
-                          nil)))))
+             ]]
+      (is (= {:valid? false}
+             (check {:additional-graphs  [cycle/realtime-graph]
+                     :consistency-models [:snapshot-isolation]
+                     :sequential-keys?   true
+                     :wfr-keys?          true})
+             (h/history h)
+             ))))
 )
+
+(deftest version-order-test
+  (let [h (read-history "histories/cyclic-versions.edn")
+        r (check {:consistency-models [:strong-snapshot-isolation]
+                  :linearizable-keys? true}
+                 h)]
+    (pprint r)
+    (is (:valid? r))))
 
 (comment
   (deftest g-single-misattribution-test
@@ -880,7 +1100,7 @@
                ; This G2 is real
                :G2
                ["Let:\n  T1 = {:type :ok, :f :txn, :value [[:r 503 1] [:w 503 11]], :process 4, :index 3}\n  T2 = {:type :ok, :f :txn, :value [[:r 503 1] [:w 503 13]], :process 4, :index 5}\n\nThen:\n  - T1 < T2, because T1 read key 503 = 1, and T2 set it to 13, which came later in the version order.\n  - However, T2 < T1, because T2 read key 503 = 1, and T1 set it to 11, which came later in the version order: a contradiction!"]}}
-             (checker/check (checker {:additional-graphs [cycle/process-graph]
+             (check (checker {:additional-graphs [cycle/process-graph]
                                       ; As an aside, if you were to use sequential keys
                                       ; here, you'd see key 503 go from 1 -> 11
                                       ; -> 1, which would imply a version cycle.

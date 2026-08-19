@@ -1,0 +1,16 @@
+{:index 0, :time 0, :type :invoke, :process 3, :f :txn, :value [[:w 31 39]]}
+{:index 1, :time 1, :type :ok, :process 3, :f :txn, :value [[:w 31 39]]}
+{:index 2, :time 2, :type :invoke, :process 4, :f :txn, :value [[:w 31 41] [:r 18 nil] [:w 31 42]]}
+{:index 3, :time 3, :type :invoke, :process 3, :f :txn, :value [[:w 31 43]]}
+{:index 962, :time 1611884988, :type :ok, :process 4, :f :txn, :value [[:w 31 41] [:r 18 43] [:w 31 42]]}
+{:index 967, :time 1612947044, :type :invoke, :process 4, :f :txn, :value [[:r 18 nil] [:r 31 nil] [:r 27 nil]]}
+{:index 968, :time 1612968547, :type :ok, :process 3, :f :txn, :value [[:w 31 43]]}
+{:index 972, :time 1613938030, :type :ok, :process 4, :f :txn, :value [[:r 18 47] [:r 31 43] [:r 27 121]]}
+{:index 981, :time 1617553512, :type :invoke, :process 4, :f :txn, :value [[:r 31 nil] [:r 27 nil] [:r 31 nil]]}
+{:index 982, :time 1618586212, :type :ok, :process 4, :f :txn, :value [[:r 31 43] [:r 27 129] [:r 31 43]]}
+{:index 983, :time 1618594004, :type :invoke, :process 4, :f :txn, :value [[:r 31 nil] [:w 18 49] [:r 27 nil]]}
+{:index 989, :time 1619916143, :type :invoke, :process 19, :f :txn, :value [[:w 27 132] [:r 31 nil] [:r 31 nil]]}
+{:index 992, :time 1620414165, :type :ok, :process 4, :f :txn, :value [[:r 31 43] [:w 18 49] [:r 27 129]]}
+{:index 1004, :time 1622891033, :type :ok, :process 19, :f :txn, :value [[:w 27 132] [:r 31 45] [:r 31 45]]}
+{:index 1043, :time 1632086812, :type :invoke, :process 3, :f :txn, :value [[:r 31 nil] [:r 18 nil] [:w 18 53]]}
+{:index 1044, :time 1633655913, :type :ok, :process 3, :f :txn, :value [[:r 31 47] [:r 18 51] [:w 18 53]]}

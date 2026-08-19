@@ -278,7 +278,7 @@
           writes (txn/ext-writes txn)]
       (keys (merge reads writes)))))
 
-#_(defn ekig
+(defn ekig
   "External key index graph. A more compact representation of external key
   graphs, for debugging."
   [ekg]
@@ -289,9 +289,9 @@
                      (update-vals k->ops
                                   (fn [ops]
                                     (into (sorted-set) (map :index ops))))))
-      (into (sorted-map))))
+      (->> (into (sorted-map)))))
 
-#_(defn kg-str
+(defn kg-str
   "Prints a key graph to a string. You'll want this to optimize
   downstream-ops-by-ext-key."
   [kg]
