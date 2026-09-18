@@ -38,7 +38,7 @@ Elle is still under active development, and we're not 100% confident in its
 inference rules yet. Jepsen recommends checking reported anomalies by hand to
 make sure they're valid. If you'd like to contribute, we'd especially welcome your help in the [formal proof](proof/), and in [rigorously defining consistency models](src/elle/consistency_model.clj).
 
-Questions? <b>[Read the paper](https://github.com/jepsen-io/elle/raw/master/paper/elle.pdf)</b> or <b>[Watch the talk!](https://www.youtube.com/watch?v=OPJ_IcdSqig)</b>!
+Questions? <b>[Read the paper](https://github.com/jepsen-io/elle/raw/master/paper/elle.pdf)</b> or [watch the talk](https://www.youtube.com/watch?v=OPJ_IcdSqig)!
 
 ## Demo
 
