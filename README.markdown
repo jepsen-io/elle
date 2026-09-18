@@ -15,8 +15,6 @@ lawyer, Elle looks for a sequence of events in a story which couldn't possibly
 have happened in that order, and uses that inference to prove the story can't
 be consistent.
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/OPJ_IcdSqig?si=XR32MiRADU8X7wdB" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-
 In a nutshell, Elle is:
 
 - _General_: Elle works over a variety of datatypes and places only minimal, practical constraints on transaction structure.
@@ -40,7 +38,7 @@ Elle is still under active development, and we're not 100% confident in its
 inference rules yet. Jepsen recommends checking reported anomalies by hand to
 make sure they're valid. If you'd like to contribute, we'd especially welcome your help in the [formal proof](proof/), and in [rigorously defining consistency models](src/elle/consistency_model.clj).
 
-Questions? <b>[Read the paper](https://github.com/jepsen-io/elle/raw/master/paper/elle.pdf)!</b>
+Questions? <b>[Read the paper](https://github.com/jepsen-io/elle/raw/master/paper/elle.pdf)</b> or <b>[Watch the talk!](https://www.youtube.com/watch?v=OPJ_IcdSqig)</b>!
 
 ## Demo
 
