@@ -15,6 +15,8 @@ lawyer, Elle looks for a sequence of events in a story which couldn't possibly
 have happened in that order, and uses that inference to prove the story can't
 be consistent.
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/OPJ_IcdSqig?si=XR32MiRADU8X7wdB" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
 In a nutshell, Elle is:
 
 - _General_: Elle works over a variety of datatypes and places only minimal, practical constraints on transaction structure.
