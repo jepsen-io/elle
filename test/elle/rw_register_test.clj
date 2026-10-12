@@ -21,8 +21,8 @@
             [clj-commons.slingshot :refer [try+ throw+]]))
 
 (def test-check-n
-  "Number of iterations for generative tests. Dial this up to, say, 1e4 for more thorough testing; that'll take a few minutes."
-  (long 1e3))
+  "Number of iterations for generative tests."
+  (long 1e4))
 
 (def max-history-size
   "How big a history do we generate for generative tests? 128 gives good

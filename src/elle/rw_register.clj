@@ -521,19 +521,20 @@
          (recur g kg (bl/remove-last pending-ops))
          ; Ensure this operation's immediately downstream ops are
          ; explored.
-         (let [out        (bg/out g op)
-               unexplored (bs/difference out (bm/keys kg))]
-           ;(prn)
-           ;(prn :considering (:index op))
-           ;(prn :out (sort (map :index out)))
-           ;(prn :known (sort (map :index (bm/keys kg))))
-           ;(prn :unexplored (sort (map :index unexplored)))
-           (if (not= 0 (b/size unexplored))
-             ; Not ready; we'll come back to this once these are done.
-             (recur g kg (reduce bl/add-last pending-ops unexplored))
-             ; All our immediate dependencies are ready; explore this op.
-             (recur g (ext-key-graph-search-op g kg op)
-                    (bl/remove-last pending-ops)))))))))
+         (loopr [pending-ops' pending-ops
+                 ready?       true]
+                [op (bg/out g op)]
+                (if (bm/contains? kg op)
+                  (recur pending-ops' ready?)
+                  (recur (bl/add-last pending-ops' op) false))
+                (if ready?
+                  ; All our immediate dependencies are ready; explore
+                  ; this op.
+                  (recur g (ext-key-graph-search-op g kg op)
+                         (bl/remove-last pending-ops'))
+                  ; Not ready; we'll come back to this once these are
+                  ; done.
+                  (recur g kg pending-ops'))))))))
 
 (defn ^IMap ext-key-graph-condense
   "To memoize traversal, we built up an ext-key-graph where every operation
