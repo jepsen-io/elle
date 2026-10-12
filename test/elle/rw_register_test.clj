@@ -4,7 +4,9 @@
                           [map :as bm]
                           [set :as bs]
                           [graph :as bg]]
-            [clojure.pprint :refer [pprint]]
+            [clojure [datafy :refer [datafy]]
+                     [pprint :refer [pprint]]
+                     [set :as set]]
             [clojure.test.check.generators :as gen]
             [com.gfredericks.test.chuck.clojure-test :refer [checking]]
             [dom-top.core :refer [loopr real-pmap]]
@@ -19,8 +21,17 @@
             [clj-commons.slingshot :refer [try+ throw+]]))
 
 (def test-check-n
-  "Number of iterations for generative tests."
-  1000)
+  "Number of iterations for generative tests. Dial this up to, say, 1e4 for more thorough testing; that'll take a few minutes."
+  (long 1e3))
+
+(def max-history-size
+  "How big a history do we generate for generative tests? 128 gives good
+  coverage, but you might want to lower this to get smaller cases, because
+  shrinking isn't great."
+  128
+  ;16
+  )
+
 
 (defn op
   "Generates an operation from a string language like so:
@@ -152,7 +163,7 @@
                                  [[:r :x 0] [:r :y 0] [:w :y 1]])))))))
 
 (deftest ext-key-graph-test
-  (let [ekg (fn [tg] (-> tg g/map->bdigraph ext-key-graph g/->clj))
+  (let [ekg (fn [tg] (-> tg g/map->bdigraph ext-key-graph ekig))
         ; Helper to construct ops
         op  (fn [index string]
               (h/op (assoc (op string) :index index)))]
@@ -161,30 +172,28 @@
              (ekg {}))))
 
     (testing "simple"
-      (is (= {(op 0 "rx1") {:x #{(op 1 "rx2")}}
-              (op 1 "rx2") {}}
+      (is (= {0 {:x #{1}}
+              1 {}}
              (ekg {(op 0 "rx1") [(op 1 "rx2")]}))))
 
     (testing "transitive"
-      (is (= {(op 1 "wx1") {:x #{(op 2 "wx2")}}
-              (op 2 "wx2") {:x #{(op 3 "wx3")}}
-              (op 3 "wx3") {:x #{(op 4 "wx4")}}
-              (op 4 "wx4") {}}
+      (is (= {1 {:x #{2}}
+              2 {:x #{3}}
+              3 {:x #{4}}
+              4 {}}
              (ekg {(op 1 "wx1") [(op 2 "wx2")]
                    (op 2 "wx2") [(op 3 "wx3")]
                    (op 3 "wx3") [(op 4 "wx4")]}))))
 
     (testing "transitive w diff keys"
-      (is (= {(op 1 "wx1") {:x #{(op 2 "wx2wy2")}
-                            :y #{(op 2 "wx2wy2")}
-                            :z #{(op 3 "wy3wz3")}}
-              (op 2 "wx2wy2") {:y #{(op 3 "wy3wz3")}
-                               :z #{(op 3 "wy3wz3")}}
-              (op 3 "wy3wz3") {:z #{(op 4 "wz4")}}
-              (op 4 "wz4") {}}
-             (ekg {(op 1 "wx1")     [(op 2 "wx2wy2")]
+      (is (= {1 {:x #{2}, :z #{3}}
+              2 {:y #{3}}
+              3 {:z #{4}}
+              4 {}}
+             (ekg {(op 1 "wx1wz1")  [(op 2 "wx2wy2")]
                    (op 2 "wx2wy2")  [(op 3 "wy3wz3")]
                    (op 3 "wy3wz3")  [(op 4 "wz4")]}))))))
+
 (def mop-gen
   "Generator of a micro-op."
   (gen/tuple (gen/elements [:r :w])
@@ -306,20 +315,52 @@
                  (gen/large-integer* {:min 1, :max 1024})     ; invoke index step
                  (gen/large-integer* {:min 0, :max 1024})     ; invoke time step
                  (gen/large-integer* {:min 1, :max 1024})     ; ok index step
-                 (gen/large-integer* {:min 0, :max 1024}))))) ; ok time step
+                 (gen/large-integer* {:min 0, :max 1024}))    ; ok time step
+      0
+      max-history-size)))
+
+(declare naive-ext-key-graph-search)
+
+(def ^:dynamic *naive-ext-key-graph-search-transitive-cache*
+  "A mutable, dynamically-bound map of [k op-id] to results of
+  naive-ext-key-graph-search-transitive, we use to speed up the recursive graph
+  search."
+  nil)
+
+(defn naive-ext-key-graph-search-transitive-
+  "The un-memoized implementation of this search"
+  [g k op]
+  (let [rs (->> (bg/out g op)
+                (mapv (partial naive-ext-key-graph-search g k)))
+        covered (map first rs)
+        shadowed (map second rs)]
+    (reduce set/difference (reduce set/union covered) shadowed)))
+
+(defn naive-ext-key-graph-search-transitive
+  "Takes a transaction graph g, a key k, and an op. Returns the set of all
+  transactions downstream of op which interacted with k, through the union of
+  all dependencies *not* including this op."
+  [g k op]
+  (let [cache-key [k (:index op)]]
+    (or (get @*naive-ext-key-graph-search-transitive-cache*
+             cache-key)
+        (let [res (naive-ext-key-graph-search-transitive- g k op)]
+          (swap! *naive-ext-key-graph-search-transitive-cache*
+                 assoc cache-key res)
+          res))))
 
 (defn naive-ext-key-graph-search
-  "Takes a txn graph g, a key k, and an op. Returns a vector of all downstream
-  ops that externally interacted with k--either [op], or operations following
-  op in g."
+  "Takes a txn graph g, a key k, and an op. Returns a pair of sets: one, the
+  nearest downstream ops that externally interacted with k--either [op], or
+  operations following op in g, and the second, a *shadow* set of operations
+  that this operation would cover transitively."
   [g k op]
   (if (contains? (set (ext-keys op)) k)
-    ; Done here
-    [op]
-    ; Search all children
-    (reduce into []
-            (map (partial naive-ext-key-graph-search g k)
-                 (bg/out g op)))))
+    ; We do interact, and shadow our children
+    [#{op}
+     (naive-ext-key-graph-search-transitive g k op)]
+    ; We don't interact; pass through our children
+    [(naive-ext-key-graph-search-transitive g k op) #{}]))
 
 (defn naive-ext-key-graph
   "A simple model of ext-key-graph that we use for generative tests. Takes a
@@ -328,32 +369,29 @@
   interacted with k, b1, b2, ... did as well, and b1, b2, ... all follow a in
   g."
   ([g]
-   (loopr [ekg bm/empty]
-          [op (bg/vertices g)]
-          (recur
-            (bm/put ekg op (naive-ext-key-graph g op)))))
-  ; Computes the naive ext key graph for a single operation.
-  ([g op]
-   (loopr [ekg bm/empty]
-          [k (ext-keys op)]
-          (recur
-            (let [ops (->> (bg/out g op)
-                           (map (partial naive-ext-key-graph-search g k))
-                           (reduce into []))]
-              (if (seq ops)
-                (bm/put ekg k ops)
-                ekg))))))
-
-(deftest ext-key-graph-spec
-  (checking "ext-key-graph" test-check-n
-            [h history-gen]
-            (pprint h)
-            (let [g        (:graph (elle/realtime-graph h))
-                  expected (naive-ext-key-graph g)
-                  actual   (ext-key-graph g)]
-              (println g)
-              (println (kg-str expected))
-              (is (= expected actual)))))
+   (binding [*naive-ext-key-graph-search-transitive-cache* (atom {})]
+     (loopr [ekg {}]
+            [op (bg/vertices g)]
+            (recur
+              (assoc ekg op (naive-ext-key-graph g op)))
+            ; Turn Clojure structures into Bifurcan ones. We're doing this
+            ; because I think there's a bug in Bifurcan.
+            (->> ekg
+                 (map (fn [[op k->ops]]
+                        [op (->> k->ops
+                                 (map (fn [[k ops]]
+                                        [k (bs/from ops)]))
+                                 bm/from)]))
+                 bm/from))))
+   ; Computes the ext key graph for a single operation.
+   ([g op]
+    (loopr [ekg {}]
+           [k (ext-keys op)]
+           (recur
+             (let [ops (naive-ext-key-graph-search-transitive g k op)]
+               (if (seq ops)
+                 (assoc ekg k ops)
+                 ekg))))))
 
 (defn tig
   "A more compact data structure representation of a transaction graph. A
@@ -365,29 +403,237 @@
           (sorted-map)
           (bg/vertices g)))
 
-(deftest ^:focus ext-key-graph-examples
-  (let [h (h/history
-            [{:index 1, :time 0, :type :invoke, :process 0, :f :txn, :value []}
-             {:index 2, :time 0, :type :ok, :process 0, :f :txn, :value []}
-             {:index 3, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :x 0]]}
-             {:index 4, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :x 0]]}])
+(defn ext-key-graph-check
+  "Checks ext-key-graph correctness for a single history."
+  [h]
+  ;(print ".")
+  ;(flush)
+  (let [h        (h/history h)
         g        (:graph (elle/realtime-graph h))
         expected (naive-ext-key-graph g)
         actual   (ext-key-graph g)]
-    (println "History")
-    (mapv prn h)
+    (when (not= expected actual)
+      ; Sometimes Bifurcan structures are not equal even though their Clojure
+      ; versions are! FUN!
+      (let [clj-equiv? (= (ekig expected) (ekig actual))]
+        (is (= expected actual))
+        (println "\n-------------------\n")
+        (println "History")
+        (mapv prn h)
 
-    (println "\nGraph")
-    (pprint (tig g))
+        (println "\nGraph")
+        (pprint (tig g))
 
-    (println "\nExpected")
-    (print (kg-str expected))
+        (println "\nExpected")
+        (println (if clj-equiv?
+                   expected
+                   (kg-str expected)))
 
-    (println "\nActual")
-    (print (kg-str actual))
+        (println "\nActual")
+        (println (if clj-equiv?
+                   actual
+                   (kg-str actual)))
 
-    (is (= expected actual))))
+        (when clj-equiv?
+          (prn)
+          (println "The two have equivalent ekig structures:")
+          (print (kg-str actual)))
+        (is (= (ekig expected) (ekig actual)))
 
+        (if (= (datafy expected) (datafy actual))
+          (do (prn)
+              (println "And the same datafied representation")
+              (print (datafy expected)))
+          (do (prn)
+              (println "And different datafied versions")
+              (println "Expected:")
+              (pprint (datafy expected))
+              (println "\nActual:")
+              (pprint (datafy actual))))
+        (is (= (datafy expected) (datafy actual)))))))
+
+
+(deftest ext-key-graph-spec
+  (checking "ext-key-graph" test-check-n
+            [h history-gen]
+            ;(mapv prn h)
+            (ext-key-graph-check h)))
+
+(deftest ext-key-graph-no-relationship-between-txns-with-disjoint-keys
+  (ext-key-graph-check
+    [{:index 1, :time 0, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 2, :time 0, :type :ok, :process 0, :f :txn, :value []}
+     {:index 3, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :x 0]]}
+     {:index 4, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :x 0]]}]))
+
+(deftest ext-key-graph-mutable-bug-0
+  (ext-key-graph-check
+    [{:index 833, :time 563, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 1581, :time 564, :type :ok, :process 0, :f :txn, :value []}
+     {:index 9733, :time 7084, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 10741, :time 7917, :type :invoke, :process 1, :f :txn, :value [[:r :y 0]]}
+     {:index 10880, :time 8390, :type :ok, :process 0, :f :txn, :value []}
+     {:index 10882, :time 9217, :type :ok, :process 1, :f :txn, :value [[:r :y 0]]}
+     {:index 11874, :time 10073, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 12733, :time 10932, :type :ok, :process 0, :f :txn, :value []}
+     {:index 12735, :time 10932, :type :invoke, :process 1, :f :txn, :value []}
+     {:index 13515, :time 11381, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 14175, :time 11488, :type :ok, :process 1, :f :txn, :value []}
+     {:index 14177, :time 12168, :type :ok, :process 0, :f :txn, :value []}
+     {:index 15151, :time 12687, :type :invoke, :process 2, :f :txn, :value [[:r :y 0] [:r :z 1] [:w :x 1]]}
+     {:index 15518, :time 13124, :type :invoke, :process 1, :f :txn, :value [[:r :z 2] [:w :y 1] [:w :x 0]]}
+     {:index 16290, :time 13989, :type :ok, :process 2, :f :txn, :value [[:r :y 0] [:r :z 1] [:w :x 1]]}
+     {:index 16292, :time 13989, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 16763, :time 14880, :type :ok, :process 1, :f :txn, :value [[:r :z 2] [:w :y 1] [:w :x 0]]}
+     {:index 16764, :time 14880, :type :ok, :process 0, :f :txn, :value []}]))
+
+(deftest ext-key-graph-mutable-bug-1
+  (ext-key-graph-check
+    [{:index 1, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :x 0]]}
+     {:index 2, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :x 0]]}
+     {:index 3, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :x 0]]}
+     {:index 4, :time 0, :type :invoke, :process 1, :f :txn, :value []}
+     {:index 5, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :x 0]]}
+     {:index 6, :time 0, :type :ok, :process 1, :f :txn, :value []}
+     {:index 7, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :x 0]]}
+     {:index 8, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :x 0]]}]))
+
+(deftest ext-key-graph-mutable-bug-2
+  (ext-key-graph-check
+    [{:index 1, :time 1, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 2, :time 2, :type :ok, :process 0, :f :txn, :value []}
+     {:index 3, :time 3, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 4, :time 4, :type :invoke, :process 1, :f :txn, :value [[:r :y 2] [:r :y 1]]}
+     {:index 5, :time 5, :type :ok, :process 0, :f :txn, :value []}
+     {:index 3944, :time 1903, :type :ok, :process 1, :f :txn, :value [[:r :y 2] [:r :y 1]]}
+     {:index 4000, :time 4000, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 4001, :time 4001, :type :ok, :process 0, :f :txn, :value []}
+     {:index 4002, :time 4002, :type :invoke, :process 1, :f :txn, :value [[:r :x 3] [:w :z 0] [:r :y 0] [:r :y 0]]}
+     {:index 4003, :time 4003, :type :invoke, :process 2, :f :txn, :value [[:w :x 3] [:w :y 1] [:r :x 0]]}
+     {:index 7456, :time 3003, :type :ok, :process 1, :f :txn, :value [[:r :x 3] [:w :z 0] [:r :y 0] [:r :y 0]]}
+     {:index 8261, :time 5455, :type :ok, :process 2, :f :txn, :value [[:w :x 3] [:w :y 1] [:r :x 0]]}]))
+
+(deftest ext-key-graph-mutable-bug-3
+  (ext-key-graph-check
+    [{:index 1, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :z 0]]}
+     {:index 2, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :z 0]]}
+     {:index 3, :time 0, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 4, :time 0, :type :ok, :process 0, :f :txn, :value []}
+     {:index 5, :time 0, :type :invoke, :process 0, :f :txn, :value []}
+     {:index 6, :time 0, :type :invoke, :process 1, :f :txn, :value [[:r :z 0]]}
+     {:index 7, :time 0, :type :ok, :process 0, :f :txn, :value []}
+     {:index 8, :time 0, :type :ok, :process 1, :f :txn, :value [[:r :z 0]]}
+     {:index 9, :time 0, :type :invoke, :process 0, :f :txn, :value [[:r :z 0]]}
+     {:index 10, :time 0, :type :ok, :process 0, :f :txn, :value [[:r :z 0]]}]))
+
+(deftest ext-key-graph-?
+  (ext-key-graph-check
+    [{:index 1, :time 3, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 2, :time 3, :type :ok, :process 0, :f :txn, :value []}
+      {:index 3, :time 3, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 4, :time 66, :type :ok, :process 0, :f :txn, :value []}
+      {:index 10, :time 66, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 567, :time 435, :type :ok, :process 0, :f :txn, :value []}
+      {:index 1223, :time 464, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 1224, :time 909, :type :ok, :process 0, :f :txn, :value []}
+      {:index 1971, :time 959, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 1973, :time 1027, :type :ok, :process 0, :f :txn, :value []}
+      {:index 1974, :time 1677, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 1977, :time 1678, :type :ok, :process 0, :f :txn, :value []}
+      {:index 2024, :time 1685, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 2025, :time 2083, :type :ok, :process 0, :f :txn, :value []}
+      {:index 2026, :time 2811, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 2029, :time 3525, :type :ok, :process 0, :f :txn, :value []}
+      {:index 2030, :time 3582, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 2149, :time 4280, :type :ok, :process 0, :f :txn, :value []}
+      {:index 2183, :time 4281, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 2784, :time 4282, :type :ok, :process 0, :f :txn, :value []}
+      {:index 3188, :time 4283, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 3539, :time 4378, :type :ok, :process 0, :f :txn, :value []}
+      {:index 4305, :time 4556, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 4702, :time 4556, :type :ok, :process 0, :f :txn, :value []}
+      {:index 5483, :time 4702, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 5487, :time 5555, :type :ok, :process 0, :f :txn, :value []}
+      {:index 5496, :time 6314, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 5500, :time 7061, :type :ok, :process 0, :f :txn, :value []}
+      {:index 5501, :time 7907, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 6345, :time 8450, :type :ok, :process 0, :f :txn, :value []}
+      {:index 6348, :time 9143, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 6350, :time 9944, :type :ok, :process 0, :f :txn, :value []}
+      {:index 7018, :time 10676, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 7687, :time 10679, :type :ok, :process 0, :f :txn, :value []}
+      {:index 7714, :time 10681, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 8309, :time 10682, :type :ok, :process 0, :f :txn, :value []}
+      {:index 8318, :time 10766, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 8321, :time 10924, :type :ok, :process 0, :f :txn, :value []}
+      {:index 8325, :time 11505, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 8326, :time 11505, :type :ok, :process 0, :f :txn, :value []}
+      {:index 8337, :time 11924, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 8339, :time 12574, :type :ok, :process 0, :f :txn, :value []}
+      {:index 9133, :time 12633, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 9135, :time 13501, :type :ok, :process 0, :f :txn, :value []}
+      {:index 9137, :time 14468, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 9751, :time 14468, :type :ok, :process 0, :f :txn, :value []}
+      {:index 10415, :time 14519, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 11314, :time 14521, :type :ok, :process 0, :f :txn, :value []}
+      {:index 11316, :time 14715, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 11392, :time 14716, :type :ok, :process 0, :f :txn, :value []}
+      {:index 11418, :time 14716, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 11420, :time 15307, :type :ok, :process 0, :f :txn, :value []}
+      {:index 11530, :time 15307, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 11531, :time 15308, :type :ok, :process 0, :f :txn, :value []}
+      {:index 11535, :time 15960, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 12429, :time 16587, :type :ok, :process 0, :f :txn, :value []}
+      {:index 13415, :time 16607, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 14078, :time 16607, :type :ok, :process 0, :f :txn, :value []}
+      {:index 14079, :time 16608, :type :invoke, :process 2, :f :txn, :value [[:r :z 3]]}
+      {:index 14087, :time 16608, :type :ok, :process 2, :f :txn, :value [[:r :z 3]]}
+      {:index 14089, :time 16609, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 14678, :time 16609, :type :ok, :process 0, :f :txn, :value []}
+      {:index 15547, :time 16610, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 15769, :time 16610, :type :ok, :process 0, :f :txn, :value []}
+      {:index 15978, :time 16610, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 15982, :time 16610, :type :ok, :process 0, :f :txn, :value []}
+      {:index 16552, :time 16611, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 17498, :time 16611, :type :ok, :process 0, :f :txn, :value []}
+      {:index 17612, :time 16611, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 18469, :time 16612, :type :ok, :process 0, :f :txn, :value []}
+      {:index 18471, :time 16612, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 19049, :time 16612, :type :ok, :process 0, :f :txn, :value []}
+      {:index 19893, :time 16613, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 19947, :time 16614, :type :ok, :process 0, :f :txn, :value []}
+      {:index 20197, :time 16614, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 20730, :time 16614, :type :ok, :process 0, :f :txn, :value []}
+      {:index 20731, :time 16614, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 20735, :time 16615, :type :ok, :process 0, :f :txn, :value []}
+      {:index 20785, :time 16615, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 20788, :time 16615, :type :ok, :process 0, :f :txn, :value []}
+      {:index 20793, :time 16615, :type :invoke, :process 1, :f :txn, :value []}
+      {:index 20890, :time 16615, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 21549, :time 16616, :type :ok, :process 1, :f :txn, :value []}
+      {:index 22084, :time 16616, :type :ok, :process 0, :f :txn, :value []}
+      {:index 22608, :time 16617, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 22624, :time 16617, :type :invoke, :process 1, :f :txn, :value []}
+      {:index 23262, :time 16617, :type :ok, :process 0, :f :txn, :value []}
+      {:index 23264, :time 16617, :type :ok, :process 1, :f :txn, :value []}
+      {:index 23276, :time 16617, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 23375, :time 16617, :type :invoke, :process 1, :f :txn, :value []}
+      {:index 23377, :time 16617, :type :ok, :process 0, :f :txn, :value []}
+      {:index 23393, :time 16617, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 24214, :time 16618, :type :ok, :process 1, :f :txn, :value []}
+      {:index 24345, :time 16618, :type :ok, :process 0, :f :txn, :value []}
+      {:index 24445, :time 16618, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 25307, :time 16619, :type :invoke, :process 1, :f :txn, :value []}
+      {:index 25469, :time 16619, :type :ok, :process 0, :f :txn, :value []}
+      {:index 26476, :time 16619, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 27446, :time 16619, :type :ok, :process 1, :f :txn, :value []}
+      {:index 27796, :time 16620, :type :ok, :process 0, :f :txn, :value []}
+      {:index 27803, :time 16620, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 28519, :time 16620, :type :ok, :process 0, :f :txn, :value []}
+      {:index 28537, :time 17352, :type :invoke, :process 0, :f :txn, :value []}
+      {:index 29156, :time 18009, :type :invoke, :process 2, :f :txn, :value []}
+      {:index 29722, :time 18947, :type :ok, :process 0, :f :txn, :value []}
+      {:index 29725, :time 18961, :type :ok, :process 2, :f :txn, :value []}]))
 
 (deftest ext-key-graph-cache-test
   ; Trying to make sure this isn't quadratic; we construct a chain of ops and
@@ -463,7 +709,7 @@
              (vg {(Op 0 "wx1") [(Op 1 "rx1")]}))))
 
     (testing "don't infer deps on failed or crashed reads"
-      (is (= {:x {}}
+      (is (= {}
              (vg {(Op 1 "wx1") [(Op 2 0 :fail "rx2")
                                 (Op 3 0 :info "rx3")]
                   (Op 4 0 :fail "rx4") [(Op 5 "rx5")]
@@ -935,7 +1181,9 @@
   (deftest type-sanity
     (is (thrown-with-msg? java.lang.AssertionError #"a mix of integer types"
                           (c {}
-                             [{:process 0, :type :ok, :value [[:r :x (short 1)]]}
+                             [{:process 0, :type :invoke, :value [[:r :x nil]]}
+                              {:process 0, :type :ok, :value [[:r :x (short 1)]]}
+                              {:process 0, :type :invoke, :value [[:r :x nil]]}
                               {:process 0, :type :ok, :value [[:r :x (long 1)]]}]))))
 
 
@@ -1041,7 +1289,6 @@
         r (check {:consistency-models [:strong-snapshot-isolation]
                   :linearizable-keys? true}
                  h)]
-    (pprint r)
     (is (:valid? r))))
 
 (comment

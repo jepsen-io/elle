@@ -37,10 +37,12 @@
   version graph until we reach a fixed point. This isn't implemented yet."
   (:require [bifurcan-clj [core :as b]
                           [graph :as bg]
+                          [list :as bl]
                           [map :as bm]
                           [set :as bs]]
             [clojure.core.reducers :as r]
-            [clojure [set :as set]
+            [clojure [datafy :refer [datafy]]
+                     [set :as set]
                      [pprint :refer [pprint]]]
             [clojure.tools.logging :refer [info warn]]
             [dom-top.core :refer [loopr]]
@@ -270,7 +272,7 @@
   an external read or write."
   [^Op op]
   (when (or (h/ok? op) (h/info? op))
-    (let [txn    (.value op)
+    (let [txn    (:value op)
           ; Can't infer crashed reads!
           reads  (when (h/ok? op)
                    (txn/ext-reads txn))
@@ -431,10 +433,122 @@
                            (.put kg op (b/forked downstream))
                            (pop ops)))))))))))
 
+(defn pdsm
+  "Print a downstream map carefully. For debugging."
+  [m]
+  (println (class m) (System/identityHashCode m))
+  (doseq [kv m]
+    (let [k (bm/key kv)
+          v (bm/value kv)]
+      (println "  " (pr-str k) " " (pr-str v)))))
+
+(defn ext-key-graph-search-op
+  "Takes a transaction graph g, an external key graph kg, and an op. `kg` must
+  already contain all of `op`'s downstream ops. Returns `kg` with `op` added."
+  [g kg op]
+  ; Imagine the following transaction graph:
+  ;
+  ;         +-- T1(y) --+
+  ;         |           |
+  ; T0(x) --+           +-- T3(x)
+  ;         |           |
+  ;         +-- T2(x) --+
+  ;
+  ; Now consider the downstream key graph for key x, which T0, T2, and T3
+  ; interact with, but T1 does not. T1 has T3 downstream, because T3 is the
+  ; next transaction that touched x. But if we simply merged their downstream
+  ; maps, we'd conclude that T0's downstream transactions for x should be T2
+  ; AND T3, which is redundant. To ensure we generate a minimal graph, we keep
+  ; track of a *shadowed* set of transactions for each key, which are those
+  ; transactions reachable through closer ones. T2 shadows T3. We subtract
+  ; shadowed transactions from the output set.
+  (loopr [; A map of keys to sets of transactions that are reachable through
+          ; one of our immediate descendents; we need not include them here.
+          shadowed bm/empty
+          ; A map of keys to sets of downstream transactions.
+          reachable bm/empty]
+         [op2 (g/out g op)]
+         ; Now we loop over each directly downstream operation, building up
+         ; these two sets for each key.
+         (let [; Keys this downstream directly interacted with
+               direct-ks (bs/from (ext-keys op2))
+               ; And a map of keys to sets of ops downstream of op2
+               indirect-deps (bm/get kg op2)
+               ; Any key op2 touched directly, we can shadow the indirect ops
+               shadowed (reduce (fn shadow [shadowed k]
+                                  (bm/put shadowed k
+                                          (bm/get indirect-deps k bs/empty)
+                                          bs/union))
+                                shadowed
+                                direct-ks)
+               ; op2's contribution to the reachable map will be the indirect
+               ; deps, but for any key that op2 touched, just #{op2}. This is
+               ; just a performance optimization which reduces the work we do
+               ; in the final shadow filtering step.
+               just-op2 (bs/add bs/empty op2)
+               our-reachable (reduce (fn our-reachable [our-reachable k]
+                                       (bm/put our-reachable k just-op2))
+                                     indirect-deps
+                                     direct-ks)
+               reachable (bm/merge reachable our-reachable bs/union)]
+           (recur shadowed reachable))
+         ; Finally, filter out shadowed dependencies.
+         (let [reachable
+               (reduce (fn [reachable shadow-entry]
+                         (let [k (bm/key shadow-entry)]
+                           (bm/update
+                             reachable k
+                             (fn [ops]
+                               (when (not (nil? ops))
+                                 (bs/difference ops (bm/value
+                                                      shadow-entry)))))))
+                       reachable
+                       shadowed)]
+           (bm/put kg op reachable))))
+
+(defn ext-key-graph-search
+  "Takes a transaction graph g, an (incomplete) external key graph kg, and a
+  List of operations we'd like to explore. Returns the external key graph with
+  all of those operations explored."
+  ([g kg pending-ops]
+   (if (zero? (b/size pending-ops))
+     ; Done searching
+     kg
+     ; Search the last op
+     (let [op (bl/last pending-ops)]
+       (if (bm/contains? kg op)
+         ; Already know about this op
+         (recur g kg (bl/remove-last pending-ops))
+         ; Ensure this operation's immediately downstream ops are
+         ; explored.
+         (let [out        (bg/out g op)
+               unexplored (bs/difference out (bm/keys kg))]
+           ;(prn)
+           ;(prn :considering (:index op))
+           ;(prn :out (sort (map :index out)))
+           ;(prn :known (sort (map :index (bm/keys kg))))
+           ;(prn :unexplored (sort (map :index unexplored)))
+           (if (not= 0 (b/size unexplored))
+             ; Not ready; we'll come back to this once these are done.
+             (recur g kg (reduce bl/add-last pending-ops unexplored))
+             ; All our immediate dependencies are ready; explore this op.
+             (recur g (ext-key-graph-search-op g kg op)
+                    (bl/remove-last pending-ops)))))))))
+
+(defn ^IMap ext-key-graph-condense
+  "To memoize traversal, we built up an ext-key-graph where every operation
+  knows which ops are downstream for *every* key. Now we filter the graph to
+  just those keys which appear in each op."
+  [^IMap kg]
+  (bm/map-values
+    kg
+    (fn map-op [op k->downstream]
+      (bm/intersection k->downstream (bs/from (ext-keys op))))))
+
 (defn ^IMap ext-key-graph
-  "Takes a transaction graph g, and yields an external key graph: a map of ops
-  a to keys k to downstream ops b, such that if a externally interacted with k,
-  b did too, and b follows a in g.
+  "Takes a transaction graph g, and yields an external key graph: a Bifurcnan
+  map of ops a to Bifurcan maps of keys k to Bifurcan Sets of downstream ops b,
+  such that if a externally interacted with k, b did too, and b follows a in g.
 
   This graph lets us ask \"what were the next transactions to interact with a
   given key?\". We use this to extract *version* orders from a transaction
@@ -456,9 +570,11 @@
        (reduce (fn red [kg op]
                  ;(println)
                  ;(prn :ext-key-graph :considering (:index op))
-                 ; (print :ext-key-graph :kg (kg-str kg))
-                 (downstream-ops-by-ext-key g kg [op]))
+                 (let [kg (ext-key-graph-search g kg (bl/list op))]
+                   ;(print :ext-key-graph :kg "\n" (kg-str kg))
+                   kg))
                (LinearMap.))
+       ext-key-graph-condense
        b/forked))
 
 (defn transaction-graph->version-graphs
