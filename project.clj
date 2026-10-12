@@ -28,7 +28,7 @@
                                    :exclusions
                                    [com.fasterxml.jackson.core/jackson-core]]]}}
   :jvm-opts ["-server"
-             "-XX:-OmitStackTraceInFastThrow"
+             ;"-XX:-OmitStackTraceInFastThrow"
              ;"-XX:+PrintGC"
              ;"-agentpath:/home/aphyr/yourkit/bin/linux-x86-64/libyjpagent.so=disablestacktelemetry,exceptions=disable,delay=10000,usedmem=50"
              ]
