@@ -4,7 +4,8 @@
             [clojure.tools.logging :refer [info warn]]
             [dom-top.core :refer [loopr]]
             [jepsen.history :as h])
-  (:import (java.util.concurrent ExecutionException)
+  (:import (java.util Arrays)
+           (java.util.concurrent ExecutionException)
            (java.util.function BinaryOperator)
            (io.lacuna.bifurcan IMap
                                IntMap
@@ -64,21 +65,41 @@
            (recur (.put m x 1 add))
            (.forked m))))
 
+(deftype OpMemoize [f, ^:volatile-mutable ^objects cache]
+  clojure.lang.IFn
+  (invoke [this op]
+    (let [^Op op      op
+          i           (.index op)
+          local-cache cache
+          size        (alength local-cache)]
+      (if (<= size i)
+        ; This op index is beyond the local cache; enlarge it
+        (do (locking this
+              (when (identical? local-cache cache)
+                (let [cache' (Arrays/copyOf
+                               local-cache (int (max (inc i) (* 1.4 size))))]
+                  (Arrays/fill cache' size (alength cache') ::not-found)
+                  ; See https://clojure.atlassian.net/browse/CLJ-2743
+                  (set! (.cache this) cache'))))
+        (recur op))
+        ; The cache is big enough; we can use an unsynchronized path here
+        (let [res (aget local-cache i)]
+          (if-not (identical? res ::not-found)
+            ; Cache hit
+            res
+            ; Cache miss
+            (let [res (f op)]
+              ; This may miss because the cache gets replaced, but that's fine;
+              ; we'll just recompute it later. My intuition here is that
+              ; lock-free is simpler and might be faster.
+              (aset local-cache i res)
+              res)))))))
+
 (defn op-memoize
   "Memoizes a pure function of an operation. Uses the op's index as a key to
   speed up access. Thread-safe."
   [f]
-  (let [cache        (atom (IntMap.))
-        add-cache (fn [^IntMap m, ^long k, v]
-                    (.put m k v))]
-    (fn memoized [^Op op]
-      (let [index (.index op)
-            res   (.get ^IntMap @cache index ::not-found)]
-        (if (identical? res ::not-found)
-          (let [res (f op)]
-            (swap! cache add-cache index res)
-            res)
-          res)))))
+  (OpMemoize. f, (object-array (repeat 1024 ::not-found))))
 
 (defn fand
   "Functional and. Takes a collection of unary functions and returns a single
