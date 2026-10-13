@@ -374,6 +374,26 @@
                        shadowed)]
            (bm/put kg op reachable))))
 
+(defn ^IMap ext-key-graph-condense
+  "To memoize traversal, we built up an ext-key-graph where every operation
+  knows which ops are downstream for *every* key. However, once we've computed
+  the ext key graph for a specific key, we'll never traverse past it. This
+  means we can prune the downstream graph for that key to just those keys which
+  appear in that op, which saves memory.
+
+  Takes a transaction graph, a (possibly partial) key graph, and an operation
+  whose map might be condensed. Checks to see if all ops upstream of this op are
+  in the key graph. If so, condenses this op; no further search will touch it.
+  Returns the new key graph."
+  [g kg op]
+  (if (every? (fn check [upstream]
+                (bm/contains? kg upstream))
+              (bg/in g op))
+    (bm/update kg op (fn condense [k->downstream]
+                       (bm/intersection k->downstream
+                                        (bs/from (ext-keys op)))))
+    kg))
+
 (defn ext-key-graph-search
   "Takes a transaction graph g, an (incomplete) external key graph kg, and a
   List of operations we'd like to explore. Returns the external key graph with
@@ -398,21 +418,16 @@
                 (if ready?
                   ; All our immediate dependencies are ready; explore
                   ; this op.
-                  (recur g (ext-key-graph-search-op g kg op)
-                         (bl/remove-last pending-ops'))
+                  (let [kg' (ext-key-graph-search-op g kg op)
+                        ; We may be able to condense downstream ops in the kg
+                        ; now.
+                        kg' (reduce (partial ext-key-graph-condense g)
+                                    kg'
+                                    (bg/out g op))]
+                    (recur g kg' (bl/remove-last pending-ops')))
                   ; Not ready; we'll come back to this once these are
                   ; done.
                   (recur g kg pending-ops'))))))))
-
-(defn ^IMap ext-key-graph-condense
-  "To memoize traversal, we built up an ext-key-graph where every operation
-  knows which ops are downstream for *every* key. Now we filter the graph to
-  just those keys which appear in each op."
-  [^IMap kg]
-  (bm/map-values
-    kg
-    (fn map-op [op k->downstream]
-      (bm/intersection k->downstream (bs/from (ext-keys op))))))
 
 (defn ^IMap ext-key-graph
   "Takes a transaction graph g, and yields an external key graph: a Bifurcnan
@@ -439,11 +454,11 @@
        (reduce (fn red [kg op]
                  ;(println)
                  ;(prn :ext-key-graph :considering (:index op))
-                 (let [kg (ext-key-graph-search g kg (bl/list op))]
+                 (let [kg (ext-key-graph-search g kg (bl/list op))
+                       kg (ext-key-graph-condense g kg op)]
                    ;(print :ext-key-graph :kg "\n" (kg-str kg))
                    kg))
                (LinearMap.))
-       ext-key-graph-condense
        b/forked))
 
 (defn transaction-graph->version-graphs
